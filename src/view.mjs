@@ -1,0 +1,51 @@
+// Presentation lives in the extension: the host only renders generic gauge/icon nodes.
+// Rings and popovers show only the upstream overall remaining quota.
+import { LOGOS, COLORS } from './logos.mjs';
+
+// Low remaining overrides the brand color so a nearly exhausted limit stands out.
+function tone(value, color) {
+  if (value === null || value === undefined) return color;
+  return value <= 5 ? 'danger' : value <= 20 ? 'warn' : color;
+}
+
+function rows(list, color, group) {
+  return (list || []).map(row => {
+    const out = { label: row.label, value: row.value, color: tone(row.value, color) };
+    if (group) out.group = group;
+    return out;
+  });
+}
+
+export function gaugeNode(gauge, error, fetchedAt = null) {
+  const antigravity = gauge.brand === 'antigravity';
+  const ring = (value, color, label) => ({ value, color: tone(value, color), label });
+  const rings = antigravity
+    ? [
+        ring(gauge.remainingPercent, COLORS.gemini, 'Gemini 잔량'),
+        ring(gauge.innerRemainingPercent ?? null, COLORS.claude, 'Claude via Antigravity 잔량')
+      ]
+    : [ring(gauge.remainingPercent, COLORS[gauge.brand], `${gauge.label} 잔량`)];
+  let detailRows = antigravity
+    ? [...rows(gauge.rows, COLORS.gemini, 'Gemini'), ...rows(gauge.innerRows, COLORS.claude, 'Claude/GPT')]
+    : rows(gauge.rows, COLORS[gauge.brand]);
+  if (!detailRows.length) detailRows = [{ label: '쿼터 정보 없음', value: null }];
+  const title = `${gauge.label} 잔량`;
+  const node = {
+    type: 'gauge', id: gauge.id, label: gauge.label, size: 'small', rings,
+    icon: LOGOS[gauge.brand],
+    hint: [gauge.hint, error].filter(Boolean).join(' · ').slice(0, 500),
+    details: { title: title.slice(0, 40), rows: detailRows.slice(0, 12) }
+  };
+  // The monitor's own observation time wins; otherwise the last successful read. A failed read never advances either.
+  const updatedAt = Number.isFinite(gauge.updatedAt) && gauge.updatedAt > 0 ? gauge.updatedAt : fetchedAt;
+  if (Number.isFinite(updatedAt) && updatedAt > 0) node.details.updatedAt = Math.round(updatedAt);
+  if (gauge.stale || error) node.stale = true;
+  return node;
+}
+
+export function navbarView(model, error) {
+  return {
+    type: 'stack', id: 'usage', direction: 'horizontal', gap: 'small',
+    children: model.gauges.map(gauge => gaugeNode(gauge, error, model.fetchedAt))
+  };
+}

@@ -1,0 +1,40 @@
+{
+  "id": "quota-monitor",
+  "name": "Quota Monitor",
+  "version": "0.3.0",
+  "sdkVersion": 1,
+  "description": "Claude · GPT · Antigravity의 upstream 전체 잔량을 navbar 원형 게이지와 팝오버로 표시합니다. Antigravity는 바깥 Gemini · 안쪽 Claude/GPT 잔량입니다.",
+  "permissions": [
+    "navbar",
+    "http-write",
+    "events"
+  ],
+  "settings": [
+    {
+      "key": "httpOrigin",
+      "type": "string",
+      "label": "CLIProxyAPI 주소",
+      "description": "quota-monitor 플러그인이 있는 CLIProxyAPI의 origin입니다. 경로나 계정 정보는 넣지 마세요.",
+      "placeholder": "http://localhost:8317",
+      "required": true,
+      "format": "origin"
+    },
+    {
+      "key": "httpToken",
+      "type": "string",
+      "label": "관리 키 (Management Key)",
+      "description": "CLIProxyAPI 관리 키입니다. 이 서버에 평문으로 저장되어 서버에 연결된 모든 기기와 공유되며, 내보내기에서는 제외됩니다. 쿼터 데이터는 관리 인증이 필요합니다.",
+      "required": true,
+      "secret": true
+    },
+    {
+      "key": "pollSeconds",
+      "type": "number",
+      "label": "갱신 주기(초)",
+      "description": "비워 두면 서버가 알려주는 간격을 씁니다.",
+      "min": 10,
+      "max": 900
+    }
+  ],
+  "settingsScope": "server"
+}
