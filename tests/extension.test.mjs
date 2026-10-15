@@ -185,3 +185,14 @@ test('a rejected key is not retried until the key itself changes (5 rejections =
   assert.equal(requests.length, 2);
   assert.equal(calls.at(-1).view.children[0].rings[0].value, 70);
 });
+
+test('language setting switches the rendered text; auto without a program language stays Korean', async () => {
+  const body = { configured: true, snapshot_complete: true, availability: [], accounts: [] };
+  const en = await boot(async () => body, { httpToken: 'k', language: 'en' });
+  assert.equal(en.calls.at(-1).label, 'AI quota');
+  assert.equal(en.calls.at(-1).view.children[0].details.title, 'Claude remaining');
+  const auto = await boot(async () => body, { httpToken: 'k', language: 'auto' });
+  assert.equal(auto.calls.at(-1).label, 'AI 잔량');
+  const noKey = await boot(async () => body, { language: 'en' });
+  assert.ok(noKey.calls.at(-1).view.children[0].hint.includes('Set the management key'));
+});

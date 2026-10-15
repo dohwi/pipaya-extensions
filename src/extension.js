@@ -1,20 +1,18 @@
 // Async SDK function body; model.mjs is prepended by scripts/build.mjs.
 const initialSettings = await sdk.settings.get();
+setLanguage(initialSettings?.language);
 const itemId = 'usage';
-const ITEM_LABEL = 'AI 잔량';
 // Quota data is served only on the authenticated management route (/v0/resource is unauthenticated
 // and carries no data). The host adds `Authorization: Bearer <httpToken>` from this extension's own
 // settings; the extension never sees the token on the wire and cannot choose another origin/header.
 const QUOTA_PATH = '/v0/management/plugins/quota-monitor/data/accounts';
-const NEED_KEY = '관리 키를 설정하세요';
-const BAD_KEY = '관리 키가 거부되었습니다 — 설정에서 다시 입력하세요';
 // CLIProxyAPI bans an IP for 30 minutes after five rejected management requests, so a missing or
 // rejected key is never retried: requests resume only once the stored key itself changes.
 let rejectedKey = null;
 const keyOf = value => (typeof value?.httpToken === 'string' ? value.httpToken.trim() : '');
 let settings = initialSettings;
 let model = {
-  label: 'AI 쿼터 잔량',
+  label: t('title'),
   gauges: [
     { id: 'claude', label: 'Claude', brand: 'claude', remainingPercent: null },
     { id: 'gpt', label: 'GPT', brand: 'gpt', remainingPercent: null },
@@ -28,7 +26,7 @@ let failures = 0;
 let followUp = false;
 
 function render(error) {
-  return sdk.navbar.set(itemId, { label: ITEM_LABEL, view: navbarView(model, error) });
+  return sdk.navbar.set(itemId, { label: t('itemLabel'), view: navbarView(model, error) });
 }
 
 function schedule(delay) {
@@ -49,15 +47,16 @@ function refresh() {
     try {
       // Re-read the (local, free) settings so a corrected key or interval applies without a reload.
       settings = await sdk.settings.get();
+      setLanguage(settings?.language);
       const key = keyOf(settings);
-      if (!key) throw Object.assign(new Error(NEED_KEY), { authBlocked: true });
-      if (key === rejectedKey) throw Object.assign(new Error(BAD_KEY), { authBlocked: true });
+      if (!key) throw Object.assign(new Error(t('needKey')), { authBlocked: true });
+      if (key === rejectedKey) throw Object.assign(new Error(t('badKey')), { authBlocked: true });
       const response = await sdk.http.requestJson({ path: QUOTA_PATH });
       if (response.status === 401 || response.status === 403) {
         rejectedKey = key;
-        throw Object.assign(new Error(BAD_KEY), { authBlocked: true });
+        throw Object.assign(new Error(t('badKey')), { authBlocked: true });
       }
-      if (response.status < 200 || response.status >= 300) throw new Error(`서버가 오류를 반환했습니다 (${response.status})`);
+      if (response.status < 200 || response.status >= 300) throw new Error(t('serverError', { status: response.status }));
       const snapshot = response.body;
       delay = pollDelay(snapshot, settings);
       model = { ...navbarFromSnapshot(snapshot), fetchedAt: Date.now() };
@@ -65,12 +64,12 @@ function refresh() {
       failures = 0;
     } catch (error) {
       failures += 1;
-      const text = String(error?.message || '쿼터를 읽을 수 없습니다').slice(0, 200);
+      const text = String(error?.message || t('cannotRead')).slice(0, 200);
       model = { ...model, gauges: model.gauges.map(gauge => ({ ...gauge, stale: true })) };
       await render(text);
       // Keep last-good values. Never turn failed, unconfigured or missing data into 0%.
       // Auth problems cost nothing locally, so re-check the settings every 15 s; never hit the server.
-      delay = error?.authBlocked ? 15000 : text === '첫 쿼터 수집을 기다리는 중' ? 2000 : Math.min(300000, 10000 * 2 ** Math.min(failures - 1, 5));
+      delay = error?.authBlocked ? 15000 : error?.code === 'waiting' ? 2000 : Math.min(300000, 10000 * 2 ** Math.min(failures - 1, 5));
     } finally {
       pending = null;
       schedule(followUp ? Math.min(delay, 2500) : delay);

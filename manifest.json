@@ -1,7 +1,7 @@
 {
   "id": "quota-monitor",
   "name": "Quota Monitor",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "sdkVersion": 1,
   "description": "Claude · GPT · Antigravity의 upstream 전체 잔량을 navbar 원형 게이지와 팝오버로 표시합니다. Antigravity는 바깥 Gemini · 안쪽 Claude/GPT 잔량입니다.",
   "permissions": [
@@ -26,6 +26,18 @@
       "description": "CLIProxyAPI 관리 키입니다. 이 서버에 평문으로 저장되어 서버에 연결된 모든 기기와 공유되며, 내보내기에서는 제외됩니다. 쿼터 데이터는 관리 인증이 필요합니다.",
       "required": true,
       "secret": true
+    },
+    {
+      "key": "language",
+      "type": "select",
+      "label": "언어 (Language)",
+      "description": "자동은 pipaya를 실행 중인 프로그램의 언어를 따릅니다. / Auto follows the program language.",
+      "default": "auto",
+      "options": [
+        { "value": "auto", "label": "자동 (프로그램 언어) / Auto" },
+        { "value": "ko", "label": "한국어" },
+        { "value": "en", "label": "English" }
+      ]
     },
     {
       "key": "pollSeconds",

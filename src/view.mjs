@@ -1,6 +1,7 @@
 // Presentation lives in the extension: the host only renders generic gauge/icon nodes.
 // Rings and popovers show only the upstream overall remaining quota.
 import { LOGOS, COLORS } from './logos.mjs';
+import { t } from './i18n.mjs';
 
 // Low remaining overrides the brand color so a nearly exhausted limit stands out.
 function tone(value, color) {
@@ -21,15 +22,15 @@ export function gaugeNode(gauge, error, fetchedAt = null) {
   const ring = (value, color, label) => ({ value, color: tone(value, color), label });
   const rings = antigravity
     ? [
-        ring(gauge.remainingPercent, COLORS.gemini, 'Gemini 잔량'),
-        ring(gauge.innerRemainingPercent ?? null, COLORS.claude, 'Claude via Antigravity 잔량')
+        ring(gauge.remainingPercent, COLORS.gemini, t('remainingOf', { name: 'Gemini' })),
+        ring(gauge.innerRemainingPercent ?? null, COLORS.claude, t('remainingOf', { name: 'Claude via Antigravity' }))
       ]
-    : [ring(gauge.remainingPercent, COLORS[gauge.brand], `${gauge.label} 잔량`)];
+    : [ring(gauge.remainingPercent, COLORS[gauge.brand], t('remainingOf', { name: gauge.label }))];
   let detailRows = antigravity
     ? [...rows(gauge.rows, COLORS.gemini, 'Gemini'), ...rows(gauge.innerRows, COLORS.claude, 'Claude/GPT')]
     : rows(gauge.rows, COLORS[gauge.brand]);
-  if (!detailRows.length) detailRows = [{ label: '쿼터 정보 없음', value: null }];
-  const title = `${gauge.label} 잔량`;
+  if (!detailRows.length) detailRows = [{ label: t('noQuotaInfo'), value: null }];
+  const title = t('remainingOf', { name: gauge.label });
   const node = {
     type: 'gauge', id: gauge.id, label: gauge.label, size: 'small', rings,
     icon: LOGOS[gauge.brand],

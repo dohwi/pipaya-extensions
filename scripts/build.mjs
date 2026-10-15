@@ -2,7 +2,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 const root = new URL('../', import.meta.url);
 const manifest = JSON.parse(await readFile(new URL('manifest.json', root), 'utf8'));
-const parts = await Promise.all(['logos.mjs', 'model.mjs', 'view.mjs'].map(name => readFile(new URL(`src/${name}`, root), 'utf8')));
+const parts = await Promise.all(['i18n.mjs', 'logos.mjs', 'model.mjs', 'view.mjs'].map(name => readFile(new URL(`src/${name}`, root), 'utf8')));
 const worker = await readFile(new URL('src/extension.js', root), 'utf8');
 const code = parts.join('\n').replace(/^import .*$/gm, '').replace(/^export /gm, '') + '\n' + worker;
 // Parse as the exact async function body used by the pipaya worker, without executing it.

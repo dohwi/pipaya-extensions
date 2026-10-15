@@ -1,4 +1,5 @@
 // Pure snapshot -> navbar conversion. Also bundled into the sandbox worker.
+import { t } from './i18n.mjs';
 export function providerName(provider) {
   const name = String(provider || '').toLowerCase().trim();
   if (['codex', 'openai', 'gpt'].includes(name)) return 'gpt';
@@ -18,7 +19,8 @@ export function observedAt(account) {
 
 export function navbarFromSnapshot(snapshot) {
   if (!snapshot || snapshot.configured !== true || snapshot.snapshot_complete !== true) {
-    throw new Error(snapshot?.configured === false ? 'quota-monitor 설정을 확인하세요' : '첫 쿼터 수집을 기다리는 중');
+    const code = snapshot?.configured === false ? 'checkConfig' : 'waiting';
+    throw Object.assign(new Error(t(code)), { code });
   }
   const accounts = Array.isArray(snapshot.accounts) ? snapshot.accounts : [];
   const byProvider = name => accounts.filter(account => providerName(account.provider) === name);
@@ -32,8 +34,8 @@ export function navbarFromSnapshot(snapshot) {
     const stale = usable.some(account => account.stale === true || account.status === 'error' || account.status === 'stale');
     const times = usable.map(observedAt).filter(time => time !== null);
     const updatedAt = times.length ? Math.max(...times) : null;
-    const hint = [remaining === null ? '잔량 미확인' : '', stale ? '이전 관측값' : ''].filter(Boolean).join(' · ');
-    return { remaining, stale, updatedAt, hint, rows: [{ label: '잔량', value: remaining }] };
+    const hint = [remaining === null ? t('unknownRemaining') : '', stale ? t('staleObservation') : ''].filter(Boolean).join(' · ');
+    return { remaining, stale, updatedAt, hint, rows: [{ label: t('remaining'), value: remaining }] };
   };
   const gauge = (id, label, brand, group, key = id) => {
     const summary = fleetSummary(key, group);
@@ -52,7 +54,7 @@ export function navbarFromSnapshot(snapshot) {
   outer.updatedAt = Math.max(outer.updatedAt ?? 0, inner.updatedAt ?? 0) || null;
   outer.hint = [outer.hint ? `Gemini: ${outer.hint}` : '', inner.hint ? `Claude/GPT: ${inner.hint}` : ''].filter(Boolean).join(' · ');
   gauges.push(outer);
-  return { label: 'AI 쿼터 잔량', gauges };
+  return { label: t('title'), gauges };
 }
 
 export function pollDelay(snapshot, settings = {}) {
