@@ -1,6 +1,8 @@
+<p align="center"><b>English</b> · <a href="README.ko.md">한국어</a></p>
+
 <div align="center">
   <h1>pipaya-extension-quota-monitor</h1>
-  <p>dohwi/pipaya 클라이언트를 위한 실시간 AI 공급자 쿼터 모니터링 확장 — CLIProxyAPI & quota-monitor 연동</p>
+  <p>A real-time AI provider quota monitor extension for the dohwi/pipaya client, backed by CLIProxyAPI and the quota-monitor plugin.</p>
 
   <p>
     <a href="https://github.com/dohwi/pipaya" target="_blank" rel="noreferrer"><img src="https://img.shields.io/badge/pipaya-Client-000000?style=flat-square&logo=github&logoColor=white" alt="pipaya Client" /></a>
@@ -10,33 +12,35 @@
     <a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript" target="_blank" rel="noreferrer"><img src="https://img.shields.io/badge/JavaScript-ESM-F7DF1E?style=flat-square&logo=javascript&logoColor=black" alt="JavaScript ESM" /></a>
     <a href="https://github.com/dohwi/cliproxyapi-plugin-quota-monitor" target="_blank" rel="noreferrer"><img src="https://img.shields.io/badge/Quota_Monitor-Management_API-0EA5E9?style=flat-square" alt="Quota Monitor" /></a>
   </p>
+
+  <p><a href="#preview">Preview</a> · <a href="#overview">Overview</a> · <a href="#features">Features</a> · <a href="#data-source">Data Source</a> · <a href="#getting-started">Getting Started</a> · <a href="#configuration">Configuration</a></p>
 </div>
 
 ---
 
 ## Preview
 
-| 상단 네비게이션 바 게이지 (Navbar View) | 전체 잔량 팝오버 (Hover Details) |
+| Navbar gauges | Remaining-quota popover (hover) |
 | :---: | :---: |
-| <img src="docs/preview-desktop.png" alt="Desktop Navbar View" width="100%" /> | <img src="docs/preview-hover.png" alt="Hover Details View" width="100%" /> |
+| <img src="docs/preview-desktop.png" alt="Desktop navbar view" width="100%" /> | <img src="docs/preview-hover.png" alt="Hover details view" width="100%" /> |
 
 <details>
-<summary>모바일 및 좁은 화면(320px) 뷰 확인하기</summary>
+<summary>Mobile / narrow (320px) view</summary>
 <br />
 <p align="center">
-  <img src="docs/preview-mobile.png" width="340" alt="Mobile 320px View" />
+  <img src="docs/preview-mobile.png" width="340" alt="Mobile 320px view" />
 </p>
 </details>
+
+> The screenshots show the Korean UI. The extension also supports English; see [Language](#language).
 
 ---
 
 ## Overview
 
-`pipaya-extension-quota-monitor`은 [dohwi/pipaya](https://github.com/dohwi/pipaya) LLM 코딩 에이전트 클라이언트의 상단 네비게이션 바(Navbar)에 **upstream이 제공하는 AI 공급자(Claude · GPT · Antigravity)의 전체 잔량(%)**를 표시해 주는 공식 클라이언트 확장(`quota-monitor`)입니다.
+`pipaya-extension-quota-monitor` is a client extension (`quota-monitor`) for the [dohwi/pipaya](https://github.com/dohwi/pipaya) LLM coding agent. It shows the **overall remaining quota (%) that the upstream reports for each AI provider (Claude · GPT · Antigravity)** in the pipaya top navigation bar.
 
-### 연동 생태계 구성
-
-이 시스템은 코딩 에이전트 워크플로우를 최적화하기 위해 다음과 같은 컴포넌트들의 협업으로 구성됩니다:
+### How the pieces fit together
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -49,112 +53,115 @@
 │                   CLIProxyAPI (Proxy & Gateway)                        │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
 │  │ cliproxyapi-plugin-quota-monitor (Native Server Plugin)          │  │
-│  │ - 각 AI 계정의 잔여량·리셋 시각을 주기적으로 업스트림에서 관측     │  │
-│  │ - 읽기 전용 엔드포인트로 노출:                                   │  │
+│  │ - Periodically observes remaining quota and reset times of       │  │
+│  │   every AI account from the upstream                             │  │
+│  │ - Exposes a read-only endpoint:                                  │  │
 │  │   GET /v0/management/plugins/quota-monitor/data/accounts         │  │
 │  └────────────────────────────────┬─────────────────────────────────┘  │
 └───────────────────────────────────┼────────────────────────────────────┘
                                     │ HTTP GET JSON (Sandboxed Worker)
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│                     dohwi/pipaya Client                               │
+│                     dohwi/pipaya Client                                │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │ pipaya-extension-quota-monitor (Sandboxed Web Worker)           │  │
-│  │ 1. Event trigger: run_finished (2.5초 후 후속 폴링) 및 주기 폴링 │  │
-│  │ 2. Data model: upstream 전체 잔량 매핑           │  │
+│  │ pipaya-extension-quota-monitor (Sandboxed Web Worker)            │  │
+│  │ 1. Event trigger: run_finished (follow-up poll after 2.5 s)      │  │
+│  │    and periodic polling                                          │  │
+│  │ 2. Data model: maps upstream overall remaining quota             │  │
 │  │ 3. UI emission: sdk.navbar.set('usage', { rings, details })      │  │
 │  └────────────────────────────────┬─────────────────────────────────┘  │
 │                                   │ Declarative UI nodes               │
 │                                   ▼                                    │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
 │  │ Navbar & UI (Svelte 5 / Tauri 2)                                 │  │
-│  │ - Claude · GPT · Antigravity (Gemini/Claude Dual Ring) 게이지    │  │
-│  │ - 마우스 오버 시 전체 잔량 & 업데이트 시각 팝오버│  │
+│  │ - Claude · GPT · Antigravity (Gemini/Claude dual ring) gauges    │  │
+│  │ - Hover popover: overall remaining quota and update time         │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-1. **dohwi/pipaya**: Bun + Fastify 백엔드와 Svelte 5 + Tauri 2 프론트엔드로 이루어진 코딩 에이전트. Opaque-origin Web Worker 기반의 샌드박스 확장 시스템(SDK v1)을 내장하고 있습니다.
-2. **CLIProxyAPI (`cliproxy`)**: Claude, Codex, Gemini 등 다양한 AI 제공자의 복수 계정/키를 한곳에서 라우팅하고 프록시하는 게이트웨이입니다.
-3. **`cliproxyapi-plugin-quota-monitor` 플러그인**: CLIProxyAPI 서버에 직접 탑재되는 네이티브 플러그인([dohwi/cliproxyapi-plugin-quota-monitor](https://github.com/dohwi/cliproxyapi-plugin-quota-monitor)). 각 AI 제공자 계정의 실제 한도(5시간 윈도우, 주간 한도, 리셋 시각 등)를 주기적으로 업스트림에서 관측하여 리소스 엔드포인트로 노출합니다.
-4. **`pipaya-extension-quota-monitor` (본 확장)**: pipaya 클라이언트에 설치되어 quota-monitor의 관측 데이터를 수집하고, 채팅창 상단 네비게이션 바에 실시간 원형 링 게이지와 상세 팝오버를 직관적으로 렌더링합니다.
+1. **dohwi/pipaya**: a coding agent with a Bun + Fastify backend and a Svelte 5 + Tauri 2 frontend. It ships a sandboxed extension system (SDK v1) built on opaque-origin Web Workers.
+2. **CLIProxyAPI (`cliproxy`)**: a gateway that routes and proxies multiple accounts and keys of providers such as Claude, Codex and Gemini in one place.
+3. **`cliproxyapi-plugin-quota-monitor` plugin**: a native plugin loaded directly by the CLIProxyAPI server ([dohwi/cliproxyapi-plugin-quota-monitor](https://github.com/dohwi/cliproxyapi-plugin-quota-monitor)). It periodically observes the real limits of each provider account (5-hour window, weekly limit, reset time and so on) from the upstream and exposes them through a management endpoint.
+4. **`pipaya-extension-quota-monitor` (this extension)**: installed in the pipaya client. It reads the quota-monitor data and renders live ring gauges and a detail popover in the navbar above the chat.
 
 ---
 
-## 어떤 것을 구현할 수 있게 해주는가? (Features)
+## Features
 
-에이전트와 대화하는 도중 한도가 얼마나 남았는지 확인하기 위해 별도 대시보드나 CLI를 열 필요 없이, pipaya 상단 바에서 실시간 현황을 파악할 수 있습니다.
+You can check how much quota is left while talking to the agent, without opening a separate dashboard or CLI.
 
-### 1. 전체 잔량 기준 원형 링 게이지
-- 토큰 사용량이나 비용 추산치가 아닌 **upstream `availability[].remaining_percent`** 값 그대로 링을 채웁니다.
-- 고정 브랜드 순서: **Claude** (주황) → **GPT / Codex** (녹색) → **Antigravity** (이중 링). (직접 연결된 Gemini 계정이 있는 경우 GPT와 Antigravity 사이에 자동 배치)
-- **Antigravity 전용 이중 링**: 바깥 링은 Gemini 잔량, 안쪽 링은 Claude via Antigravity 잔량으로 분리 표시하여 공식 계정과 혼동되지 않습니다.
+### 1. Ring gauges based on overall remaining quota
+- Rings are filled with the **upstream `availability[].remaining_percent`** value itself, not with token usage or cost estimates.
+- Fixed brand order: **Claude** (orange) → **GPT / Codex** (green) → **Antigravity** (dual ring). If a directly connected Gemini account exists, it is placed before Antigravity automatically.
+- **Only providers you have accounts for are shown**: if there is no GPT (Codex) account, the GPT gauge is not shown at all, even if the server sends a value for it.
+- **Antigravity dual ring**: the outer ring is the Gemini remaining quota and the inner ring is the Claude/GPT-via-Antigravity remaining quota, so they are never confused with the official accounts.
 
-### 2. 잔여량 위험도별 동적 색상 에스컬레이션
-- **정상 (20% 초과)**: 공급자 고유 브랜드 컬러 유지
-- **주의 (20% 이하)**: 경고 황색 (`warn`)
-- **위험 (5% 이하)**: 한도 소진 임박 적색 (`danger`)
+### 2. Colour escalation by remaining quota
+- **Normal (above 20%)**: the provider's brand colour
+- **Warning (20% or less)**: amber (`warn`)
+- **Critical (5% or less)**: red (`danger`), close to exhaustion
 
-### 3. 간결한 전체 잔량 팝오버
-- 게이지에 마우스 오버 또는 키보드 포커스 시 전체 잔량만 표시합니다.
-- Claude·GPT·직접 연결된 Gemini는 잔량 막대 하나, Antigravity는 Gemini와 Claude/GPT 잔량 막대를 각각 표시합니다.
-- 전체 가용률·이용률 같은 집계 라벨, 5시간·주간·세부 버킷 한도 및 리셋 시각은 표시하지 않습니다.
-- 팝오버 하단에 quota-monitor가 실제 측정한 시각 기준으로 `N초 전 업데이트됨`을 1초마다 실시간 갱신합니다.
+### 3. A compact overall-remaining popover
+- Hovering or focusing a gauge shows only the overall remaining quota.
+- Claude, GPT and directly connected Gemini show one remaining bar. Antigravity shows two bars: Gemini and Claude/GPT.
+- Aggregate labels such as availability or usage rate, 5-hour / weekly / per-bucket limits and reset times are not shown.
+- The footer shows `Updated N seconds ago`, refreshed every second, based on the time quota-monitor actually measured the data.
 
-### 4. upstream 전체 잔량과 일치하는 표시
-- **서버 집계값 직접 사용**: `claude`, `codex`, `antigravity_gemini`, `antigravity_claude` 키를 각 링에 매핑합니다. 최근 사용 계정이나 계정별 최저 잔량으로 대체하지 않습니다.
-- **집계 규칙은 upstream 소유**: 5시간 잔량, 주간 소진에 따른 차단, 계정 포함 여부와 전체 평균은 서버가 계산하며 확장은 재계산하지 않습니다.
-- **미확인 값 보존**: `availability` 또는 해당 항목이 없거나 비율이 유효하지 않으면 링을 미확인으로 표시합니다. 이 필드를 제공하는 quota-monitor 버전이 필요합니다.
-- **일관된 잔량 표시**: 링과 팝오버는 동일한 서버 집계값만 사용하며 계정별 한도는 표시하거나 재계산하지 않습니다.
+### 4. Matches the upstream overall remaining quota
+- **Server aggregates are used as is**: the keys `claude`, `codex`, `antigravity_gemini` and `antigravity_claude` map to the rings. The extension never substitutes the most recently used account or the lowest per-account remaining quota.
+- **Aggregation rules belong to the upstream**: 5-hour remaining quota, blocking on weekly exhaustion, which accounts are included and the fleet average are all computed by the server. The extension does not recompute them.
+- **Unknown stays unknown**: if `availability` or the matching entry is missing, or the ratio is invalid, the ring is shown as unknown. You need a quota-monitor version that provides this field.
+- **Consistent display**: the ring and the popover use the same server aggregate. Per-account limits are neither shown nor recomputed.
 
-### 5. 에이전트 라이프사이클 이벤트 연동
-- 코딩 에이전트가 턴을 완료하면(`run_finished` 이벤트), 2.5초 후 즉시 후속 갱신을 예약하여 에이전트 작업으로 소진된 쿼터가 즉각 반영됩니다.
+### 5. Agent lifecycle integration
+- When the coding agent finishes a turn (`run_finished` event), a follow-up refresh is scheduled after 2.5 seconds, so quota consumed by the agent shows up immediately.
 
-### 6. 엄격한 제로 트러스트 샌드박스 보안
-- 브라우저의 Opaque-origin Worker 샌드박스에서 격리 실행되어 DOM 직접 조작, Tauri 내부 권한, 앱 인증 토큰에 접근할 수 없습니다.
-- quota-monitor v0.2.0부터 데이터는 관리 인증 경로에서만 제공됩니다. 확장은 읽기 전용 스냅샷만 조회합니다. 관리 키(`httpToken`)는 `settingsScope: server`에 따라 서버의 `extensions/quota-monitor/settings.json`에 **평문으로 저장되고**, 서버에 연결된 모든 기기가 같은 값을 받아 각 기기의 로컬 저장소에도 캐시됩니다. 서버 토큰을 가진 사람은 이 관리 키를 읽을 수 있습니다. `secret` 필드는 비밀번호 입력으로 표시되고 configuration 내보내기에서는 제외됩니다. 기기를 분실하면 서버 토큰과 함께 관리 키도 교체하세요.
+### 6. Strict zero-trust sandbox
+- It runs isolated in a browser opaque-origin Worker sandbox and cannot touch the DOM directly, Tauri internal permissions or the app auth token.
+- Since quota-monitor v0.2.0 the data is served only on the authenticated management route. The extension reads read-only snapshots. The management key (`httpToken`) is **stored in plain text** in the server's `extensions/quota-monitor/settings.json` (`settingsScope: server`). Every device connected to the server receives the same value and caches it in its local storage. Anyone holding a server token can read this management key. `secret` fields are shown as password inputs and are excluded from configuration exports. If you lose a device, rotate the management key together with the server token.
 
 ---
 
-## 어디서 정보를 받아오는가? (Data Source)
+## Data Source
 
-- **데이터 엔드포인트**:
+- **Data endpoint**:
   ```text
   GET <httpOrigin>/v0/management/plugins/quota-monitor/data/accounts
   ```
-- **데이터 제공 주체**: CLIProxyAPI 서버의 `quota-monitor` 플러그인
-- **수집 방식**:
-  - `sdk.http.requestJson({ path })`으로 스냅샷을 조회합니다. 호스트가 확장 자신의 `httpToken`을 `Authorization: Bearer` 헤더로 첨부하며, 키를 URL에 넣거나 직접 헤더를 구성하지 않습니다.
-  - 쿠키와 앱 서버 인증 토큰은 전송하지 않으며 HTTP Redirect를 거부합니다. SDK 제약으로 `http-write` 권한이 필요하지만 이 확장의 요청은 GET뿐입니다.
-  - 키가 없거나 401/403으로 거부되면 네트워크 요청을 중단하고 로컬 설정만 다시 확인합니다. 키가 바뀌면 복구합니다. 호스트의 5회 인증 실패 / 30분 IP 차단을 피하기 위한 보호입니다.
-  - 에이전트 실행 완료 이벤트(`run_finished`) 발생 시 2.5초 후 즉시 조회 트리거
-  - 주기적인 백그라운드 폴링 (서버 힌트 또는 사용자 지정 주기, 기본 60초)
-  - 2초 이내 중복 호출 방지(Debouncing) 및 네트워크 장애 시 지수 백오프 (최대 5분) 적용
+- **Provided by**: the `quota-monitor` plugin on the CLIProxyAPI server
+- **How it is collected**:
+  - The snapshot is read with `sdk.http.requestJson({ path })`. The host attaches the extension's own `httpToken` as an `Authorization: Bearer` header. The key is never put in the URL and the extension never builds the header itself.
+  - Cookies and the app server auth token are not sent, and HTTP redirects are rejected. The SDK requires the `http-write` permission, but this extension only sends GET requests.
+  - If the key is missing or rejected with 401/403, network requests stop and only the local settings are re-checked. Requests resume once the key changes. This avoids the host's ban of an IP for 30 minutes after five failed authentications.
+  - When the agent run-finished event (`run_finished`) fires, a fetch is triggered after 2.5 seconds.
+  - Periodic background polling (server hint or user-defined interval, 60 seconds by default).
+  - Calls within 2 seconds of each other are debounced, and network failures back off exponentially (up to 5 minutes).
 
 ---
 
 ## Getting Started
 
-[mise](https://mise.jdx.dev)를 통해 개발 및 빌드 환경을 설정합니다:
+Set up the development and build environment with [mise](https://mise.jdx.dev):
 
 ```bash
-# 런타임 활성화
+# Activate the runtime
 mise trust
 mise install
 
-# 번들 빌드 및 테스트 일괄 검증
+# Build the bundle and run all tests
 npm run check
 ```
 
-### pipaya 클라이언트에 확장 설치하기
+### Install the extension in the pipaya client
 
-1. 빌드된 단일 JSON 패키지 파일을 확인합니다:
+1. Locate the built single JSON package:
    ```text
    dist/quota-monitor.json
    ```
-2. `dohwi/pipaya` 클라이언트를 실행하고 **설정(Settings) → 확장(Extensions)** 메뉴로 이동합니다.
-3. **패키지 가져오기**를 클릭하여 `dist/quota-monitor.json` 파일을 선택합니다.
-4. 확장 설정에서 CLIProxyAPI 서버 origin과 관리 키를 입력하고 **설정 저장**을 누릅니다:
+2. Start the `dohwi/pipaya` client and go to **Settings → Extensions**.
+3. Click **Import package** and choose `dist/quota-monitor.json`.
+4. In the extension settings, enter the CLIProxyAPI origin and the management key, then click **Save settings**:
    ```json
    {
      "httpOrigin": "https://your-cliproxy.example",
@@ -162,57 +169,64 @@ npm run check
      "pollSeconds": 60
    }
    ```
-   > **Note**: `httpOrigin`은 경로(`/v0/...`)나 API 키가 없는 순수 `http(s)://host:port` 형식이어야 합니다. `pollSeconds`를 비워두면 서버 hint(통상 60초)를 자동으로 따릅니다.
-5. 요청 권한(`navbar`, `http-write`, `events`)을 확인하고 동의한 뒤 **Quota Monitor 사용** 스위치를 켭니다. v0.1.0/v0.2.0에서 업데이트할 때는 같은 ID의 JSON을 다시 가져온 뒤 새 권한을 승인해야 합니다. 설정은 `settingsScope: server`라서 한 기기에서 `httpOrigin`·`httpToken`을 저장하면 서버를 통해 모든 기기에 동기화됩니다. 단, 확장을 켜는 스위치와 권한 승인은 기기별로 따로 해야 합니다. v0.2.0에서 기기 로컬에 저장한 키가 있으면 서버 값이 우선합니다.
-6. 상단 네비게이션 바에 실시간 원형 쿼터 게이지가 표시됩니다.
+   > **Note**: `httpOrigin` must be a plain `http(s)://host:port` origin with no path (`/v0/...`) and no API key. If you leave `pollSeconds` empty, the server hint (usually 60 seconds) is followed.
+5. Review the requested permissions (`navbar`, `http-write`, `events`), approve them and turn on the **Use Quota Monitor** switch. When updating from v0.1.0/v0.2.0, import the JSON with the same ID again and approve the new permissions. Settings use `settingsScope: server`, so saving `httpOrigin` and `httpToken` on one device syncs them to all devices through the server. The enable switch and the permission approval, however, are per device. If you stored a key locally on a device with v0.2.0, the server value takes precedence.
+6. Live ring quota gauges appear in the top navigation bar.
 
 ---
 
 ## Configuration
 
-`manifest.json`에 정의된 확장 설정 필드:
+Extension settings defined in `manifest.json`:
 
 | Field | Type | Default | Description |
 |---|---|:---:|---|
-| `httpOrigin` | `string (origin)` | *(필수)* | quota-monitor 플러그인이 설치된 CLIProxyAPI의 origin 주소 (예: `http://100.85.51.107:8317`) |
-| `httpToken` | `string (secret)` | *(필수)* | CLIProxyAPI 관리 키. 서버에 평문 저장되어 모든 기기와 동기화, configuration 내보내기 제외, URL 미전송 |
-| `pollSeconds` | `number` | `null` | 백그라운드 갱신 주기(초, 10~900초). 비워두면 서버 hint 주기를 따름 |
+| `httpOrigin` | `string (origin)` | *(required)* | Origin of the CLIProxyAPI that has the quota-monitor plugin installed (e.g. `http://100.85.51.107:8317`) |
+| `httpToken` | `string (secret)` | *(required)* | CLIProxyAPI management key. Stored in plain text on the server and synced to all devices, excluded from configuration exports, never sent in a URL |
+| `language` | `select` | `auto` | Display language. `auto` follows the language of the program running pipaya; you can pin it to `ko` or `en` |
+| `pollSeconds` | `number` | `null` | Background refresh interval in seconds (10–900). If empty, the server hint interval is used |
+
+### Language
+
+With `auto` (the default), the extension follows the language the program reports, the same rule the pipaya client uses: the first supported preference wins, unsupported languages fall back to English, and an unknown environment falls back to Korean. Messages live in `src/i18n.mjs`; a key missing in one language falls back to Korean.
 
 ---
 
 ## Development & Verification
 
-각 모듈은 순수 모델 계층과 SDK 목(Mock) 계층으로 완전히 분리되어 노드 내장 테스트 환경에서 격리 검증됩니다.
+The pure model layer and the SDK mock layer are fully separated, so each module is verified in isolation with Node's built-in test runner.
 
 ```bash
-# 단일 비동기 Worker 코드 번들링 및 dist/quota-monitor.json 생성
+# Bundle the worker code into a single async body and generate dist/quota-monitor.json
 npm run build
 
-# Node.js 내장 테스트 슈트 실행
+# Run the Node.js built-in test suite
 npm test
 
-# 빌드 및 테스트 일괄 검증
+# Build and test together
 npm run check
 ```
 
-### 소스코드 구조
+### Source layout
 
 ```
 pipaya-extension-quota-monitor/
 ├── dist/
-│   └── quota-monitor.json        # pipaya 클라이언트에서 가져올 최종 배포 패키지
-├── docs/                         # 데스크톱/모바일 UI 미리보기 에셋
+│   └── quota-monitor.json        # Final package to import into the pipaya client
+├── docs/                         # Desktop/mobile UI preview assets
 ├── scripts/
-│   ├── build.mjs                 # 소스 모듈 번들링 및 무결성 검증
-│   └── check-browser.cjs         # 헤드리스 브라우저 통합 QA 스크립트
+│   ├── build.mjs                 # Bundles the source modules and validates integrity
+│   └── check-browser.cjs         # Headless-browser integration QA script
 ├── src/
-│   ├── extension.js              # SDK 라이프사이클, 타이머 및 이벤트 핸들러
-│   ├── model.mjs                 # 전체 잔량 매핑, 관측 시각 및 폴링 정책
-│   ├── view.mjs                  # 선언형 navbar UI 노드 생성기
-│   └── logos.mjs                 # 브랜드별 인라인 SVG Path 데이터
-├── tests/                        # 노드 단위 및 SDK 모의 테스트
-├── manifest.json                 # 확장 권한 명세 및 설정 스키마
+│   ├── extension.js              # SDK lifecycle, timers and event handlers
+│   ├── i18n.mjs                  # Korean/English message catalog and language selection
+│   ├── model.mjs                 # Overall-remaining mapping, observation time and polling policy
+│   ├── view.mjs                  # Declarative navbar UI node builder
+│   └── logos.mjs                 # Inline SVG path data per brand
+├── tests/                        # Node unit tests and SDK mock tests
+├── manifest.json                 # Extension permission spec and settings schema
 ├── package.json
 ├── mise.toml
-└── README.md
+├── README.md                     # English
+└── README.ko.md                  # 한국어
 ```
