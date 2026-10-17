@@ -71,7 +71,7 @@ test('navbar item is generic data: bounded non-interactive nodes, icons as path 
     accounts: [{ provider: 'antigravity', windows: [{ name: 'Gemini weekly', used_percent: 51 }, { name: 'Claude/GPT weekly', used_percent: 67 }] }] }));
   const item = run.calls.at(-1);
   assert.ok(item.label.length <= 40);
-  assert.deepEqual(item.view.children.map(g => g.id), ['claude', 'gpt', 'antigravity']);
+  assert.deepEqual(item.view.children.map(g => g.id), ['claude', 'antigravity']);
   const ag = item.view.children.find(g => g.id === 'antigravity');
   assert.deepEqual(ag.rings.map(r => [r.label, r.value]), [['Gemini 잔량', 49], ['Claude via Antigravity 잔량', 33]]);
   assert.equal(ag.display, undefined, 'no percentage text in the navbar itself');

@@ -15,7 +15,6 @@ let model = {
   label: t('title'),
   gauges: [
     { id: 'claude', label: 'Claude', brand: 'claude', remainingPercent: null },
-    { id: 'gpt', label: 'GPT', brand: 'gpt', remainingPercent: null },
     { id: 'antigravity', label: 'Antigravity', brand: 'antigravity', remainingPercent: null }
   ]
 };

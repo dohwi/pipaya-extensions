@@ -26,14 +26,20 @@ test('Antigravity families and native Claude never merge', () => {
     account('codex', [win('primary', 8)])
   ], [fleet('claude', 76), fleet('codex', 92), fleet('antigravity_gemini', 58), fleet('antigravity_claude', 27)]));
   assert.deepEqual(rem(view), [['claude', 76], ['gpt', 92], ['antigravity', 58]]);
-  assert.equal(view.gauges[2].innerRemainingPercent, 27);
-  assert.deepEqual(view.gauges[2].rows, [{ label: '잔량', value: 58 }]);
-  assert.deepEqual(view.gauges[2].innerRows, [{ label: '잔량', value: 27 }]);
+  assert.equal(view.gauges.at(-1).innerRemainingPercent, 27);
+  assert.deepEqual(view.gauges.at(-1).rows, [{ label: '잔량', value: 58 }]);
+  assert.deepEqual(view.gauges.at(-1).innerRows, [{ label: '잔량', value: 27 }]);
 });
 
-test('native Gemini is shown only when present, between GPT and Antigravity', () => {
+test('native Gemini is shown only when present, between Claude and Antigravity', () => {
   const view = navbarFromSnapshot(snapshot([account('gemini-cli', [win('daily', 17)])], [fleet('gemini', 83)]));
-  assert.deepEqual(rem(view), [['claude', null], ['gpt', null], ['gemini', 83], ['antigravity', null]]);
+  assert.deepEqual(rem(view), [['claude', null], ['gemini', 83], ['antigravity', null]]);
+});
+
+test('GPT gauge is omitted entirely when there is no GPT account', () => {
+  const view = navbarFromSnapshot(snapshot([account('claude', [win('weekly', 10)])], [fleet('claude', 90), fleet('codex', 50)]));
+  assert.deepEqual(rem(view), [['claude', 90], ['antigravity', null]]);
+  assert.ok(!view.gauges.some(g => g.id === 'gpt'));
 });
 
 test('stale snapshots and accounts retain upstream readings', () => {
@@ -72,18 +78,18 @@ test('missing and malformed fleet values remain unknown with no account detail f
 });
 
 test('fleet values work without raw accounts and zero remains authoritative', () => {
-  const view = navbarFromSnapshot(snapshot([], [fleet('claude', 0), fleet('codex', 100),
+  const view = navbarFromSnapshot(snapshot([account('codex', [])], [fleet('claude', 0), fleet('codex', 100),
     fleet('antigravity_gemini', 70.2), fleet('antigravity_claude', 0)]));
   assert.deepEqual(rem(view), [['claude', 0], ['gpt', 100], ['antigravity', 70.2]]);
-  assert.equal(view.gauges[2].innerRemainingPercent, 0);
-  assert.deepEqual(view.gauges[2].innerRows, [{ label: '잔량', value: 0 }]);
+  assert.equal(view.gauges.at(-1).innerRemainingPercent, 0);
+  assert.deepEqual(view.gauges.at(-1).innerRows, [{ label: '잔량', value: 0 }]);
 });
 
 test('a missing Antigravity family never borrows the other family availability', () => {
   for (const key of ['antigravity_gemini', 'antigravity_claude']) {
     const view = navbarFromSnapshot(snapshot([account('antigravity', [win('Gemini five hour', 0), win('Claude five hour', 0)])], [fleet(key, 61.3)]));
-    assert.equal(view.gauges[2].remainingPercent, key === 'antigravity_gemini' ? 61.3 : null);
-    assert.equal(view.gauges[2].innerRemainingPercent, key === 'antigravity_claude' ? 61.3 : null);
+    assert.equal(view.gauges.at(-1).remainingPercent, key === 'antigravity_gemini' ? 61.3 : null);
+    assert.equal(view.gauges.at(-1).innerRemainingPercent, key === 'antigravity_claude' ? 61.3 : null);
   }
 });
 
@@ -111,5 +117,5 @@ test('observedAt takes the newest valid timestamp and ignores garbage', () => {
   assert.equal(observedAt({ last_success: '2026-01-01T00:00:10Z', observed_at: '2026-01-01T00:00:20Z' }), Date.parse('2026-01-01T00:00:20Z'));
   assert.equal(observedAt({ windows: [{ observed_at: '2026-01-01T00:00:20Z' }] }), Date.parse('2026-01-01T00:00:20Z'));
   const view = navbarFromSnapshot(snapshot([account('antigravity', [], { observed_at: '2026-01-01T00:00:20Z' })]));
-  assert.equal(view.gauges[2].updatedAt, Date.parse('2026-01-01T00:00:20Z'));
+  assert.equal(view.gauges.at(-1).updatedAt, Date.parse('2026-01-01T00:00:20Z'));
 });

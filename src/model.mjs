@@ -43,8 +43,10 @@ export function navbarFromSnapshot(snapshot) {
   };
   const ag = byProvider('antigravity');
   const gemini = byProvider('gemini');
-  // Fixed order: Claude, GPT, (native Gemini only when present), Antigravity.
-  const gauges = [gauge('claude', 'Claude', 'claude', byProvider('claude')), gauge('gpt', 'GPT', 'gpt', byProvider('gpt'), 'codex')];
+  // Fixed order: Claude, (GPT only when a GPT account exists), (native Gemini only when present), Antigravity.
+  const gpt = byProvider('gpt');
+  const gauges = [gauge('claude', 'Claude', 'claude', byProvider('claude'))];
+  if (gpt.length) gauges.push(gauge('gpt', 'GPT', 'gpt', gpt, 'codex'));
   if (gemini.length) gauges.push(gauge('gemini', 'Gemini', 'gemini', gemini));
   const outer = gauge('antigravity', 'Antigravity', 'antigravity', ag, 'antigravity_gemini');
   const inner = fleetSummary('antigravity_claude', ag);
