@@ -5,6 +5,20 @@ let timer;
 let busy = false;
 let again = false;
 
+let language = '';
+
+// Names follow the UI language (민수 <-> Minsu): peer-tools renames, then tells us through a names_changed event.
+async function followLanguage() {
+  try {
+    const next = (await sdk.context.get()).language;
+    if (!next || next === language) return;
+    language = next;
+    await sdk.server.call('peer-tools', 'localize', { lang: next });
+  } catch (error) {
+    // offline or peer-tools missing: names just stay
+  }
+}
+
 async function refresh() {
   if (busy) { again = true; return; }
   busy = true;
@@ -30,9 +44,11 @@ function schedule() {
 
 await sdk.messages.setHeader(SENDER);
 await sdk.events.on(event => {
+  if (event.type === 'language_changed') void followLanguage().then(schedule);
   if (event.type === 'session_created' || event.type === 'session_updated' || event.type === 'session_deleted' || event.type === 'run_finished') schedule();
 });
 await sdk.server.on(event => {
   if (event.extension === 'peer-tools') schedule();
 });
+await followLanguage();
 await refresh();

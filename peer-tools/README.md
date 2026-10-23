@@ -16,12 +16,13 @@
 - Adds `peer_read`: read the latest messages (text only) of another chat.
 - At most 10 `peer_send` calls per run, so two chats cannot answer each other forever. `peer_read` output is capped.
 - Both tools can be switched off in Settings → Tools.
+- Gives every active chat a short `@name` (a Korean first name, or its romanized twin when the UI is not Korean) and keeps it in the chat itself. A closed chat gives its name up. With [peer-names](../peer-names) installed, names follow the UI language (the language tag is kept in this extension's settings).
 
 > Before this existed as an extension, the same two tools were built into the server. Install it to keep them.
 
 ## Requirements
 
-- A pipaya server with `pi.sessions`, `pi.groups` and the tool options `alwaysActive` / `switchable` (commit 936bab8 or newer; the first release after 0.3.7).
+- A pipaya server with `pi.sessions.data`, `pi.groups`, `pi.settings` and the tool options `alwaysActive` / `switchable` (the release after 0.3.11). Chats named by older servers keep their names.
 
 ## Install
 

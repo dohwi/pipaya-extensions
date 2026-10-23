@@ -16,7 +16,7 @@ pipaya 코어는 이 이름들을 모릅니다. 이 확장이 없으면 아무�
 
 ## 권한
 
-`server`(peer-tools의 overview 읽기), `events`, `session-labels`, `composer-mentions`, `messages`.
+`server`(peer-tools의 overview 읽기, 언어를 바꾸면 이름 변환 요청), `events`, `context`(UI 언어), `session-labels`, `composer-mentions`, `messages`.
 
 ## 빌드
 

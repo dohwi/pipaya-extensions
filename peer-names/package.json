@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-peer-names",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "대화에 붙은 @이름을 사이드바와 헤더에 보여주고, 입력창에서 @이름·@그룹 자동완성과 강조, 다른 대화가 보낸 메시지 말풍선을 그립니다. peer-tools(서버 확장)와 함께 쓰세요.",
   "private": true,
   "type": "module",

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { nameInLang, nextMemberName, poolForLang, poolOfName } from "./names.ts";
 // peer-tools: lets an agent message and read the other active sessions of this server, by `@name` or `@group`.
 const MAX_SENDS_PER_RUN = 10;
 const MESSAGE_CHARS = 600;
@@ -115,7 +116,32 @@ export default (pi: any) => {
 	pi.on("agent_start", (e: { sessionId: string }) => void sends.delete(e.sessionId));
 	pi.on("session_shutdown", (e: { sessionId: string }) => void sends.delete(e.sessionId));
 
-	const peers = (self: string) => pi.sessions.list({ closed: false }).filter((s: any) => s.id !== self && s.name);
+	/**
+	 * The active sessions with their `@name`. Names live in this extension's own session values (`pi.sessions.data`); a session
+	 * that has none yet, or shares one with an older session (e.g. after being reopened), gets the next free name here.
+	 */
+	const named = (): any[] => {
+		const active: any[] = [...pi.sessions.list({ closed: false })].sort((a, b) => a.createdAt - b.createdAt);
+		const stored: Record<string, string> = pi.sessions.data.list("name");
+		const taken = new Set<string>(pi.groups.list().map((g: any) => groupHandle(g.name).toLowerCase()));
+		const lang = pi.settings.get().language as string | undefined;
+		const seen = new Set<string>();
+		for (const sess of active) { const n = stored[sess.id]; if (typeof n === "string" && n && !seen.has(n.toLowerCase())) seen.add(n.toLowerCase()); }
+		const used = new Set<string>([...seen, ...taken]);
+		const done = new Set<string>();
+		return active.map((sess) => {
+			let name = stored[sess.id];
+			if (typeof name !== "string" || !name || done.has(name.toLowerCase())) {
+				name = nextMemberName(used, typeof name === "string" && name ? poolOfName(name) : poolForLang(lang));
+				used.add(name.toLowerCase());
+				pi.sessions.data.set(sess.id, "name", name);
+				pi.emit(null, "names_changed", {}, { ephemeral: true });
+			}
+			done.add(name.toLowerCase());
+			return { ...sess, name };
+		});
+	};
+	const peers = (self: string) => named().filter((s: any) => s.id !== self);
 	const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 	const find = (self: string, name: string) => {
 		const all = peers(self);
@@ -125,8 +151,8 @@ export default (pi: any) => {
 	};
 	/** A one-line picture of a session for a tag: role, state, branch, directory and its last words. Never the transcript. */
 	const brief = (id: string): Brief | null => {
-		const r = pi.sessions.get(id);
-		if (!r || r.closed || !r.name) return null;
+		const r = named().find((x: any) => x.id === id);
+		if (!r) return null;
 		const lastAssistant = [...pi.sessions.messages(id, 6)].reverse().find((x: any) => x.message.role === "assistant");
 		const content = Array.isArray(lastAssistant?.message.content) ? lastAssistant.message.content : [];
 		const last = content.filter((c: any) => c.type === "text").map((c: any) => c.text ?? "").join(" ");
@@ -157,9 +183,30 @@ export default (pi: any) => {
 
 	// For the `peer-names` client extension: who can be addressed right now (names, roles and groups). Read-only.
 	pi.registerMethod("overview", () => ({
-		sessions: pi.sessions.list({ closed: false }).filter((s: any) => s.name).map((s: any) => ({ id: s.id, name: s.name, title: s.title, purpose: s.purpose, cwd: s.cwd })),
+		sessions: named().map((s: any) => ({ id: s.id, name: s.name, title: s.title, purpose: s.purpose, cwd: s.cwd })),
 		groups: pi.groups.list().map((g: any) => ({ name: g.name, handle: groupHandle(g.name), sessionIds: g.sessionIds })),
 	}));
+
+	// A client extension (peer-names) tells which UI language the user switched to: every name becomes its twin in it (민수 <-> Minsu).
+	pi.registerMethod("localize", (p: { lang?: unknown }) => {
+		const lang = typeof p?.lang === "string" && p.lang.length <= 35 ? p.lang : "";
+		if (!lang) throw new Error("lang is required");
+		pi.settings.set({ ...pi.settings.get(), language: lang });
+		const active = named();
+		const stored: Record<string, string> = pi.sessions.data.list("name");
+		const used = new Set<string>(active.map((s: any) => s.name.toLowerCase()));
+		let renamed = 0;
+		for (const [id, name] of Object.entries(stored)) {
+			let next = nameInLang(name, lang);
+			if (next === name) continue;
+			if (active.some((s: any) => s.id === id) && used.has(next.toLowerCase())) next = nextMemberName(used, poolForLang(lang));
+			used.add(next.toLowerCase());
+			pi.sessions.data.set(id, "name", next);
+			renamed++;
+		}
+		if (renamed) pi.emit(null, "names_changed", {}, { ephemeral: true });
+		return { renamed };
+	});
 
 	const reply = (text: string, details: Record<string, unknown>) => ({ content: [{ type: "text", text }], details });
 
@@ -172,7 +219,6 @@ export default (pi: any) => {
 			to: T.String({ minLength: 1, maxLength: 60, description: "Member name, without @" }),
 			message: T.String({ minLength: 1, maxLength: 8000, description: "What to tell or ask; include all context it needs" }),
 		}),
-		mutating: false,
 		alwaysActive: true,
 		switchable: true,
 		async execute(_id: string, p: { to: string; message: string }, ctx: { sessionId: string }) {
@@ -186,7 +232,7 @@ export default (pi: any) => {
 			const count = (sends.get(ctx.sessionId) ?? 0) + 1;
 			if (count > MAX_SENDS_PER_RUN) throw new Error(`at most ${MAX_SENDS_PER_RUN} peer messages per run; stop and report to the user instead`);
 			sends.set(ctx.sessionId, count);
-			const self = pi.sessions.get(ctx.sessionId)?.name;
+			const self = pi.sessions.data.get(ctx.sessionId, "name") ?? named().find((x: any) => x.id === ctx.sessionId)?.name;
 			const text = `[from @${self}, another session on this server; answer with peer_send to @${self} only if a reply is needed]\n${p.message}`;
 			const done = await Promise.all(targets.map(async (t: any) => {
 				await pi.sessions.send(t.id, text);
@@ -204,7 +250,6 @@ export default (pi: any) => {
 			from: T.String({ minLength: 1, maxLength: 60, description: "Member name, without @" }),
 			count: T.Optional(T.Integer({ minimum: 1, maximum: 40, description: "How many recent messages (default 10)" })),
 		}),
-		mutating: false,
 		alwaysActive: true,
 		switchable: true,
 		async execute(_id: string, p: { from: string; count?: number }, ctx: { sessionId: string }) {

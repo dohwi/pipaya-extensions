@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-peer-tools",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Lets an agent message (`peer_send`) and read (`peer_read`) the other active chats of the server, by name or group.",
   "license": "MIT",
   "author": "dohwi",

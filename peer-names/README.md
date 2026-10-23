@@ -16,7 +16,7 @@ Install the server extension [peer-tools](../peer-tools) too: it provides `peer_
 
 ## Permissions
 
-`server` (reads `peer-tools` overview), `events`, `session-labels`, `composer-mentions`, `messages`.
+`server` (reads `peer-tools` overview, asks it to rename on a language switch), `events`, `context` (the UI language), `session-labels`, `composer-mentions`, `messages`.
 
 ## Build
 
