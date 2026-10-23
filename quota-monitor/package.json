@@ -13,7 +13,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/dohwi/pipaya-extensions.git",
-    "directory": "extensions/quota-monitor"
+    "directory": "quota-monitor"
   },
   "author": "dohwi",
   "pipaya": {

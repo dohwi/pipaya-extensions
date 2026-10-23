@@ -31,7 +31,7 @@ bun scripts/market.ts install prompt-templates        # copies to ~/.pipaya/exte
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
-Or copy this folder (`extensions/prompt-templates`) into `~/.pipaya/extensions/prompt-templates/` and reload. To turn it off, remove the folder and reload.
+Or copy this folder (`prompt-templates`) into `~/.pipaya/extensions/prompt-templates/` and reload. To turn it off, remove the folder and reload.
 
 ## Security
 

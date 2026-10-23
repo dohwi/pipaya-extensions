@@ -31,7 +31,7 @@ bun scripts/market.ts install session-retention        # copies to ~/.pipaya/ext
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
-Or copy this folder (`extensions/session-retention`) into `~/.pipaya/extensions/session-retention/` and reload. To turn it off, remove the folder and reload.
+Or copy this folder (`session-retention`) into `~/.pipaya/extensions/session-retention/` and reload. To turn it off, remove the folder and reload.
 
 ## Security
 

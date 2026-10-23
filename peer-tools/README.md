@@ -31,7 +31,7 @@ bun scripts/market.ts install peer-tools        # copies to ~/.pipaya/extensions
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
-Or copy this folder (`extensions/peer-tools`) into `~/.pipaya/extensions/peer-tools/` and reload. To turn it off, remove the folder and reload.
+Or copy this folder (`peer-tools`) into `~/.pipaya/extensions/peer-tools/` and reload. To turn it off, remove the folder and reload.
 
 ## Security
 

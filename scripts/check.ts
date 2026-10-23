@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
-// Checks the extensions in extensions/: package.json fields, the entry file, and the tests that can run here.
+// Checks every top-level folder that holds an extension (one folder = one extension): package.json fields, the entry file, and the tests that can run here.
 //   bun scripts/check.ts                 every extension
 //   bun scripts/check.ts peer-tools      one extension (set PIPAYA_APP=<pipaya>/server to run its server tests too)
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");
-const DIR = join(ROOT, "extensions");
+const DIR = ROOT;
 const ID = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const only = process.argv[2];
 
@@ -20,7 +20,7 @@ export function checkExtension(id: string, dir = join(DIR, id)): Problem[] {
 	try { pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")); } catch { return [...errs, "package.json is missing or not valid JSON"]; }
 	for (const k of ["name", "version", "description", "license", "author"]) if (typeof pkg[k] !== "string" || !pkg[k]) errs.push(`package.json: "${k}" is required`);
 	if (typeof pkg.version === "string" && !/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(pkg.version)) errs.push(`package.json: version "${pkg.version}" is not x.y.z`);
-	if (pkg.repository?.directory !== `extensions/${id}`) errs.push(`package.json: repository.directory must be "extensions/${id}"`);
+	if (pkg.repository?.directory !== id) errs.push(`package.json: repository.directory must be "${id}"`);
 	if (!existsSync(join(dir, "README.md"))) errs.push("README.md is missing");
 	const client = existsSync(join(dir, "manifest.json"));
 	if (client) {
@@ -38,7 +38,7 @@ function run(cmd: string[], cwd: string): boolean {
 }
 
 if (import.meta.main) {
-	const ids = readdirSync(DIR, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith(".")).map((d) => d.name).filter((n) => !only || n === only);
+	const ids = readdirSync(DIR, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith(".") && d.name !== "node_modules" && d.name !== "scripts" && existsSync(join(ROOT, d.name, "package.json"))).map((d) => d.name).filter((n) => !only || n === only);
 	if (only && !ids.length) { console.error(`no extension "${only}"`); process.exit(1); }
 	let failed = 0;
 	for (const id of ids) {

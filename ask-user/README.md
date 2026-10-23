@@ -29,7 +29,7 @@ bun scripts/market.ts install ask-user        # copies to ~/.pipaya/extensions/a
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
-Or copy this folder (`extensions/ask-user`) into `~/.pipaya/extensions/ask-user/` and reload. To turn it off, remove the folder and reload: without it the agent never asks and simply assumes.
+Or copy this folder (`ask-user`) into `~/.pipaya/extensions/ask-user/` and reload. To turn it off, remove the folder and reload: without it the agent never asks and simply assumes.
 
 ## Security
 

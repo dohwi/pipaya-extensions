@@ -10,6 +10,6 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/dohwi/pipaya-extensions.git",
-    "directory": "extensions/guard"
+    "directory": "guard"
   }
 }

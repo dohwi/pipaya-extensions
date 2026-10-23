@@ -29,7 +29,7 @@ bun scripts/market.ts install ask-user        # ~/.pipaya/extensions/ask-user �
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
-또는 `extensions/ask-user` 폴더를 `~/.pipaya/extensions/ask-user/`에 복사하고 reload 하세요. 끄려면 폴더를 지우고 reload 합니다. 확장이 없으면 에이전트는 묻지 않고 가정하고 진행합니다.
+또는 `ask-user` 폴더를 `~/.pipaya/extensions/ask-user/`에 복사하고 reload 하세요. 끄려면 폴더를 지우고 reload 합니다. 확장이 없으면 에이전트는 묻지 않고 가정하고 진행합니다.
 
 ## 보안
 

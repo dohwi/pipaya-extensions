@@ -18,12 +18,12 @@
 
 | 폴더 | 종류 | 설명 |
 |---|---|---|
-| [ask-user](extensions/ask-user) | server | 에이전트가 선택지·추천과 함께 질문하고 답을 기다리게 함 |
-| [guard](extensions/guard) | server | 위험한 셸 명령(`rm -rf /`, `mkfs`, 포크 폭탄)을 실행 전에 차단 |
-| [peer-tools](extensions/peer-tools) | server | 에이전트가 서로의 대화에 메시지를 보내고(`peer_send`) 읽게 함(`peer_read`) |
-| [prompt-templates](extensions/prompt-templates) | server | 긴 프롬프트를 Markdown 파일로 저장해 `/prompt:이름`으로 호출 |
-| [session-retention](extensions/session-retention) | server | 한동안 쓰지 않은 대화를 자동 삭제(기본은 꺼짐) |
-| [quota-monitor](extensions/quota-monitor) | client | Claude, GPT, Antigravity 잔량 게이지를 navbar에 표시 |
+| [ask-user](ask-user) | server | 에이전트가 선택지·추천과 함께 질문하고 답을 기다리게 함 |
+| [guard](guard) | server | 위험한 셸 명령(`rm -rf /`, `mkfs`, 포크 폭탄)을 실행 전에 차단 |
+| [peer-tools](peer-tools) | server | 에이전트가 서로의 대화에 메시지를 보내고(`peer_send`) 읽게 함(`peer_read`) |
+| [prompt-templates](prompt-templates) | server | 긴 프롬프트를 Markdown 파일로 저장해 `/prompt:이름`으로 호출 |
+| [session-retention](session-retention) | server | 한동안 쓰지 않은 대화를 자동 삭제(기본은 꺼짐) |
+| [quota-monitor](quota-monitor) | client | Claude, GPT, Antigravity 잔량 게이지를 navbar에 표시 |
 
 ## 설치
 
@@ -31,7 +31,7 @@
 
 ```bash
 git clone https://github.com/dohwi/pipaya-marketplace && cd pipaya-marketplace
-bun scripts/market.ts install peer-tools     # extensions/peer-tools 를 ~/.pipaya/extensions/ 로 복사
+bun scripts/market.ts install peer-tools     # peer-tools 를 ~/.pipaya/extensions/ 로 복사
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
@@ -41,7 +41,7 @@ curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-exte
 
 ```
 pipaya-extensions/
-└── extensions/<id>/       # 확장 하나: index.ts + package.json (서버), 또는 manifest.json + dist/<id>.json (클라이언트)
+└── <id>/                  # 확장 하나: index.ts + package.json (서버), 또는 manifest.json + dist/<id>.json (클라이언트)
     ├── package.json       # name, version, description, license, author, pipaya.title
     ├── README.md          # 무엇을 읽고, 실행하고, 보내는지
     └── tests/             # 선택
@@ -49,7 +49,7 @@ pipaya-extensions/
 
 ## 확장 추가·업데이트
 
-1. `extensions/<id>/`를 추가하거나 고칩니다. 서버 확장에는 `index.ts`와 `package.json`이 필요하고, README에 무엇을 읽고 실행하고 보내는지 적어야 합니다.
+1. `<id>/`를 추가하거나 고칩니다. 서버 확장에는 `index.ts`와 `package.json`이 필요하고, README에 무엇을 읽고 실행하고 보내는지 적어야 합니다.
 2. `package.json`의 `version`을 올립니다.
 3. 릴리스 태그를 `<id>-v<버전>`으로 만듭니다(예: `peer-tools-v0.2.0`). 확장마다 태그가 따로라서 폴더별로 버전이 독립적입니다.
 4. [pipaya-marketplace](https://github.com/dohwi/pipaya-marketplace)에서 `bun scripts/pin.ts <id> <태그>`를 실행하고 결과를 커밋합니다.

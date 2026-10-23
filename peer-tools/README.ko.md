@@ -31,7 +31,7 @@ bun scripts/market.ts install peer-tools        #  ~/.pipaya/extensions/peer-too
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
-또는 이 폴더(`extensions/peer-tools`)를 `~/.pipaya/extensions/peer-tools/`에 복사하고 reload 하세요. 끄려면 폴더를 지우고 reload 합니다.
+또는 이 폴더(`peer-tools`)를 `~/.pipaya/extensions/peer-tools/`에 복사하고 reload 하세요. 끄려면 폴더를 지우고 reload 합니다.
 
 ## 보안
 

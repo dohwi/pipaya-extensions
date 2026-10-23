@@ -18,12 +18,12 @@
 
 | Folder | Kind | What it does |
 |---|---|---|
-| [ask-user](extensions/ask-user) | server | Lets the agent ask you a question (options, recommended choice) and wait for the answer |
-| [guard](extensions/guard) | server | Blocks destructive shell commands (`rm -rf /`, `mkfs`, fork bombs) before they run |
-| [peer-tools](extensions/peer-tools) | server | Lets agents message (`peer_send`) and read (`peer_read`) each other's chats |
-| [prompt-templates](extensions/prompt-templates) | server | Save a long prompt as a Markdown file and call it with `/prompt:name` |
-| [session-retention](extensions/session-retention) | server | Deletes chats that have not been used for a while (off by default) |
-| [quota-monitor](extensions/quota-monitor) | client | Claude, GPT and Antigravity quota gauges in the navbar |
+| [ask-user](ask-user) | server | Lets the agent ask you a question (options, recommended choice) and wait for the answer |
+| [guard](guard) | server | Blocks destructive shell commands (`rm -rf /`, `mkfs`, fork bombs) before they run |
+| [peer-tools](peer-tools) | server | Lets agents message (`peer_send`) and read (`peer_read`) each other's chats |
+| [prompt-templates](prompt-templates) | server | Save a long prompt as a Markdown file and call it with `/prompt:name` |
+| [session-retention](session-retention) | server | Deletes chats that have not been used for a while (off by default) |
+| [quota-monitor](quota-monitor) | client | Claude, GPT and Antigravity quota gauges in the navbar |
 
 ## Install
 
@@ -31,7 +31,7 @@ Each folder is listed in the marketplace on its own, so you install only what yo
 
 ```bash
 git clone https://github.com/dohwi/pipaya-marketplace && cd pipaya-marketplace
-bun scripts/market.ts install peer-tools     # copies extensions/peer-tools to ~/.pipaya/extensions/
+bun scripts/market.ts install peer-tools     # copies the peer-tools folder to ~/.pipaya/extensions/
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
@@ -41,7 +41,7 @@ Client extensions (`quota-monitor`) install from the pipaya app: **Settings → 
 
 ```
 pipaya-extensions/
-└── extensions/<id>/       # one extension: index.ts + package.json (server), or manifest.json + dist/<id>.json (client)
+└── <id>/                  # one extension: index.ts + package.json (server), or manifest.json + dist/<id>.json (client)
     ├── package.json       # name, version, description, license, author, pipaya.title
     ├── README.md          # what it reads, runs and sends
     └── tests/             # optional
@@ -49,7 +49,7 @@ pipaya-extensions/
 
 ## Adding or updating an extension
 
-1. Add or change `extensions/<id>/`. A server extension needs `index.ts` and `package.json`; the README must state what it reads, runs and sends.
+1. Add or change `<id>/`. A server extension needs `index.ts` and `package.json`; the README must state what it reads, runs and sends.
 2. Bump `version` in its `package.json`.
 3. Tag the release `<id>-v<version>` (for example `peer-tools-v0.2.0`). One tag per extension, so each folder versions on its own.
 4. In [pipaya-marketplace](https://github.com/dohwi/pipaya-marketplace) run `bun scripts/pin.ts <id> <tag>` and commit the result.

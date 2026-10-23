@@ -1,17 +1,17 @@
 {
-  "name": "pipaya-extension-peer-tools",
+  "name": "pipaya-extension-prompt-templates",
   "version": "0.1.0",
-  "description": "Lets an agent message (`peer_send`) and read (`peer_read`) the other active chats of the server, by name or group.",
+  "description": "Save a long prompt as a Markdown file and call it with `/prompt:name arguments`.",
   "license": "MIT",
   "author": "dohwi",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "https://github.com/dohwi/pipaya-extensions.git",
-    "directory": "extensions/peer-tools"
+    "directory": "prompt-templates"
   },
   "pipaya": {
-    "title": "Peer Tools"
+    "title": "Prompt Templates"
   },
   "scripts": {
     "test": "bun test"

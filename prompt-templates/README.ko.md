@@ -31,7 +31,7 @@ bun scripts/market.ts install prompt-templates        #  ~/.pipaya/extensions/pr
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
-또는 이 폴더(`extensions/prompt-templates`)를 `~/.pipaya/extensions/prompt-templates/`에 복사하고 reload 하세요. 끄려면 폴더를 지우고 reload 합니다.
+또는 이 폴더(`prompt-templates`)를 `~/.pipaya/extensions/prompt-templates/`에 복사하고 reload 하세요. 끄려면 폴더를 지우고 reload 합니다.
 
 ## 보안
 
