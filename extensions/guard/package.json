@@ -1,0 +1,15 @@
+{
+  "name": "pipaya-extension-guard",
+  "version": "0.1.0",
+  "description": "Blocks destructive shell commands (rm -rf /, mkfs, fork bombs) before they run.",
+  "license": "MIT",
+  "author": "dohwi",
+  "pipaya": {
+    "title": "Guard"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dohwi/pipaya-extensions.git",
+    "directory": "extensions/guard"
+  }
+}

@@ -1,7 +1,7 @@
 <p align="center"><b>English</b> · <a href="README.ko.md">한국어</a></p>
 
 <div align="center">
-  <h1>pipaya-extension-ask-user</h1>
+  <h1>ask-user</h1>
   <p>Let the agent stop and ask you a question in <a href="https://github.com/dohwi/pipaya">pipaya</a> instead of guessing.</p>
 
   <p>
@@ -29,7 +29,7 @@ bun scripts/market.ts install ask-user        # copies to ~/.pipaya/extensions/a
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
-Or copy `index.ts` and `package.json` of this repository into `~/.pipaya/extensions/ask-user/` and reload. To turn it off, remove the folder and reload: without it the agent never asks and simply assumes.
+Or copy this folder (`extensions/ask-user`) into `~/.pipaya/extensions/ask-user/` and reload. To turn it off, remove the folder and reload: without it the agent never asks and simply assumes.
 
 ## Security
 

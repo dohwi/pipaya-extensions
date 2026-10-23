@@ -1,7 +1,7 @@
 <p align="center"><b>English</b> · <a href="README.ko.md">한국어</a></p>
 
 <div align="center">
-  <h1>pipaya-extension-peer-tools</h1>
+  <h1>peer-tools</h1>
   <p>Let agents in <a href="https://github.com/dohwi/pipaya">pipaya</a> message and read each other's chats.</p>
 
   <p>
@@ -31,7 +31,7 @@ bun scripts/market.ts install peer-tools        # copies to ~/.pipaya/extensions
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
-Or copy `index.ts` and `package.json` of this repository into `~/.pipaya/extensions/peer-tools/` and reload. To turn it off, remove the folder and reload.
+Or copy this folder (`extensions/peer-tools`) into `~/.pipaya/extensions/peer-tools/` and reload. To turn it off, remove the folder and reload.
 
 ## Security
 

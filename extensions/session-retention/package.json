@@ -7,7 +7,8 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/dohwi/pipaya-extension-session-retention.git"
+    "url": "https://github.com/dohwi/pipaya-extensions.git",
+    "directory": "extensions/session-retention"
   },
   "pipaya": {
     "title": "Session Retention"

@@ -1,7 +1,7 @@
 <p align="center"><a href="README.md">English</a> · <b>한국어</b></p>
 
 <div align="center">
-  <h1>pipaya-extension-session-retention</h1>
+  <h1>session-retention</h1>
   <p>한동안 쓰지 않은 <a href="https://github.com/dohwi/pipaya">pipaya</a> 대화를 지웁니다. 기간을 정하기 전에는 꺼져 있습니다.</p>
 
   <p>
@@ -31,7 +31,7 @@ bun scripts/market.ts install session-retention        #  ~/.pipaya/extensions/s
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
-또는 이 저장소의 파일을 `~/.pipaya/extensions/session-retention/`에 복사하고 reload 하세요. 끄려면 폴더를 지우고 reload 합니다.
+또는 이 폴더(`extensions/session-retention`)를 `~/.pipaya/extensions/session-retention/`에 복사하고 reload 하세요. 끄려면 폴더를 지우고 reload 합니다.
 
 ## 보안
 

@@ -1,7 +1,7 @@
 <p align="center"><a href="README.md">English</a> · <b>한국어</b></p>
 
 <div align="center">
-  <h1>pipaya-extension-quota-monitor</h1>
+  <h1>quota-monitor</h1>
   <p>Claude · GPT · Antigravity 잔량을 <a href="https://github.com/dohwi/pipaya">pipaya</a> 상단 바에서 바로 확인하세요.</p>
 
   <p>

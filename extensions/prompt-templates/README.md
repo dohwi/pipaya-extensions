@@ -1,7 +1,7 @@
 <p align="center"><b>English</b> · <a href="README.ko.md">한국어</a></p>
 
 <div align="center">
-  <h1>pipaya-extension-prompt-templates</h1>
+  <h1>prompt-templates</h1>
   <p>Save a long prompt as a Markdown file and call it with <code>/prompt:name</code> in <a href="https://github.com/dohwi/pipaya">pipaya</a>.</p>
 
   <p>
@@ -31,7 +31,7 @@ bun scripts/market.ts install prompt-templates        # copies to ~/.pipaya/exte
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
-Or copy `index.ts` and `package.json` of this repository into `~/.pipaya/extensions/prompt-templates/` and reload. To turn it off, remove the folder and reload.
+Or copy this folder (`extensions/prompt-templates`) into `~/.pipaya/extensions/prompt-templates/` and reload. To turn it off, remove the folder and reload.
 
 ## Security
 

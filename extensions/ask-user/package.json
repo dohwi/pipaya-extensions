@@ -7,7 +7,10 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/dohwi/pipaya-extension-ask-user.git"
+    "url": "https://github.com/dohwi/pipaya-extensions.git",
+    "directory": "extensions/ask-user"
   },
-  "pipaya": { "title": "Ask User" }
+  "pipaya": {
+    "title": "Ask User"
+  }
 }

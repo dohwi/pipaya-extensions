@@ -1,7 +1,7 @@
 <p align="center"><a href="README.md">English</a> · <b>한국어</b></p>
 
 <div align="center">
-  <h1>pipaya-extension-peer-tools</h1>
+  <h1>peer-tools</h1>
   <p><a href="https://github.com/dohwi/pipaya">pipaya</a>의 에이전트끼리 서로의 대화에 메시지를 보내고 읽게 하세요.</p>
 
   <p>
@@ -31,7 +31,7 @@ bun scripts/market.ts install peer-tools        #  ~/.pipaya/extensions/peer-too
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
-또는 이 저장소의 파일을 `~/.pipaya/extensions/peer-tools/`에 복사하고 reload 하세요. 끄려면 폴더를 지우고 reload 합니다.
+또는 이 폴더(`extensions/peer-tools`)를 `~/.pipaya/extensions/peer-tools/`에 복사하고 reload 하세요. 끄려면 폴더를 지우고 reload 합니다.
 
 ## 보안
 

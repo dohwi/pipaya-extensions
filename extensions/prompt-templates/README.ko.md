@@ -1,7 +1,7 @@
 <p align="center"><a href="README.md">English</a> · <b>한국어</b></p>
 
 <div align="center">
-  <h1>pipaya-extension-prompt-templates</h1>
+  <h1>prompt-templates</h1>
   <p>긴 프롬프트를 Markdown 파일로 저장해 두고 <a href="https://github.com/dohwi/pipaya">pipaya</a>에서 <code>/prompt:이름</code>으로 부르세요.</p>
 
   <p>
@@ -31,7 +31,7 @@ bun scripts/market.ts install prompt-templates        #  ~/.pipaya/extensions/pr
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
-또는 이 저장소의 파일을 `~/.pipaya/extensions/prompt-templates/`에 복사하고 reload 하세요. 끄려면 폴더를 지우고 reload 합니다.
+또는 이 폴더(`extensions/prompt-templates`)를 `~/.pipaya/extensions/prompt-templates/`에 복사하고 reload 하세요. 끄려면 폴더를 지우고 reload 합니다.
 
 ## 보안
 

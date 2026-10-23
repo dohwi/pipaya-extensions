@@ -1,7 +1,7 @@
 <p align="center"><a href="README.md">English</a> · <b>한국어</b></p>
 
 <div align="center">
-  <h1>pipaya-extension-ask-user</h1>
+  <h1>ask-user</h1>
   <p>에이전트가 추측하지 않고 <a href="https://github.com/dohwi/pipaya">pipaya</a>에서 멈추고 질문하게 하세요.</p>
 
   <p>
@@ -29,7 +29,7 @@ bun scripts/market.ts install ask-user        # ~/.pipaya/extensions/ask-user �
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
-또는 이 저장소의 `index.ts`, `package.json`을 `~/.pipaya/extensions/ask-user/`에 복사하고 reload 하세요. 끄려면 폴더를 지우고 reload 합니다. 확장이 없으면 에이전트는 묻지 않고 가정하고 진행합니다.
+또는 `extensions/ask-user` 폴더를 `~/.pipaya/extensions/ask-user/`에 복사하고 reload 하세요. 끄려면 폴더를 지우고 reload 합니다. 확장이 없으면 에이전트는 묻지 않고 가정하고 진행합니다.
 
 ## 보안
 

@@ -1,7 +1,7 @@
 <p align="center"><b>English</b> · <a href="README.ko.md">한국어</a></p>
 
 <div align="center">
-  <h1>pipaya-extension-session-retention</h1>
+  <h1>session-retention</h1>
   <p>Delete chats in <a href="https://github.com/dohwi/pipaya">pipaya</a> that have not been used for a while. Off until you pick a number of days.</p>
 
   <p>
@@ -31,7 +31,7 @@ bun scripts/market.ts install session-retention        # copies to ~/.pipaya/ext
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
-Or copy `index.ts` and `package.json` of this repository into `~/.pipaya/extensions/session-retention/` and reload. To turn it off, remove the folder and reload.
+Or copy this folder (`extensions/session-retention`) into `~/.pipaya/extensions/session-retention/` and reload. To turn it off, remove the folder and reload.
 
 ## Security
 

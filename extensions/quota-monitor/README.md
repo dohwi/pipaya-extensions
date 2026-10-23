@@ -1,7 +1,7 @@
 <p align="center"><b>English</b> · <a href="README.ko.md">한국어</a></p>
 
 <div align="center">
-  <h1>pipaya-extension-quota-monitor</h1>
+  <h1>quota-monitor</h1>
   <p>See how much Claude, GPT and Antigravity quota you have left, right in the <a href="https://github.com/dohwi/pipaya">pipaya</a> navbar.</p>
 
   <p>
