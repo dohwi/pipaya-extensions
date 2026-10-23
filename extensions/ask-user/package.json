@@ -1,0 +1,13 @@
+{
+  "name": "pipaya-extension-ask-user",
+  "version": "0.1.0",
+  "description": "Lets the agent ask you a question (with options and a recommended choice) and wait for your answer.",
+  "license": "MIT",
+  "author": "dohwi",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dohwi/pipaya-extension-ask-user.git"
+  },
+  "pipaya": { "title": "Ask User" }
+}
