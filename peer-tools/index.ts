@@ -155,6 +155,12 @@ export default (pi: any) => {
 		if (parts.length) return { parts };
 	});
 
+	// For the `peer-names` client extension: who can be addressed right now (names, roles and groups). Read-only.
+	pi.registerMethod("overview", () => ({
+		sessions: pi.sessions.list({ closed: false }).filter((s: any) => s.name).map((s: any) => ({ id: s.id, name: s.name, title: s.title, purpose: s.purpose, cwd: s.cwd })),
+		groups: pi.groups.list().map((g: any) => ({ name: g.name, handle: groupHandle(g.name), sessionIds: g.sessionIds })),
+	}));
+
 	const reply = (text: string, details: Record<string, unknown>) => ({ content: [{ type: "text", text }], details });
 
 	pi.registerTool({

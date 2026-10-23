@@ -23,6 +23,7 @@
 | [peer-tools](peer-tools) | server | 에이전트가 서로의 대화에 메시지를 보내고(`peer_send`) 읽게 함(`peer_read`) |
 | [prompt-templates](prompt-templates) | server | 긴 프롬프트를 Markdown 파일로 저장해 `/prompt:이름`으로 호출 |
 | [session-retention](session-retention) | server | 한동안 쓰지 않은 대화를 자동 삭제(기본은 꺼짐) |
+| [peer-names](peer-names) | client | `@이름` 라벨, `@` 자동완성, 대화 간 메시지 말풍선 (peer-tools와 함께 사용) |
 | [quota-monitor](quota-monitor) | client | Claude, GPT, Antigravity 잔량 게이지를 navbar에 표시 |
 
 ## 설치
@@ -35,7 +36,7 @@ bun scripts/market.ts install peer-tools     # peer-tools 를 ~/.pipaya/extensio
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
 ```
 
-클라이언트 확장(`quota-monitor`)은 pipaya 앱의 **설정 → 확장 → 마켓플레이스**에서 설치합니다.
+클라이언트 확장(`quota-monitor`, `peer-names`)은 pipaya 앱의 **설정 → 확장 → 마켓플레이스**에서 설치합니다.
 
 ## 구조
 

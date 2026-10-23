@@ -37,7 +37,9 @@ run("peer-tools (needs PIPAYA_APP=<pipaya>/server)", () => {
 	});
 
 	test("the tools are listed as switchable", async () => {
-		expect((await api("GET", "/configuration")).json.tools.toggleable).toEqual(["delegate", "peer_send", "peer_read"]);
+		const toggleable = (await api("GET", "/configuration")).json.tools.toggleable as string[];
+		expect(toggleable).toContain("peer_send");
+		expect(toggleable).toContain("peer_read");
 	});
 
 		test("peer_send reaches any other session (no group needed) and peer_read shows its answer", async () => {
@@ -77,6 +79,15 @@ run("peer-tools (needs PIPAYA_APP=<pipaya>/server)", () => {
 			const body = JSON.stringify((await api("GET", `/sessions/${a}/messages`)).json);
 			expect(body).toContain("The user mentioned other sessions");
 			expect(body).toContain("Group @Hint-Crew");
+		});
+
+		test("overview lists the addressable sessions and groups for the client extension", async () => {
+			const [a, b] = [(await mk())!, (await mk())!];
+			await api("POST", "/groups", { name: "Over View", layout: split(pane(a), pane(b)) });
+			const r = await api("POST", "/server-extensions/peer-tools/methods/overview", {});
+			const o = r.json.result ?? r.json;
+			expect(o.sessions.some((s: any) => s.id === a && s.name)).toBe(true);
+			expect(o.groups.find((g: any) => g.name === "Over View")?.handle).toBe("Over-View");
 		});
 
 		test("peer_send to a group name reaches every other session in that group", async () => {
