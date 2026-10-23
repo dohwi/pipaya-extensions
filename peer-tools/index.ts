@@ -1,3 +1,5 @@
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 // peer-tools: lets an agent message and read the other active sessions of this server, by `@name` or `@group`.
 const MAX_SENDS_PER_RUN = 10;
 const MESSAGE_CHARS = 600;
@@ -5,6 +7,26 @@ const TOTAL_CHARS = 6000;
 const HINT_OPEN = "<pipaya-hint>";
 // The tool list is built once per session, but sessions come and go later: never put names in a description.
 const NOTE = " Sessions are the user's @names; an unknown name is rejected with the current list.";
+
+/** The checked-out branch of the repository holding `cwd` (a worktree too), read from HEAD without starting git. */
+function branchOf(cwd: string): string | null {
+	try {
+		for (let dir = resolve(cwd), i = 0; i < 12; i++, dir = dirname(dir)) {
+			const dot = join(dir, ".git");
+			if (existsSync(dot)) {
+				let gitDir = dot;
+				if (statSync(dot).isFile()) {
+					const target = /^gitdir:\s*(.+)$/m.exec(readFileSync(dot, "utf8"))?.[1]?.trim();
+					if (!target) return null;
+					gitDir = isAbsolute(target) ? target : resolve(dir, target);
+				}
+				return /^ref:\s*refs\/heads\/(.+)$/m.exec(readFileSync(join(gitDir, "HEAD"), "utf8"))?.[1]?.trim() ?? null;
+			}
+			if (dirname(dir) === dir) break;
+		}
+	} catch {}
+	return null;
+}
 
 const handle = (name: string) => name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
@@ -22,6 +44,70 @@ function cap(lines: string[]): string {
 	return `${dropped > 0 ? `[${dropped} older message(s) left out; ask for fewer/more with count]\n` : ""}${kept.join("\n")}`;
 }
 
+const oneLine = (s: string, max: number) => {
+	const flat = s.replace(/\s+/g, " ").trim();
+	return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+};
+
+/** The member a `@name` token starts with: the longest known name, not cut out of a longer ASCII word (Korean particles may follow: @미나랑). */
+export function memberAt(token: string, names: readonly string[]): string | null {
+	const low = token.toLowerCase();
+	let best: string | null = null;
+	for (const n of names) {
+		const l = n.toLowerCase();
+		if (!low.startsWith(l) || (best && n.length <= best.length)) continue;
+		if (/[a-z0-9_-]$/.test(l) && /^[a-z0-9_-]/.test(low.slice(l.length))) continue;
+		best = n;
+	}
+	return best;
+}
+
+/** Names written as `@name` in a message, limited to known ones, in order of appearance, without repeats. */
+export function mentioned(text: string, names: readonly string[]): string[] {
+	const out: string[] = [];
+	for (const m of text.matchAll(/(?:^|\s)@(\S+)/g)) {
+		const name = memberAt(m[1]!, names);
+		if (name && !out.includes(name)) out.push(name);
+	}
+	return out;
+}
+
+/** What a group is called in a message: its name with whitespace turned into "-" so the tag stays one token. */
+export const groupHandle = (name: string) => name.trim().replace(/\s+/g, "-");
+
+const MAX_LISTED = 12;
+const MAX_HINT_CHARS = 3000;
+const SNIPPET_CHARS = 100;
+const READ_NOTE =
+	"This is only an index. Do not guess what they did: read a session with peer_read (a few messages) only when you need its words, and prefer git (branch, log, diff in its directory) for the work itself. Use peer_send to give a session work (to a whole tagged group, pass the group name as `to` once).";
+
+export interface Brief { name: string; purpose: string; cwd: string; branch: string | null; running: boolean; last: string }
+
+export function briefLine(b: Brief): string {
+	const parts = [`@${b.name}${b.purpose ? ` (${oneLine(b.purpose, 60)})` : ""}`, b.running ? "working" : "idle"];
+	if (b.branch) parts.push(`branch ${b.branch}`);
+	parts.push(b.cwd);
+	if (b.last) parts.push(`last: "${oneLine(b.last, SNIPPET_CHARS)}"`);
+	return parts.join(" · ");
+}
+
+export function groupHint(groups: readonly { handle: string; members: readonly Brief[] }[]): string {
+	const blocks = groups.map((g) => {
+		const shown = g.members.slice(0, MAX_LISTED);
+		const more = g.members.length - shown.length;
+		const lines = shown.map((m) => `- ${briefLine(m)}`);
+		if (more > 0) lines.push(`- (+${more} more; peer_read by name if needed)`);
+		return `Group @${g.handle} (${g.members.length} sessions):\n${lines.join("\n")}`;
+	});
+	let body = blocks.join("\n");
+	if (body.length > MAX_HINT_CHARS) body = `${body.slice(0, MAX_HINT_CHARS)}\n[index cut]`;
+	return `${HINT_OPEN}The user tagged ${groups.length === 1 ? "a group" : "groups"} of sessions on this server (they run independently).\n${body}\n${READ_NOTE}</pipaya-hint>`;
+}
+
+export function memberBriefHint(members: readonly Brief[]): string {
+	return `${HINT_OPEN}The user mentioned other sessions (agents) on this server:\n${members.slice(0, MAX_LISTED).map((m) => `- ${briefLine(m)}`).join("\n")}\n${READ_NOTE}</pipaya-hint>`;
+}
+
 export default (pi: any) => {
 	const T = pi.Type;
 	/** `peer_send` calls in each session's current run; keeps two sessions from answering each other forever. */
@@ -37,6 +123,38 @@ export default (pi: any) => {
 		if (!peer) throw new Error(`session @${name} not found (sessions: ${all.map((p: any) => `@${p.name}`).join(", ") || "none"})`);
 		return peer;
 	};
+	/** A one-line picture of a session for a tag: role, state, branch, directory and its last words. Never the transcript. */
+	const brief = (id: string): Brief | null => {
+		const r = pi.sessions.get(id);
+		if (!r || r.closed || !r.name) return null;
+		const lastAssistant = [...pi.sessions.messages(id, 6)].reverse().find((x: any) => x.message.role === "assistant");
+		const content = Array.isArray(lastAssistant?.message.content) ? lastAssistant.message.content : [];
+		const last = content.filter((c: any) => c.type === "text").map((c: any) => c.text ?? "").join(" ");
+		return { name: r.name, purpose: r.purpose, cwd: r.cwd, branch: branchOf(r.cwd), running: r.running, last };
+	};
+
+	// `@name` / `@group` in a user message: add a short index of those sessions (never transcripts) as a hint block.
+	pi.on("input", (e: { sessionId: string; text: string }) => {
+		const all = peers(e.sessionId);
+		if (!all.length) return;
+		const names = all.map((p: any) => p.name);
+		const groups: { name: string; sessionIds: string[] }[] = pi.groups.list();
+		const parts: { type: "text"; text: string }[] = [];
+		const handles = groups.map((g) => groupHandle(g.name)).filter(Boolean);
+		const tagged = mentioned(e.text, handles).filter((h) => { const m = mentioned(e.text, names).find((n) => same(n, h)); return !m; });
+		const found = tagged.map((h) => {
+			const g = groups.find((x) => groupHandle(x.name) === h)!;
+			return { handle: h, members: g.sessionIds.filter((sid) => sid !== e.sessionId).flatMap((sid) => { const b = brief(sid); return b ? [b] : []; }) };
+		}).filter((g) => g.members.length);
+		if (found.length) parts.push({ type: "text", text: groupHint(found) });
+		const asked = mentioned(e.text, names);
+		if (asked.length) {
+			const briefs = asked.flatMap((n) => { const p = all.find((x: any) => x.name === n); const b = p && brief(p.id); return b ? [b] : []; });
+			parts.push({ type: "text", text: briefs.length ? memberBriefHint(briefs) : `${HINT_OPEN}The user mentioned ${asked.map((n) => `@${n}`).join(", ")}: other sessions (agents) on this server. Use peer_send to give them work or ask them something, and peer_read to look at what they said or did. Do not guess what they did.</pipaya-hint>` });
+		}
+		if (parts.length) return { parts };
+	});
+
 	const reply = (text: string, details: Record<string, unknown>) => ({ content: [{ type: "text", text }], details });
 
 	pi.registerTool({

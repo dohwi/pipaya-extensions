@@ -67,6 +67,18 @@ run("peer-tools (needs PIPAYA_APP=<pipaya>/server)", () => {
 			expect(JSON.stringify((await api("GET", `/sessions/${a}/messages`)).json)).toContain("session @nobody");
 		});
 
+		test("@name and @group in a message add an index hint, not a transcript", async () => {
+			const [a, b, c] = [(await mk())!, (await mk())!, (await mk())!];
+			const nameOf = async (id: string) => (await api("GET", `/sessions/${id}`)).json.name as string;
+			await api("POST", "/groups", { name: "Hint Crew", layout: split(pane(b), pane(c)) });
+			const idle = async (id: string) => { for (let i = 0; i < 200; i++) { if (!(await api("GET", `/sessions/${id}/status`)).json.running) return; await Bun.sleep(25); } };
+			await api("POST", `/sessions/${a}/messages`, { text: `hi @${await nameOf(b)} and @Hint-Crew` });
+			await idle(a);
+			const body = JSON.stringify((await api("GET", `/sessions/${a}/messages`)).json);
+			expect(body).toContain("The user mentioned other sessions");
+			expect(body).toContain("Group @Hint-Crew");
+		});
+
 		test("peer_send to a group name reaches every other session in that group", async () => {
 			const [a, b, c] = [(await mk())!, (await mk())!, (await mk())!];
 			const idle = async (id: string) => {
