@@ -1,0 +1,16 @@
+{
+  "name": "pipaya-extension-quota-monitor",
+  "version": "0.4.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check": "npm run build && npm test"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dohwi/pipaya-extension-quota-monitor.git"
+  }
+}
