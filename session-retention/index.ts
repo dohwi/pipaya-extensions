@@ -1,7 +1,7 @@
 // session-retention: deletes sessions that have not been used for a while. The server never does this by itself.
 // Turn it on with PIPAYA_FLAG_RETENTION_DAYS=30 (optionally PIPAYA_FLAG_RETENTION_ONLY_CLOSED=1), or call the `setPolicy`
 // method (the choice is saved in this extension's data folder and wins over the flags).
-// A session that is running, or waiting for an approval or an answer, is never deleted, whatever its age.
+// A session that is running, or waiting for an answer, is never deleted, whatever its age.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 

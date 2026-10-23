@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { discoverTemplates, expandTemplate, parseTemplateCall, limitTemplateText, templateMarker } from "../templates.ts";
+import { discoverTemplates, expandTemplate, limitTemplateText } from "../templates.ts";
 
 function fixture() {
 	const root = realpathSync(mkdtempSync(join(tmpdir(), "pipaya-templates-")));
@@ -52,23 +52,10 @@ describe("template discovery", () => {
 });
 
 describe("template calls", () => {
-	test("parses only a call at the start of the message", () => {
-		expect(parseTemplateCall("/prompt:review src/a.ts\nplease")).toEqual({ name: "review", args: "src/a.ts\nplease" });
-		expect(parseTemplateCall("  /prompt:review")).toEqual({ name: "review", args: "" });
-		expect(parseTemplateCall("hello /prompt:review")).toBeNull();
-		expect(parseTemplateCall("/prompt:Bad")).toBeNull();
-	});
-
 	test("expands $ARGUMENTS or appends the arguments", () => {
 		expect(expandTemplate("Review $ARGUMENTS now", "a.ts")).toBe("Review a.ts now");
 		expect(expandTemplate("Review things\n", "a.ts")).toBe("Review things\n\na.ts");
 		expect(expandTemplate("Review things", "")).toBe("Review things");
-	});
-
-	test("marker records the template name and the typed call", () => {
-		const m = templateMarker("review", "/prompt:review a.ts");
-		expect(m.startsWith("<pipaya-template>")).toBe(true);
-		expect(JSON.parse(m.slice("<pipaya-template>".length, m.indexOf("</pipaya-template>")))).toEqual({ name: "review", call: "/prompt:review a.ts" });
 	});
 
 	test("very long text is cut", () => {

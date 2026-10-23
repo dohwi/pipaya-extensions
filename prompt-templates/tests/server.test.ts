@@ -15,7 +15,7 @@ run("prompt-templates (needs PIPAYA_APP=<pipaya>/server)", () => {
 	};
 	const idle = async (id: string) => { for (let i = 0; i < 300; i++) { if (!(await api("GET", `/sessions/${id}/status`)).json.running) return; await Bun.sleep(20); } throw new Error("never idle"); };
 	const call = async (method: string, body: unknown = {}) => (await api("POST", `/server-extensions/prompt-templates/methods/${method}`, body)).json?.result;
-	const make = async () => (await api("POST", "/sessions", { cwd: ws, approval: "auto" })).json.id as string;
+	const make = async () => (await api("POST", "/sessions", { cwd: ws })).json.id as string;
 	const exists = async (id: string) => (await api("GET", `/sessions/${id}`)).status === 200;
 
 	beforeAll(async () => {
@@ -29,7 +29,7 @@ run("prompt-templates (needs PIPAYA_APP=<pipaya>/server)", () => {
 		mkdirSync(join(dir, "ext"), { recursive: true });
 		cpSync(join(import.meta.dir, ".."), join(dir, "ext", "prompt-templates"), { recursive: true, filter: (s) => !s.includes("node_modules") && !s.includes("/tests") });
 		upstream = startEchoUpstream();
-		app = await buildApp({ host: "0.0.0.0", port: 0, dataDir: dir, dbPath: join(dir, "db.sqlite"), token: "t", workspaceRoot: ws, defaultApproval: "auto", approvalTimeoutMs: 0, logLevel: "silent" }, { strictResponses: true, home, extensionDirs: [join(dir, "ext"), join(SERVER!, "test/support/ext")] });
+		app = await buildApp({ host: "0.0.0.0", port: 0, dataDir: dir, dbPath: join(dir, "db.sqlite"), token: "t", workspaceRoot: ws, logLevel: "silent" }, { strictResponses: true, home, extensionDirs: [join(dir, "ext"), join(SERVER!, "test/support/ext")] });
 		await api("PUT", "/configuration/providers/echo", echoProviderBody(upstream.baseUrl));
 		await api("PUT", "/configuration/defaults", { provider: "echo", model: ECHO_MODEL.id });
 		db = new Database(join(dir, "db.sqlite"), { strict: true });
@@ -41,10 +41,9 @@ run("prompt-templates (needs PIPAYA_APP=<pipaya>/server)", () => {
 		expect(e && !e.error).toBe(true);
 	});
 
-	test("lists the templates of a directory for the client", async () => {
-		const r = await call("list", { cwd: ws });
-		expect(r.templates.map((t: any) => t.name)).toEqual(["review"]);
-		expect(r.templates[0].description).toBe("Review a change");
+	test("lists the templates of a directory as a command family", async () => {
+		const r = (await api("GET", `/server-extensions/commands?cwd=${encodeURIComponent(ws)}`)).json.families.find((f: any) => f.prefix === "prompt");
+		expect(r.entries).toEqual([{ name: "review", description: "Review a change" }]);
 	});
 
 	test("/prompt:name is sent as the expanded text with a marker note, and titles the session by the name", async () => {
@@ -54,7 +53,7 @@ run("prompt-templates (needs PIPAYA_APP=<pipaya>/server)", () => {
 		const msgs = (await api("GET", `/sessions/${id}/messages`)).json.messages.map((m: any) => m.message);
 		const user = JSON.stringify(msgs.find((m: any) => m.role === "user"));
 		expect(user).toContain("Review this: the diff");
-		expect(user).toContain("<pipaya-template>");
+		expect(user).toContain("<pipaya-note>");
 		expect(user).toContain("/prompt:review the diff");
 		expect((await api("GET", `/sessions/${id}`)).json.title).toBe("review");
 	});
@@ -64,6 +63,8 @@ run("prompt-templates (needs PIPAYA_APP=<pipaya>/server)", () => {
 		await api("POST", `/sessions/${id}/messages`, { text: "/prompt:nope hi" });
 		await idle(id);
 		const msgs = (await api("GET", `/sessions/${id}/messages`)).json.messages.map((m: any) => m.message);
-		expect(JSON.stringify(msgs.find((m: any) => m.role === "user"))).toContain("/prompt:nope hi");
+		const user = JSON.stringify(msgs.find((m: any) => m.role === "user"));
+		expect(user).toContain("/prompt:nope hi");
+		expect(user).not.toContain("<pipaya-note>");
 	});
 });

@@ -15,7 +15,7 @@
 - Adds `peer_send`: send a message to another active chat by its `@name`, or to every other chat in a group by its `@group` handle. The receiver works on its own and answers only if asked.
 - Adds `peer_read`: read the latest messages (text only) of another chat.
 - At most 10 `peer_send` calls per run, so two chats cannot answer each other forever. `peer_read` output is capped.
-- Both tools can be switched off in Settings → Tool approval, like `delegate`. They never ask for approval.
+- Both tools can be switched off in Settings → Tools.
 
 > Before this existed as an extension, the same two tools were built into the server. Install it to keep them.
 

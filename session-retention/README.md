@@ -15,7 +15,7 @@
 - The server never deletes chats by itself; this extension adds that, once an hour and shortly after the server starts.
 - Set it with `PIPAYA_FLAG_RETENTION_DAYS=30` (and `PIPAYA_FLAG_RETENTION_ONLY_CLOSED=1` to spare active chats), or call the `setPolicy` method `{enabled, days, onlyClosed}`. A saved policy wins over the flags.
 - Methods: `info` (policy, last run, how many would go now), `setPolicy`, `run` (clean up now).
-- A chat that is running, or waiting for an approval or an answer, is never deleted, whatever its age.
+- A chat that is running, or waiting for an answer, is never deleted, whatever its age.
 
 > Older pipaya servers had this built in (Settings → Chats → automatic deletion). Install this extension and set the days again to keep it.
 

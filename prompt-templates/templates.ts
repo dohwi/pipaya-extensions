@@ -37,7 +37,6 @@ export interface TemplateList {
 	warnings: TemplateWarning[];
 }
 
-export const TEMPLATE_CALL_PREFIX = "/prompt:";
 export const MAX_TEMPLATES = 200;
 const MAX_TEMPLATE_BYTES = 128 * 1024;
 const MAX_INLINE_TEMPLATE_CHARS = 60_000;
@@ -163,12 +162,6 @@ export function listTemplates(base: string, cwdInput: string | undefined, home: 
 	return { cwd, ...discoverTemplates(cwd, { home }) };
 }
 
-/** `/prompt:name rest…` at the very start of a message -> name + arguments. */
-export function parseTemplateCall(text: string): { name: string; args: string } | null {
-	const m = /^\s*\/prompt:([a-z0-9]+(?:-[a-z0-9]+)*)(?:\s+([\s\S]*))?$/.exec(text);
-	return m ? { name: m[1]!, args: (m[2] ?? "").trim() } : null;
-}
-
 /** `$ARGUMENTS` is replaced by what followed the call; without a placeholder the arguments are appended. */
 export function expandTemplate(body: string, args: string): string {
 	const text = body.trim();
@@ -176,22 +169,8 @@ export function expandTemplate(body: string, args: string): string {
 	return args ? `${text}\n\n${args}` : text;
 }
 
-/** Reads a template and returns its body without frontmatter; null when it cannot be read. */
-export function readTemplateBody(path: string): string | null {
-	try {
-		if (!existsSync(path)) return null;
-		return splitTemplate(readFileSync(path, "utf8")).body;
-	} catch {
-		return null;
-	}
-}
-
 /** Keeps a very long expanded template within the inline limit. */
 export function limitTemplateText(expanded: string): string {
 	return expanded.length > MAX_INLINE_TEMPLATE_CHARS ? `${expanded.slice(0, MAX_INLINE_TEMPLATE_CHARS)}\n[cut]` : expanded;
 }
 
-/** Note stored next to the expanded text: which template was used and what the user typed. The client shows it under the bubble. */
-export function templateMarker(name: string, call: string): string {
-	return `<pipaya-template>${JSON.stringify({ name, call })}</pipaya-template>`;
-}

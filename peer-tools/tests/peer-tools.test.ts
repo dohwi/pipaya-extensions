@@ -24,7 +24,7 @@ run("peer-tools (needs PIPAYA_APP=<pipaya>/server)", () => {
 		mkdirSync(join(dir, "ext"), { recursive: true });
 		writeFileSync(join(dir, "ext", "peer-tools.ts"), readFileSync(join(import.meta.dir, "..", "index.ts"), "utf8"));
 		upstream = startEchoUpstream();
-		app = await buildApp({ host: "0.0.0.0", port: 0, dataDir: dir, dbPath: join(dir, "t.db"), token: "t", workspaceRoot: join(dir, "ws"), defaultApproval: "ask", approvalTimeoutMs: 0, logLevel: "silent" }, { strictResponses: true, extensionDirs: [join(dir, "ext")] });
+		app = await buildApp({ host: "0.0.0.0", port: 0, dataDir: dir, dbPath: join(dir, "t.db"), token: "t", workspaceRoot: join(dir, "ws"), logLevel: "silent" }, { strictResponses: true, extensionDirs: [join(dir, "ext")] });
 		await app.server.listen({ host: "0.0.0.0", port: 0 });
 		base = `http://127.0.0.1:${(app.server.server.address() as { port: number }).port}`;
 		await api("PUT", "/configuration/providers/echo", echoProviderBody(upstream.baseUrl));

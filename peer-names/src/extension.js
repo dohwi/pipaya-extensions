@@ -28,7 +28,7 @@ function schedule() {
   timer = setTimeout(() => { void refresh(); }, 300);
 }
 
-await sdk.messages.setSender(SENDER);
+await sdk.messages.setHeader(SENDER);
 await sdk.events.on(event => {
   if (event.type === 'session_created' || event.type === 'session_updated' || event.type === 'session_deleted' || event.type === 'run_finished') schedule();
 });

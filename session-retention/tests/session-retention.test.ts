@@ -15,7 +15,7 @@ run("session-retention (needs PIPAYA_APP=<pipaya>/server)", () => {
 	};
 	const idle = async (id: string) => { for (let i = 0; i < 300; i++) { if (!(await api("GET", `/sessions/${id}/status`)).json.running) return; await Bun.sleep(20); } throw new Error("never idle"); };
 	const call = async (method: string, body: unknown = {}) => (await api("POST", `/server-extensions/session-retention/methods/${method}`, body)).json?.result;
-	const make = async () => (await api("POST", "/sessions", { cwd: ws, approval: "auto" })).json.id as string;
+	const make = async () => (await api("POST", "/sessions", { cwd: ws })).json.id as string;
 	const exists = async (id: string) => (await api("GET", `/sessions/${id}`)).status === 200;
 
 	beforeAll(async () => {
@@ -29,7 +29,7 @@ run("session-retention (needs PIPAYA_APP=<pipaya>/server)", () => {
 		mkdirSync(join(dir, "ext"), { recursive: true });
 		cpSync(join(import.meta.dir, ".."), join(dir, "ext", "session-retention"), { recursive: true, filter: (s) => !s.includes("node_modules") && !s.includes("/tests") });
 		upstream = startEchoUpstream();
-		app = await buildApp({ host: "0.0.0.0", port: 0, dataDir: dir, dbPath: join(dir, "db.sqlite"), token: "t", workspaceRoot: ws, defaultApproval: "auto", approvalTimeoutMs: 0, logLevel: "silent" }, { strictResponses: true, home, extensionDirs: [join(dir, "ext"), join(SERVER!, "test/support/ext")] });
+		app = await buildApp({ host: "0.0.0.0", port: 0, dataDir: dir, dbPath: join(dir, "db.sqlite"), token: "t", workspaceRoot: ws, logLevel: "silent" }, { strictResponses: true, home, extensionDirs: [join(dir, "ext"), join(SERVER!, "test/support/ext")] });
 		await api("PUT", "/configuration/providers/echo", echoProviderBody(upstream.baseUrl));
 		await api("PUT", "/configuration/defaults", { provider: "echo", model: ECHO_MODEL.id });
 		db = new Database(join(dir, "db.sqlite"), { strict: true });
