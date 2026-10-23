@@ -21,7 +21,7 @@
 
 ## Requirements
 
-- A pipaya server with the `input` hook results `parts` and `title` (commit 936bab8 or newer; the first release after 0.3.7). Without this extension the client hides the template menu and badge.
+- A pipaya server with command families (`pi.registerCommands`; the release after 0.3.11). Without this extension the client shows no `/prompt:` menu.
 
 ## Install
 

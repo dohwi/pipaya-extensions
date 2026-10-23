@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-prompt-templates",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Save a long prompt as a Markdown file and call it with `/prompt:name arguments`.",
   "license": "MIT",
   "author": "dohwi",
