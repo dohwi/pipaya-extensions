@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-session-retention",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Deletes chats that have not been used for a while. Off until you set a number of days.",
   "license": "MIT",
   "author": "dohwi",
@@ -11,7 +11,11 @@
     "directory": "session-retention"
   },
   "pipaya": {
-    "title": "Session Retention"
+    "title": "Session Retention",
+    "descriptions": {
+      "en": "Deletes chats that have not been used for a while. Off until you set a number of days.",
+      "ko": "한동안 쓰지 않은 채팅을 삭제합니다. 일수를 설정하기 전에는 꺼져 있습니다."
+    }
   },
   "scripts": {
     "test": "bun test"

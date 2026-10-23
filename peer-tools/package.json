@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-peer-tools",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Lets an agent message (`peer_send`) and read (`peer_read`) the other active chats of the server, by name or group.",
   "license": "MIT",
   "author": "dohwi",
@@ -11,7 +11,11 @@
     "directory": "peer-tools"
   },
   "pipaya": {
-    "title": "Peer Tools"
+    "title": "Peer Tools",
+    "descriptions": {
+      "en": "Lets an agent message (`peer_send`) and read (`peer_read`) the other active chats of the server, by name or group.",
+      "ko": "에이전트가 서버의 다른 활성 채팅을 이름이나 그룹으로 찾아 메시지를 보내고(`peer_send`) 읽을 수(`peer_read`) 있게 합니다."
+    }
   },
   "scripts": {
     "test": "bun test"

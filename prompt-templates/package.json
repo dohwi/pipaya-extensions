@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-prompt-templates",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Save a long prompt as a Markdown file and call it with `/prompt:name arguments`.",
   "license": "MIT",
   "author": "dohwi",
@@ -11,7 +11,11 @@
     "directory": "prompt-templates"
   },
   "pipaya": {
-    "title": "Prompt Templates"
+    "title": "Prompt Templates",
+    "descriptions": {
+      "en": "Save a long prompt as a Markdown file and call it with `/prompt:name arguments`.",
+      "ko": "긴 프롬프트를 Markdown 파일로 저장해 두고 `/prompt:이름 인자`로 불러 씁니다."
+    }
   },
   "scripts": {
     "test": "bun test"

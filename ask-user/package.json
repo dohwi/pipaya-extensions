@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-ask-user",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Lets the agent ask you a question (with options and a recommended choice) and wait for your answer.",
   "license": "MIT",
   "author": "dohwi",
@@ -11,6 +11,10 @@
     "directory": "ask-user"
   },
   "pipaya": {
-    "title": "Ask User"
+    "title": "Ask User",
+    "descriptions": {
+      "en": "Lets the agent ask you a question (with options and a recommended choice) and wait for your answer.",
+      "ko": "에이전트가 선택지와 추천안을 곁들여 질문하고, 답을 기다리게 합니다."
+    }
   }
 }
