@@ -2,7 +2,7 @@
 
 <div align="center">
   <h1>quota-monitor</h1>
-  <p>See how much Claude, GPT and Antigravity quota you have left, right in the <a href="https://github.com/dohwi/pipaya">pipaya</a> navbar.</p>
+  <p>See how much Claude, GPT and Antigravity quota you have left, right in the <a href="https://github.com/dohwi/pipaya">pipaya</a> header.</p>
 
   <p>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=flat-square" alt="MIT License" /></a>
@@ -10,15 +10,15 @@
   </p>
 </div>
 
-| Navbar gauges | Hover popover |
+| Header gauges | Hover popover |
 | :---: | :---: |
-| <img src="docs/preview-desktop.png" alt="Navbar gauges" width="100%" /> | <img src="docs/preview-hover.png" alt="Hover popover" width="100%" /> |
+| <img src="docs/preview-desktop.png" alt="Header gauges" width="100%" /> | <img src="docs/preview-hover.png" alt="Hover popover" width="100%" /> |
 
 <sub>Screenshots show the Korean UI. The extension also supports English (see [Language](#language)).</sub>
 
 ## What it does
 
-- Shows one ring gauge per provider in the pipaya navbar: **Claude**, **GPT (Codex)** and **Antigravity**. A directly connected Gemini account gets its own gauge too.
+- Shows one ring gauge per provider in the pipaya header: **Claude**, **GPT (Codex)** and **Antigravity**. A directly connected Gemini account gets its own gauge too.
 - The ring is the **overall remaining quota (%)** computed by your CLIProxyAPI server. It is not a token or cost estimate.
 - **Antigravity** has a dual ring: the outer ring is Gemini, the inner ring is Claude/GPT.
 - **Only providers you actually have are shown.** With no GPT account, there is no GPT gauge.
@@ -40,9 +40,12 @@
 3. Fill in the settings and save:
    - **CLIProxyAPI address**: the origin only, for example `http://your-server:8317`. No path, no credentials.
    - **Management key**: your CLIProxyAPI management key.
-4. Review the requested permissions (`navbar`, `http-write`, `events`), approve them and turn on **Quota Monitor**.
+4. Review the requested permissions (`ui-components`, `http-write`, `events`), approve them and turn on **Quota Monitor**.
 
-The gauges appear in the navbar within a few seconds.
+> [!WARNING]
+> `ui-components` runs this extension's Svelte gauge code **inside the pipaya app, without a sandbox**, so it can reach everything the app holds (chats, server connections, tokens). The polling and your management key stay in the sandboxed worker, and the drawing code does no network or storage access (a test enforces it), but install only builds you trust. Needs pipaya with trusted UI support.
+
+The gauges appear in the header within a few seconds.
 
 > Settings are stored on the pipaya server and shared by all your devices. Enabling the extension and approving permissions must be done on each device.
 >
@@ -82,7 +85,7 @@ The gauges appear in the navbar within a few seconds.
 
 ## Security
 
-- The extension runs in pipaya's sandboxed Worker. It cannot touch the page, the app's auth token or anything outside its permissions.
+- Polling runs in pipaya's sandboxed Worker, which cannot touch the page or the app's auth token. The gauges are drawn by two Svelte components that run in the app itself (`ui-components`); they only receive plain data from the worker.
 - It only sends `GET <httpOrigin>/v0/management/plugins/quota-monitor/data/accounts`. The host adds the `Authorization: Bearer` header itself, so the key never appears in the URL or in extension code. Cookies are not sent and redirects are rejected.
 - `http-write` is requested only because the SDK requires it for authenticated requests. This extension never sends anything but GET.
 - **The management key is stored in plain text** in the pipaya server's `extensions/quota-monitor/settings.json`, and every device connected to that server receives it. Anyone with a token for your pipaya server can read it. It is left out of configuration exports. If you lose a device, rotate the management key and the server token.
@@ -91,7 +94,7 @@ The gauges appear in the navbar within a few seconds.
 ## How it works
 
 ```
-Providers → CLIProxyAPI + quota-monitor plugin ──GET (management key)──▶ this extension ──▶ pipaya navbar
+Providers → CLIProxyAPI + quota-monitor plugin ──GET (management key)──▶ worker (polls) ──▶ Gauge component (draws) ──▶ pipaya header
 ```
 
 The plugin measures every account and aggregates the overall remaining quota (`availability`: `claude`, `codex`, `antigravity_gemini`, `antigravity_claude`). The extension maps those values to rings and never recalculates them.
@@ -106,7 +109,7 @@ npm test        # Node built-in test runner
 npm run check   # build + test
 ```
 
-Source layout: `src/extension.js` (lifecycle and polling), `src/model.mjs` (snapshot → gauges), `src/view.mjs` (navbar nodes), `src/i18n.mjs` (messages), `src/logos.mjs` (brand icons). `scripts/check-browser.cjs` is an optional headless-browser QA script that needs Playwright and a running pipaya client (`PIPAYA_TEST_URL`).
+Source layout: `src/extension.js` (lifecycle and polling), `src/model.mjs` (snapshot → gauges), `src/view.mjs` (the data sent to the gauges), `src/components/` (`Gauge.svelte`, `Ring.svelte`: the drawing), `src/i18n.mjs` (messages), `src/logos.mjs` (brand icons). `scripts/check-browser.mjs` is an optional headless-browser QA script that needs Playwright and a running pipaya client and server (`PIPAYA_TEST_URL`, `PIPAYA_TEST_SERVER`, `PIPAYA_TEST_TOKEN`).
 
 ## License
 

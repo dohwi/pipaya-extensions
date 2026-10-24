@@ -1,4 +1,4 @@
-// Presentation lives in the extension: the host only renders generic gauge/icon nodes.
+// Presentation lives in the extension: the worker builds plain data, components/Gauge.svelte draws it in the app.
 // Rings and popovers show only the upstream overall remaining quota.
 import { LOGOS, COLORS } from './logos.mjs';
 import { t } from './i18n.mjs';
@@ -49,4 +49,9 @@ export function navbarView(model, error) {
     type: 'stack', id: 'usage', direction: 'horizontal', gap: 'small',
     children: model.gauges.map(gauge => gaugeNode(gauge, error, model.fetchedAt))
   };
+}
+
+// Text the component needs, already in the extension's language (the component never translates).
+export function strings() {
+  return Object.fromEntries(['unknown', 'stale', 'updated', 'sec', 'min', 'hour', 'day'].map(key => [key, t(key)]));
 }

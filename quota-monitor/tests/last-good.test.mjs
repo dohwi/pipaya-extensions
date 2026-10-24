@@ -10,7 +10,7 @@ test('later network failure keeps the previous actual reading and marks every ri
   class FakeDate extends Date { static now() { return now; } }
   const sdk = {
     settings: { get: async () => ({ httpToken: 'test-key' }) },
-    navbar: { set: async (id, item) => calls.push(JSON.parse(JSON.stringify(item))) },
+    components: { setData: async data => calls.push(JSON.parse(JSON.stringify(data))) },
     http: { requestJson: async () => {
       if (++reads > 1) throw new Error('조회 실패');
       return { status: 200, body: { configured: true, snapshot_complete: true, availability: [{ key: 'claude', remaining_percent: 64.7, accounts: 2 }], accounts: [{ provider: 'claude', windows: [{ name: 'weekly', used_percent: 96 }] }] } };

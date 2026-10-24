@@ -11,7 +11,7 @@ async function boot(read, settings = { httpToken: 'test-key' }) {
   const calls = [], scheduled = [], handlers = {}, requests = [];
   const sdk = {
     settings: { get: async () => settings },
-    navbar: { set: async (id, item) => calls.push(JSON.parse(JSON.stringify(item))) },
+    components: { setData: async data => calls.push(JSON.parse(JSON.stringify(data))) },
     http: { requestJson: async request => { requests.push(request); return { status: 200, body: await read(request) }; } },
     events: { on: async handler => { handlers.event = handler; } }
   };
@@ -23,7 +23,7 @@ async function boot(read, settings = { httpToken: 'test-key' }) {
 }
 
 test('built import package requests only the narrowly scoped permissions', () => {
-  assert.deepEqual(pkg.manifest.permissions, ['navbar', 'http-write', 'events']);
+  assert.deepEqual(pkg.manifest.permissions, ['ui-components', 'http-write', 'events']);
   assert.equal(pkg.manifest.sdkVersion, 1);
   assert.ok(Buffer.byteLength(JSON.stringify(pkg)) < 256 * 1024);
   assert.ok(!/sdk\.commands|sdk\.notifications/.test(pkg.code), 'no slash command is registered');
@@ -65,7 +65,7 @@ test('network does not block extension startup; run-finished during I/O queues o
   assert.equal(run.scheduled.at(-1).ms, 2500, 'Run-finished during I/O must not be overwritten by long polling delay');
 });
 
-test('navbar item is generic data: bounded non-interactive nodes, icons as path data only', async () => {
+test('the worker sends plain data: bounded gauge nodes, icons as path data only', async () => {
   const run = await boot(async () => ({ configured: true, snapshot_complete: true,
     availability: [{ key: 'antigravity_gemini', remaining_percent: 49, accounts: 2 }, { key: 'antigravity_claude', remaining_percent: 33, accounts: 1 }],
     accounts: [{ provider: 'antigravity', windows: [{ name: 'Gemini weekly', used_percent: 51 }, { name: 'Claude/GPT weekly', used_percent: 67 }] }] }));
@@ -74,7 +74,7 @@ test('navbar item is generic data: bounded non-interactive nodes, icons as path 
   assert.deepEqual(item.view.children.map(g => g.id), ['claude', 'antigravity']);
   const ag = item.view.children.find(g => g.id === 'antigravity');
   assert.deepEqual(ag.rings.map(r => [r.label, r.value]), [['Gemini 잔량', 49], ['Claude via Antigravity 잔량', 33]]);
-  assert.equal(ag.display, undefined, 'no percentage text in the navbar itself');
+  assert.equal(ag.display, undefined, 'no percentage text beside the ring');
   assert.deepEqual(ag.details.rows.map(r => [r.group, r.label, r.value]), [['Gemini', '잔량', 49], ['Claude/GPT', '잔량', 33]]);
   assert.ok(ag.details.rows.every(r => r.caption === undefined));
   assert.equal(ag.icon.paths.length, 1, 'Antigravity uses its own mark, not Gemini');
@@ -86,6 +86,23 @@ test('navbar item is generic data: bounded non-interactive nodes, icons as path 
   }
   const types = new Set(); (function walk(n) { types.add(n.type); (n.children || []).forEach(walk); })(item.view);
   assert.deepEqual([...types].sort(), ['gauge', 'stack']);
+});
+
+test('components are bundled, mounted in the header, and never touch the network or storage', async () => {
+  assert.deepEqual(Object.keys(pkg.components).sort(), ['Gauge', 'Ring']);
+  assert.deepEqual(pkg.mounts, [{ slot: 'header.end', component: 'Gauge' }]);
+  const sources = Object.values(pkg.components).join('\n');
+  assert.ok(!/fetch\(|XMLHttpRequest|WebSocket|localStorage|sessionStorage|document\.cookie|httpToken|Authorization|eval\(|new Function|innerHTML|{@html/.test(sources), 'drawing code does no I/O and never sees the key');
+  assert.ok(Object.values(pkg.components).every(code => Buffer.byteLength(code) <= 64 * 1024));
+  assert.ok(!/sdk\.navbar/.test(pkg.code), 'the navbar node is no longer used');
+});
+
+test('the payload carries the strings the component shows, in the extension language', async () => {
+  const en = await boot(async () => ({ configured: true, snapshot_complete: true, availability: [], accounts: [] }), { httpToken: 'k', language: 'en' });
+  assert.deepEqual(Object.keys(en.calls.at(-1).strings).sort(), ['day', 'hour', 'min', 'sec', 'stale', 'unknown', 'updated']);
+  assert.equal(en.calls.at(-1).strings.updated, 'Updated {ago}');
+  const ko = await boot(async () => ({ configured: true, snapshot_complete: true, availability: [], accounts: [] }), { httpToken: 'k', language: 'ko' });
+  assert.equal(ko.calls.at(-1).strings.unknown, '확인 불가');
 });
 
 test('hover shows only overall remaining with no plan counts, windows or reset labels', async () => {
@@ -147,13 +164,13 @@ test('quota is read from the authenticated management route, never from /v0/reso
 });
 
 test('package asks only for the permissions the authenticated read needs, with a local secret key', () => {
-  assert.deepEqual([...pkg.manifest.permissions].sort(), ['events', 'http-write', 'navbar']);
+  assert.deepEqual([...pkg.manifest.permissions].sort(), ['events', 'http-write', 'ui-components']);
   assert.equal(pkg.manifest.settingsScope, 'server', 'settings, including the management key, follow the server to every device');
   const token = pkg.manifest.settings.find(field => field.key === 'httpToken');
   assert.ok(token && token.secret === true && token.required === true && !('default' in token));
 });
 
-test('without a key nothing is sent and the navbar says what to do (a keyless call is a failed attempt)', async () => {
+test('without a key nothing is sent and the gauges say what to do (a keyless call is a failed attempt)', async () => {
   const run = await boot(async () => goodSnapshot, {});
   assert.equal(run.requests.length, 0);
   assert.match(JSON.stringify(run.calls.at(-1)), /관리 키를 설정하세요/);
@@ -166,7 +183,7 @@ test('a rejected key is not retried until the key itself changes (5 rejections =
   const requests = [], scheduled = [], calls = [];
   const sdk = {
     settings: { get: async () => ({ httpToken: key }) },
-    navbar: { set: async (id, item) => calls.push(JSON.parse(JSON.stringify(item))) },
+    components: { setData: async data => calls.push(JSON.parse(JSON.stringify(data))) },
     http: { requestJson: async request => { requests.push(request); return { status, body: status === 200 ? goodSnapshot : { error: 'invalid management key' } }; } },
     events: { on: async () => {} }
   };

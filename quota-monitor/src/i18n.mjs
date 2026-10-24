@@ -14,7 +14,14 @@ const MESSAGES = {
     needKey: '관리 키를 설정하세요',
     badKey: '관리 키가 거부되었습니다 — 설정에서 다시 입력하세요',
     serverError: '서버가 오류를 반환했습니다 ({status})',
-    cannotRead: '쿼터를 읽을 수 없습니다'
+    cannotRead: '쿼터를 읽을 수 없습니다',
+    unknown: '확인 불가',
+    stale: '오래된 데이터',
+    updated: '{ago} 업데이트됨',
+    sec: '{n}초 전',
+    min: '{n}분 전',
+    hour: '{n}시간 전',
+    day: '{n}일 전'
   },
   en: {
     itemLabel: 'AI quota',
@@ -29,7 +36,14 @@ const MESSAGES = {
     needKey: 'Set the management key',
     badKey: 'The management key was rejected — enter it again in settings',
     serverError: 'The server returned an error ({status})',
-    cannotRead: 'Unable to read quota'
+    cannotRead: 'Unable to read quota',
+    unknown: 'Unknown',
+    stale: 'Stale data',
+    updated: 'Updated {ago}',
+    sec: '{n}s ago',
+    min: '{n}m ago',
+    hour: '{n}h ago',
+    day: '{n}d ago'
   }
 };
 

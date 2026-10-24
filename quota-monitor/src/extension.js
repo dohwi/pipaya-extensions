@@ -1,7 +1,7 @@
 // Async SDK function body; model.mjs is prepended by scripts/build.mjs.
+// The worker only polls and shapes data; the gauges are drawn by components/Gauge.svelte (mounted in the header).
 const initialSettings = await sdk.settings.get();
 setLanguage(initialSettings?.language);
-const itemId = 'usage';
 // Quota data is served only on the authenticated management route (/v0/resource is unauthenticated
 // and carries no data). The host adds `Authorization: Bearer <httpToken>` from this extension's own
 // settings; the extension never sees the token on the wire and cannot choose another origin/header.
@@ -25,7 +25,7 @@ let failures = 0;
 let followUp = false;
 
 function render(error) {
-  return sdk.navbar.set(itemId, { label: t('itemLabel'), view: navbarView(model, error) });
+  return sdk.components.setData({ label: t('itemLabel'), view: navbarView(model, error), strings: strings() });
 }
 
 function schedule(delay) {
