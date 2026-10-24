@@ -1,6 +1,6 @@
 // session-retention: deletes sessions that have not been used for a while. The server never does this by itself.
 // Turn it on with PIPAYA_FLAG_RETENTION_DAYS=30 (optionally PIPAYA_FLAG_RETENTION_ONLY_CLOSED=1), or call the `setPolicy`
-// method (the choice is saved in this extension's data folder and wins over the flags).
+// method, or fill in the form in Settings (the choice is saved in this extension's settings and wins over the flags).
 // A session that is running, or waiting for an answer, is never deleted, whatever its age.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,7 +20,9 @@ export default (pi: any) => {
 		try { return existsSync(file(name)) ? JSON.parse(readFileSync(file(name), "utf8")) : null; } catch { return null; }
 	};
 	const policy = (): Policy => {
-		const saved = read<Policy>("policy.json");
+		// The settings form (Settings > server extensions) and `setPolicy` both write pi.settings; it wins over the older policy.json and the flags.
+		const form = pi.settings.get() as Partial<Policy>;
+		const saved = Object.keys(form).length ? form : read<Policy>("policy.json");
 		if (saved) return { enabled: saved.enabled === true, days: Math.max(1, Math.floor(Number(saved.days) || 30)), onlyClosed: saved.onlyClosed === true };
 		const days = Math.floor(Number(pi.getFlag("retention_days")));
 		return { enabled: days >= 1, days: days >= 1 ? days : 30, onlyClosed: pi.getFlag("retention_only_closed") === true };
@@ -58,7 +60,7 @@ export default (pi: any) => {
 	pi.registerMethod("setPolicy", (params: Partial<Policy> | null) => {
 		const days = Math.floor(Number(params?.days));
 		if (!(days >= 1 && days <= 3650)) throw new Error("days must be between 1 and 3650");
-		writeFileSync(file("policy.json"), JSON.stringify({ enabled: params?.enabled === true, days, onlyClosed: params?.onlyClosed === true }));
+		pi.settings.set({ enabled: params?.enabled === true, days, onlyClosed: params?.onlyClosed === true });
 		pi.emit(null, "policy_changed", info().policy);
 		return info();
 	});

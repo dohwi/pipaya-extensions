@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-session-retention",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Deletes chats that have not been used for a while. Off until you set a number of days.",
   "license": "MIT",
   "author": "dohwi",
@@ -15,7 +15,33 @@
     "descriptions": {
       "en": "Deletes chats that have not been used for a while. Off until you set a number of days.",
       "ko": "한동안 쓰지 않은 채팅을 삭제합니다. 일수를 설정하기 전에는 꺼져 있습니다."
-    }
+    },
+    "settings": [
+      {
+        "key": "enabled",
+        "type": "boolean",
+        "label": "자동 삭제 사용 (Enable)",
+        "description": "끄면 아무것도 지우지 않습니다. Off: nothing is deleted.",
+        "default": false
+      },
+      {
+        "key": "days",
+        "type": "number",
+        "label": "보관 일수 (Days to keep)",
+        "description": "이 일수 동안 쓰지 않은 채팅을 삭제합니다. Chats unused for this many days are deleted.",
+        "default": 30,
+        "min": 1,
+        "max": 3650,
+        "required": true
+      },
+      {
+        "key": "onlyClosed",
+        "type": "boolean",
+        "label": "닫힌 채팅만 (Only closed chats)",
+        "description": "켜면 닫힌 채팅만 삭제하고 활성 채팅은 남깁니다. Spares active chats.",
+        "default": false
+      }
+    ]
   },
   "scripts": {
     "test": "bun test"

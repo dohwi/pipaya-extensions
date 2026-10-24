@@ -13,7 +13,7 @@
 ## 하는 일
 
 - 서버는 대화를 스스로 지우지 않습니다. 이 확장이 그 기능을 더하며, 한 시간마다와 서버 시작 직후에 실행합니다.
-- `PIPAYA_FLAG_RETENTION_DAYS=30`으로 켭니다(활성 대화를 남기려면 `PIPAYA_FLAG_RETENTION_ONLY_CLOSED=1`도). 또는 `setPolicy` 메서드에 `{enabled, days, onlyClosed}`를 보냅니다. 저장된 정책이 플래그보다 우선합니다.
+- 설정 → 서버 확장 → Session Retention에서 켜거나(일수, 닫힌 채팅만), `PIPAYA_FLAG_RETENTION_DAYS=30`으로 켭니다(활성 대화를 남기려면 `PIPAYA_FLAG_RETENTION_ONLY_CLOSED=1`도). 또는 `setPolicy` 메서드에 `{enabled, days, onlyClosed}`를 보냅니다. 저장된 정책이 플래그보다 우선합니다.
 - 메서드: `info`(정책, 마지막 실행, 지금 지울 개수), `setPolicy`, `run`(바로 정리).
 - 실행 중이거나 답을 기다리는 대화는 나이와 상관없이 지우지 않습니다.
 
@@ -36,7 +36,7 @@ curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-exte
 ## 보안
 
 - 서버 확장은 서버의 모든 권한으로 실행됩니다. 설치 전에 `index.ts`를 읽어 보세요.
-- 대화를 **영구 삭제**합니다. 세션 메타데이터만 읽고(메시지는 읽지 않음), 명령을 실행하지 않고 네트워크를 쓰지 않습니다. 정책과 마지막 실행 기록은 자신의 데이터 폴더에 저장합니다.
+- 대화를 **영구 삭제**합니다. 세션 메타데이터만 읽고(메시지는 읽지 않음), 명령을 실행하지 않고 네트워크를 쓰지 않습니다. 정책은 확장 설정에, 마지막 실행 기록은 자신의 데이터 폴더에 저장합니다.
 
 ## 개발
 
