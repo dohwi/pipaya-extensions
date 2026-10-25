@@ -27,13 +27,9 @@
 
 ## 설치
 
-```bash
-git clone https://github.com/dohwi/pipaya-marketplace && cd pipaya-marketplace
-bun scripts/market.ts install peer-tools        #  ~/.pipaya/extensions/peer-tools 로 복사
-curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
-```
+pipaya의 **설정 → 확장 → 마켓플레이스**에서 **peer-tools** 확장을 설치하세요. 서버가 고정된 릴리스를 `~/.pipaya/extensions/peer-tools/`에 받아 다시 불러옵니다.
 
-또는 이 폴더(`peer-tools`)를 `~/.pipaya/extensions/peer-tools/`에 복사하고 reload 하세요. 끄려면 폴더를 지우고 reload 합니다.
+직접 설치: 이 폴더를 `~/.pipaya/extensions/peer-tools/`에 복사하고 다시 불러오세요(`POST /server-extensions/reload` 또는 설정 → 확장). 끄려면 폴더를 지우고 다시 불러옵니다.
 
 ## 보안
 

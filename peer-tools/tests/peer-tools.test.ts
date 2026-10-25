@@ -133,8 +133,10 @@ run("peer-tools (needs PIPAYA_APP=<pipaya>/server)", () => {
 					await Bun.sleep(25);
 				}
 			};
-			const g = (await api("POST", "/groups", { name: "Fan Out", layout: split(pane(a), split(pane(b), pane(c))) })).json;
-			await api("POST", `/sessions/${a}/messages`, { text: `!peer_send ${JSON.stringify({ to: "Fan-Out", message: "to everyone" })}` });
+			// A non-Latin name keeps its letters in the handle (앱 개발 -> 앱-개발), the same handle overview and the hint show.
+			const g = (await api("POST", "/groups", { name: "앱 개발", layout: split(pane(a), split(pane(b), pane(c))) })).json;
+			expect((await overview()).groups.find((x: any) => x.name === "앱 개발")?.handle).toBe("앱-개발");
+			await api("POST", `/sessions/${a}/messages`, { text: `!peer_send ${JSON.stringify({ to: "앱-개발", message: "to everyone" })}` });
 			await idle(a);
 			await Bun.sleep(100);
 			await Promise.all([idle(b), idle(c)]);

@@ -29,8 +29,6 @@ function branchOf(cwd: string): string | null {
 	return null;
 }
 
-const handle = (name: string) => name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-
 /** Newest lines first until the total cap; long lines are cut. */
 function cap(lines: string[]): string {
 	const kept: string[] = [];
@@ -154,8 +152,8 @@ export default (pi: any) => {
 		return peer;
 	};
 	/** A one-line picture of a session for a tag: role, state, branch, directory and its last words. Never the transcript. */
-	const brief = (id: string): Brief | null => {
-		const r = named().find((x: any) => x.id === id);
+	const brief = (id: string, all: any[] = named()): Brief | null => {
+		const r = all.find((x: any) => x.id === id);
 		if (!r) return null;
 		const lastAssistant = [...pi.sessions.messages(id, 6)].reverse().find((x: any) => x.message.role === "assistant");
 		const content = Array.isArray(lastAssistant?.message.content) ? lastAssistant.message.content : [];
@@ -165,7 +163,8 @@ export default (pi: any) => {
 
 	// `@name` / `@group` in a user message: add a short index of those sessions (never transcripts) as a hint block.
 	pi.on("input", (e: { sessionId: string; text: string }) => {
-		const all = peers(e.sessionId);
+		const everyone = named();
+		const all = everyone.filter((s: any) => s.id !== e.sessionId);
 		if (!all.length) return;
 		const names = all.map((p: any) => p.name);
 		const groups: { name: string; sessionIds: string[] }[] = pi.groups.list();
@@ -174,12 +173,12 @@ export default (pi: any) => {
 		const tagged = mentioned(e.text, handles).filter((h) => { const m = mentioned(e.text, names).find((n) => same(n, h)); return !m; });
 		const found = tagged.map((h) => {
 			const g = groups.find((x) => groupHandle(x.name) === h)!;
-			return { handle: h, members: g.sessionIds.filter((sid) => sid !== e.sessionId).flatMap((sid) => { const b = brief(sid); return b ? [b] : []; }) };
+			return { handle: h, members: g.sessionIds.filter((sid) => sid !== e.sessionId).flatMap((sid) => { const b = brief(sid, everyone); return b ? [b] : []; }) };
 		}).filter((g) => g.members.length);
 		if (found.length) parts.push({ type: "text", text: groupHint(found) });
 		const asked = mentioned(e.text, names);
 		if (asked.length) {
-			const briefs = asked.flatMap((n) => { const p = all.find((x: any) => x.name === n); const b = p && brief(p.id); return b ? [b] : []; });
+			const briefs = asked.flatMap((n) => { const p = all.find((x: any) => x.name === n); const b = p && brief(p.id, everyone); return b ? [b] : []; });
 			parts.push({ type: "text", text: briefs.length ? memberBriefHint(briefs) : `${HINT_OPEN}The user mentioned ${asked.map((n) => `@${n}`).join(", ")}: other sessions (agents) on this server. Use peer_send to give them work or ask them something, and peer_read to look at what they said or did. Do not guess what they did.</pipaya-hint>` });
 		}
 		if (parts.length) return { parts };
@@ -229,8 +228,8 @@ export default (pi: any) => {
 			const name = p.to.replace(/^@/, "");
 			const all = peers(ctx.sessionId);
 			const isSession = all.some((s: any) => same(s.name, name));
-			// A group handle (e.g. App-Development) fans the message out to every other active session in that group.
-			const group = isSession ? undefined : pi.groups.list().find((g: any) => same(handle(g.name), name));
+			// A group handle (the name with spaces as "-", e.g. App-Development or 앱-개발) fans the message out to every other active session in that group.
+			const group = isSession ? undefined : pi.groups.list().find((g: any) => same(groupHandle(g.name), name));
 			const targets = group ? all.filter((s: any) => group.sessionIds.includes(s.id)) : [find(ctx.sessionId, name)];
 			if (group && !targets.length) throw new Error(`no active sessions in group @${name} other than yourself`);
 			const count = (sends.get(ctx.sessionId) ?? 0) + 1;
