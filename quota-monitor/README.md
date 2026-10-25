@@ -40,7 +40,7 @@
 3. Fill in the settings and save:
    - **CLIProxyAPI address**: the origin only, for example `http://your-server:8317`. No path, no credentials.
    - **Management key**: your CLIProxyAPI management key.
-4. Review the requested permissions (`ui-components`, `http-write`, `events`), approve them and turn on **Quota Monitor**.
+4. Review the requested permissions (`ui-components`, `http-write`, `events`, `context`), approve them and turn on **Quota Monitor**.
 
 > [!WARNING]
 > `ui-components` runs this extension's Svelte gauge code **inside the pipaya app, without a sandbox**, so it can reach everything the app holds (chats, server connections, tokens). The polling and your management key stay in the sandboxed worker, and the drawing code does no network or storage access (a test enforces it), but install only builds you trust. Needs pipaya with trusted UI support.
@@ -76,12 +76,12 @@ The gauges appear in the header within a few seconds.
 | --- | :---: | --- |
 | `httpOrigin` | *(required)* | Origin of your CLIProxyAPI, for example `http://your-server:8317`. |
 | `httpToken` | *(required)* | CLIProxyAPI management key. |
-| `language` | `auto` | `auto` follows the program language. You can pin `ko` or `en`. |
+| `language` | `auto` | `auto` follows the pipaya UI language and switches with it. You can pin `ko` or `en`. |
 | `pollSeconds` | empty | Refresh interval in seconds (10–900). Empty follows the server hint (about 60 seconds). |
 
 ### Language
 
-`auto` uses the language reported by the program that runs pipaya. Unsupported languages fall back to English. Messages are in `src/i18n.mjs`.
+`auto` uses the language pipaya shows (Settings → General → Language; `context` permission) and redraws when you switch it. Unsupported languages fall back to English. Messages are in `src/i18n.mjs`.
 
 ## Security
 

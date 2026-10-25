@@ -1,13 +1,14 @@
 {
   "id": "quota-monitor",
   "name": "Quota Monitor",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "sdkVersion": 1,
   "description": "Claude · GPT · Antigravity의 upstream 전체 잔량을 navbar 원형 게이지와 팝오버로 표시합니다. Antigravity는 바깥 Gemini · 안쪽 Claude/GPT 잔량입니다.",
   "permissions": [
     "ui-components",
     "http-write",
-    "events"
+    "events",
+    "context"
   ],
   "settings": [
     {
@@ -31,7 +32,7 @@
       "key": "language",
       "type": "select",
       "label": "언어 (Language)",
-      "description": "자동은 pipaya를 실행 중인 프로그램의 언어를 따릅니다. / Auto follows the program language.",
+      "description": "자동은 pipaya 화면 언어(설정 > 일반 > 언어)를 따릅니다. / Auto follows the pipaya UI language.",
       "default": "auto",
       "options": [
         {

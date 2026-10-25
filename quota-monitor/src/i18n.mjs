@@ -68,7 +68,8 @@ export function systemLanguages() {
   return navigator.language ? [navigator.language] : [];
 }
 
-export function setLanguage(setting, languages = systemLanguages()) {
+export function setLanguage(setting, languages) {
+  if (!languages) languages = systemLanguages();
   currentLanguage = resolveLanguage(setting, languages);
   return currentLanguage;
 }

@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-quota-monitor",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Claude · GPT · Antigravity의 upstream 전체 잔량을 navbar 원형 게이지와 팝오버로 표시합니다. Antigravity는 바깥 Gemini · 안쪽 Claude/GPT 잔량입니다.",
   "private": true,
   "type": "module",

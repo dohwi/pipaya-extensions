@@ -7,10 +7,12 @@ const ring = (item, index, ringIndex = 0) => item.view.children[index].rings[rin
 
 const pkg = JSON.parse(await readFile(new URL('../dist/quota-monitor.json', import.meta.url), 'utf8'));
 
-async function boot(read, settings = { httpToken: 'test-key' }) {
+async function boot(read, settings = { httpToken: 'test-key' }, appLanguage = '') {
   const calls = [], scheduled = [], handlers = {}, requests = [];
+  const ui = { language: appLanguage };
   const sdk = {
     settings: { get: async () => settings },
+    context: { get: async () => ({ language: ui.language }) },
     components: { setData: async data => calls.push(JSON.parse(JSON.stringify(data))) },
     http: { requestJson: async request => { requests.push(request); return { status: 200, body: await read(request) }; } },
     events: { on: async handler => { handlers.event = handler; } }
@@ -19,11 +21,11 @@ async function boot(read, settings = { httpToken: 'test-key' }) {
   await vm.runInContext(`(async () => { ${pkg.code}\n })()`, context);
   // Drain the async SDK-only chain without waiting for a fake clock timer.
   for (let i = 0; i < 20; i++) await Promise.resolve();
-  return { calls, scheduled, handlers, requests };
+  return { calls, scheduled, handlers, requests, ui };
 }
 
 test('built import package requests only the narrowly scoped permissions', () => {
-  assert.deepEqual(pkg.manifest.permissions, ['ui-components', 'http-write', 'events']);
+  assert.deepEqual(pkg.manifest.permissions, ['ui-components', 'http-write', 'events', 'context']);
   assert.equal(pkg.manifest.sdkVersion, 1);
   assert.ok(Buffer.byteLength(JSON.stringify(pkg)) < 256 * 1024);
   assert.ok(!/sdk\.commands|sdk\.notifications/.test(pkg.code), 'no slash command is registered');
@@ -164,7 +166,7 @@ test('quota is read from the authenticated management route, never from /v0/reso
 });
 
 test('package asks only for the permissions the authenticated read needs, with a local secret key', () => {
-  assert.deepEqual([...pkg.manifest.permissions].sort(), ['events', 'http-write', 'ui-components']);
+  assert.deepEqual([...pkg.manifest.permissions].sort(), ['context', 'events', 'http-write', 'ui-components']);
   assert.equal(pkg.manifest.settingsScope, 'server', 'settings, including the management key, follow the server to every device');
   const token = pkg.manifest.settings.find(field => field.key === 'httpToken');
   assert.ok(token && token.secret === true && token.required === true && !('default' in token));
@@ -210,6 +212,15 @@ test('language setting switches the rendered text; auto without a program langua
   assert.equal(en.calls.at(-1).view.children[0].details.title, 'Claude remaining');
   const auto = await boot(async () => body, { httpToken: 'k', language: 'auto' });
   assert.equal(auto.calls.at(-1).label, 'AI 잔량');
+  // auto follows the app's UI language and redraws when it changes, without a new request
+  const app = await boot(async () => body, { httpToken: 'k', language: 'auto' }, 'en');
+  assert.equal(app.calls.at(-1).label, 'AI quota');
+  const before = app.requests.length;
+  app.ui.language = 'ko';
+  app.handlers.event({ type: 'language_changed' });
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  assert.equal(app.calls.at(-1).label, 'AI 잔량');
+  assert.equal(app.requests.length, before);
   const noKey = await boot(async () => body, { language: 'en' });
   assert.ok(noKey.calls.at(-1).view.children[0].hint.includes('Set the management key'));
 });

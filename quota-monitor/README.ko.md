@@ -38,7 +38,7 @@
 3. 설정을 입력하고 저장합니다:
    - **CLIProxyAPI 주소**: origin만 입력합니다. 예: `http://your-server:8317`. 경로나 계정 정보는 넣지 마세요.
    - **관리 키**: CLIProxyAPI 관리 키.
-4. 요청 권한(`ui-components`, `http-write`, `events`)을 확인해 승인하고 **Quota Monitor**를 켭니다.
+4. 요청 권한(`ui-components`, `http-write`, `events`, `context`)을 확인해 승인하고 **Quota Monitor**를 켭니다.
 
 > [!WARNING]
 > `ui-components`는 이 확장의 Svelte 게이지 코드를 **샌드박스 없이 pipaya 앱 안에서** 실행하므로 앱이 가진 모든 것(대화, 서버 연결, 토큰)에 접근할 수 있습니다. 폴링과 관리 키는 샌드박스 Worker 안에 남고, 그리는 코드는 네트워크·저장소에 접근하지 않지만(테스트로 검증) 신뢰하는 빌드만 설치하세요. 신뢰 UI를 지원하는 pipaya가 필요합니다.
@@ -74,7 +74,7 @@
 | --- | :---: | --- |
 | `httpOrigin` | *(필수)* | CLIProxyAPI의 origin. 예: `http://your-server:8317` |
 | `httpToken` | *(필수)* | CLIProxyAPI 관리 키 |
-| `language` | `auto` | `auto`는 프로그램 언어를 따릅니다. `ko` 또는 `en`으로 고정할 수 있습니다. |
+| `language` | `auto` | `auto`는 pipaya 화면 언어를 따르고 바꾸면 함께 바뀝니다. `ko` 또는 `en`으로 고정할 수 있습니다. |
 | `pollSeconds` | 비어 있음 | 갱신 주기(초, 10~900). 비우면 서버 힌트(약 60초)를 따릅니다. |
 
 ## 보안

@@ -1,7 +1,14 @@
 // Async SDK function body; model.mjs is prepended by scripts/build.mjs.
 // The worker only polls and shapes data; the gauges are drawn by components/Gauge.svelte (mounted in the header).
 const initialSettings = await sdk.settings.get();
-setLanguage(initialSettings?.language);
+// 'auto' follows the language the app shows (Settings > General), not the browser's; it is read again on a switch.
+let appLanguage = '';
+async function readAppLanguage() {
+  try { appLanguage = String((await sdk.context.get())?.language ?? ''); } catch { /* keep the last one */ }
+}
+const languages = () => (appLanguage ? [appLanguage] : undefined);
+await readAppLanguage();
+setLanguage(initialSettings?.language, languages());
 // Quota data is served only on the authenticated management route (/v0/resource is unauthenticated
 // and carries no data). The host adds `Authorization: Bearer <httpToken>` from this extension's own
 // settings; the extension never sees the token on the wire and cannot choose another origin/header.
@@ -46,7 +53,7 @@ function refresh() {
     try {
       // Re-read the (local, free) settings so a corrected key or interval applies without a reload.
       settings = await sdk.settings.get();
-      setLanguage(settings?.language);
+      setLanguage(settings?.language, languages());
       const key = keyOf(settings);
       if (!key) throw Object.assign(new Error(t('needKey')), { authBlocked: true });
       if (key === rejectedKey) throw Object.assign(new Error(t('badKey')), { authBlocked: true });
@@ -80,6 +87,11 @@ function refresh() {
 
 await render();
 await sdk.events.on(event => {
+  if (event.type === 'language_changed') {
+    // Redraw at once in the new language; no request is needed for that.
+    void readAppLanguage().then(() => { setLanguage(settings?.language, languages()); return render(); }).catch(() => {});
+    return;
+  }
   if (event.type === 'run_finished') {
     if (pending) followUp = true;
     else schedule(2500);
