@@ -1,7 +1,7 @@
 {
   "name": "pipaya-extension-quota-monitor",
-  "version": "0.6.0",
-  "description": "Claude · GPT · Antigravity의 upstream 전체 잔량을 navbar 원형 게이지와 팝오버로 표시합니다. Antigravity는 바깥 Gemini · 안쪽 Claude/GPT 잔량입니다.",
+  "version": "0.6.1",
+  "description": "Claude · GPT · Antigravity의 upstream 전체 잔량을 상단 바 원형 게이지와 팝오버로 표시합니다. Antigravity는 바깥 Gemini · 안쪽 Claude/GPT 잔량입니다.",
   "private": true,
   "type": "module",
   "scripts": {
@@ -19,8 +19,8 @@
   "pipaya": {
     "title": "Quota Monitor",
     "descriptions": {
-      "en": "Shows the full upstream quota of Claude, GPT and Antigravity as navbar ring gauges and a popover. For Antigravity, the outer ring is Gemini and the inner ring is Claude/GPT.",
-      "ko": "Claude · GPT · Antigravity의 upstream 전체 잔량을 navbar 원형 게이지와 팝오버로 표시합니다. Antigravity는 바깥 Gemini · 안쪽 Claude/GPT 잔량입니다."
+      "en": "Shows the full upstream quota of Claude, GPT and Antigravity as ring gauges in the header with a popover. For Antigravity, the outer ring is Gemini and the inner ring is Claude/GPT.",
+      "ko": "Claude · GPT · Antigravity의 upstream 전체 잔량을 상단 바 원형 게이지와 팝오버로 표시합니다. Antigravity는 바깥 Gemini · 안쪽 Claude/GPT 잔량입니다."
     }
   }
 }

@@ -20,12 +20,12 @@ test('later network failure keeps the previous actual reading and marks every ri
   const context = vm.createContext({ sdk, Date: FakeDate, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout() {} });
   await vm.runInContext(`(async () => { ${pkg.code}\n })()`, context);
   for (let i = 0; i < 20; i++) await Promise.resolve();
-  assert.equal(calls.at(-1).view.children[0].rings[0].value, 64.7);
+  assert.equal(calls.at(-1).gauges[0].rings[0].value, 64.7);
   now += 3000;
   timers.at(-1).fn();
   for (let i = 0; i < 20; i++) await Promise.resolve();
-  assert.equal(calls.at(-1).view.children[0].rings[0].value, 64.7);
-  assert.ok(calls.at(-1).view.children.every(g => g.stale && g.hint.includes('조회 실패')));
+  assert.equal(calls.at(-1).gauges[0].rings[0].value, 64.7);
+  assert.ok(calls.at(-1).gauges.every(g => g.stale && g.hint.includes('조회 실패')));
   assert.equal(reads, 2);
   now += 3000;
   timers.at(-1).fn();

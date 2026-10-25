@@ -32,7 +32,7 @@ let failures = 0;
 let followUp = false;
 
 function render(error) {
-  return sdk.components.setData({ label: t('itemLabel'), view: navbarView(model, error), strings: strings() });
+  return sdk.components.setData({ label: t('itemLabel'), gauges: gaugesData(model, error), strings: strings() });
 }
 
 function schedule(delay) {
@@ -65,7 +65,7 @@ function refresh() {
       if (response.status < 200 || response.status >= 300) throw new Error(t('serverError', { status: response.status }));
       const snapshot = response.body;
       delay = pollDelay(snapshot, settings);
-      model = { ...navbarFromSnapshot(snapshot), fetchedAt: Date.now() };
+      model = { ...gaugesFromSnapshot(snapshot), fetchedAt: Date.now() };
       await render();
       failures = 0;
     } catch (error) {

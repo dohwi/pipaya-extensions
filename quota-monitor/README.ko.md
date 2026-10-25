@@ -103,7 +103,7 @@ npm test        # Node 내장 테스트 러너
 npm run check   # 빌드 + 테스트
 ```
 
-소스 구성: `src/extension.js`(수명주기와 폴링), `src/model.mjs`(스냅샷 → 게이지), `src/view.mjs`(상단 바 노드), `src/i18n.mjs`(메시지), `src/logos.mjs`(브랜드 아이콘). `scripts/check-browser.cjs`는 선택 사항인 헤드리스 브라우저 QA 스크립트로, Playwright와 실행 중인 pipaya 클라이언트(`PIPAYA_TEST_URL`)가 필요합니다.
+소스 구성: `src/extension.js`(수명주기와 폴링), `src/model.mjs`(스냅샷 → 게이지), `src/view.mjs`(컴포넌트에 넘기는 순수 데이터), `src/components/`(`Gauge.svelte`, `Ring.svelte`: 그리기), `src/i18n.mjs`(메시지), `src/logos.mjs`(브랜드 아이콘).
 
 ## 라이선스
 

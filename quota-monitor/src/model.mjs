@@ -1,4 +1,4 @@
-// Pure snapshot -> navbar conversion. Also bundled into the sandbox worker.
+// Pure snapshot -> gauges conversion. Also bundled into the sandbox worker.
 import { t } from './i18n.mjs';
 export function providerName(provider) {
   const name = String(provider || '').toLowerCase().trim();
@@ -17,7 +17,7 @@ export function observedAt(account) {
   return times.length ? Math.max(...times) : null;
 }
 
-export function navbarFromSnapshot(snapshot) {
+export function gaugesFromSnapshot(snapshot) {
   if (!snapshot || snapshot.configured !== true || snapshot.snapshot_complete !== true) {
     const code = snapshot?.configured === false ? 'checkConfig' : 'waiting';
     throw Object.assign(new Error(t(code)), { code });

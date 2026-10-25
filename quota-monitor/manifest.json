@@ -1,9 +1,9 @@
 {
   "id": "quota-monitor",
   "name": "Quota Monitor",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "sdkVersion": 1,
-  "description": "Claude · GPT · Antigravity의 upstream 전체 잔량을 navbar 원형 게이지와 팝오버로 표시합니다. Antigravity는 바깥 Gemini · 안쪽 Claude/GPT 잔량입니다.",
+  "description": "Claude · GPT · Antigravity의 upstream 전체 잔량을 상단 바 원형 게이지와 팝오버로 표시합니다. Antigravity는 바깥 Gemini · 안쪽 Claude/GPT 잔량입니다.",
   "permissions": [
     "ui-components",
     "http-write",

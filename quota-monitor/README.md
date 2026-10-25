@@ -109,7 +109,7 @@ npm test        # Node built-in test runner
 npm run check   # build + test
 ```
 
-Source layout: `src/extension.js` (lifecycle and polling), `src/model.mjs` (snapshot → gauges), `src/view.mjs` (the data sent to the gauges), `src/components/` (`Gauge.svelte`, `Ring.svelte`: the drawing), `src/i18n.mjs` (messages), `src/logos.mjs` (brand icons). `scripts/check-browser.mjs` is an optional headless-browser QA script that needs Playwright and a running pipaya client and server (`PIPAYA_TEST_URL`, `PIPAYA_TEST_SERVER`, `PIPAYA_TEST_TOKEN`).
+Source layout: `src/extension.js` (lifecycle and polling), `src/model.mjs` (snapshot → gauges), `src/view.mjs` (the plain data handed to the components), `src/components/` (`Gauge.svelte`, `Ring.svelte`: the drawing), `src/i18n.mjs` (messages), `src/logos.mjs` (brand icons).
 
 ## License
 

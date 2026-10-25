@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
-const gauges = item => item.view.children;
-const ring = (item, index, ringIndex = 0) => item.view.children[index].rings[ringIndex].value;
+const gauges = item => item.gauges;
+const ring = (item, index, ringIndex = 0) => item.gauges[index].rings[ringIndex].value;
 
 const pkg = JSON.parse(await readFile(new URL('../dist/quota-monitor.json', import.meta.url), 'utf8'));
 
@@ -73,21 +73,20 @@ test('the worker sends plain data: bounded gauge nodes, icons as path data only'
     accounts: [{ provider: 'antigravity', windows: [{ name: 'Gemini weekly', used_percent: 51 }, { name: 'Claude/GPT weekly', used_percent: 67 }] }] }));
   const item = run.calls.at(-1);
   assert.ok(item.label.length <= 40);
-  assert.deepEqual(item.view.children.map(g => g.id), ['claude', 'antigravity']);
-  const ag = item.view.children.find(g => g.id === 'antigravity');
+  assert.deepEqual(item.gauges.map(g => g.id), ['claude', 'antigravity']);
+  const ag = item.gauges.find(g => g.id === 'antigravity');
   assert.deepEqual(ag.rings.map(r => [r.label, r.value]), [['Gemini 잔량', 49], ['Claude via Antigravity 잔량', 33]]);
   assert.equal(ag.display, undefined, 'no percentage text beside the ring');
   assert.deepEqual(ag.details.rows.map(r => [r.group, r.label, r.value]), [['Gemini', '잔량', 49], ['Claude/GPT', '잔량', 33]]);
   assert.ok(ag.details.rows.every(r => r.caption === undefined));
   assert.equal(ag.icon.paths.length, 1, 'Antigravity uses its own mark, not Gemini');
   assert.equal(ag.icon.paths[0].fillRule, 'evenodd');
-  assert.ok(!item.view.children.some(g => g.id === 'gemini'));
-  for (const g of item.view.children) {
+  assert.ok(!item.gauges.some(g => g.id === 'gemini'));
+  for (const g of item.gauges) {
     assert.ok(g.hint.length <= 500 && g.rings.length <= 3);
     for (const p of g.icon.paths) assert.match(p.d, /^[MmLlHhVvCcSsQqTtAaZz0-9eE+\-., \t\n\r]+$/);
   }
-  const types = new Set(); (function walk(n) { types.add(n.type); (n.children || []).forEach(walk); })(item.view);
-  assert.deepEqual([...types].sort(), ['gauge', 'stack']);
+  assert.ok(item.gauges.every(g => g.type === undefined), 'plain data for its own component, not a host view node');
 });
 
 test('components are bundled, mounted in the header, and never touch the network or storage', async () => {
@@ -96,7 +95,7 @@ test('components are bundled, mounted in the header, and never touch the network
   const sources = Object.values(pkg.components).join('\n');
   assert.ok(!/fetch\(|XMLHttpRequest|WebSocket|localStorage|sessionStorage|document\.cookie|httpToken|Authorization|eval\(|new Function|innerHTML|{@html/.test(sources), 'drawing code does no I/O and never sees the key');
   assert.ok(Object.values(pkg.components).every(code => Buffer.byteLength(code) <= 64 * 1024));
-  assert.ok(!/sdk\.navbar/.test(pkg.code), 'the navbar node is no longer used');
+  assert.ok(!/sdk\.navbar|sdk\.ui\./.test(pkg.code), 'draws only through its own components');
 });
 
 test('the payload carries the strings the component shows, in the extension language', async () => {
@@ -114,7 +113,7 @@ test('hover shows only overall remaining with no plan counts, windows or reset l
     { provider: 'claude', plan_type: 'pro', status: 'known', windows: [{ name: 'five-hour', used_percent: 40, reset_at: new Date(Date.now() + 45 * 60000).toISOString() }] },
     { provider: 'codex', plan_type: 'plus', status: 'known', windows: [{ name: 'primary', used_percent: 97 }] }
   ] }));
-  const [claude, gpt] = run.calls.at(-1).view.children;
+  const [claude, gpt] = run.calls.at(-1).gauges;
   assert.deepEqual(claude.details.rows, [{ label: '잔량', value: 74.6, color: '#d97757' }]);
   assert.equal(gpt.details.rows[0].caption, undefined);
   assert.doesNotMatch(JSON.stringify([claude, gpt]), /가용률|이용률|5시간|주간|sonnet|리셋|caption|집계 계정|최저|Pro|Plus|플랜/);
@@ -143,7 +142,7 @@ test('hover shows data age from the monitor observation time, never the local po
     { provider: 'claude', status: 'known', last_success: new Date(seen - 90000).toISOString(), observed_at: new Date(seen).toISOString(), windows: [{ name: 'five-hour', used_percent: 10 }] },
     { provider: 'codex', status: 'known', windows: [{ name: 'primary', used_percent: 10 }] }
   ] }));
-  const [claude, gpt] = run.calls.at(-1).view.children;
+  const [claude, gpt] = run.calls.at(-1).gauges;
   assert.equal(claude.details.updatedAt, seen, 'newest observation wins');
   assert.ok(Math.abs(gpt.details.updatedAt - Date.now()) < 5000, 'without an observation time the last successful read is used');
 });
@@ -202,14 +201,14 @@ test('a rejected key is not retried until the key itself changes (5 rejections =
   // The operator corrects the key: requests resume on the next local re-check.
   key = 'good-key'; status = 200; now += 20000; scheduled.at(-1).fn(); await tick();
   assert.equal(requests.length, 2);
-  assert.equal(calls.at(-1).view.children[0].rings[0].value, 70);
+  assert.equal(calls.at(-1).gauges[0].rings[0].value, 70);
 });
 
 test('language setting switches the rendered text; auto without a program language stays Korean', async () => {
   const body = { configured: true, snapshot_complete: true, availability: [], accounts: [] };
   const en = await boot(async () => body, { httpToken: 'k', language: 'en' });
   assert.equal(en.calls.at(-1).label, 'AI quota');
-  assert.equal(en.calls.at(-1).view.children[0].details.title, 'Claude remaining');
+  assert.equal(en.calls.at(-1).gauges[0].details.title, 'Claude remaining');
   const auto = await boot(async () => body, { httpToken: 'k', language: 'auto' });
   assert.equal(auto.calls.at(-1).label, 'AI 잔량');
   // auto follows the app's UI language and redraws when it changes, without a new request
@@ -222,5 +221,5 @@ test('language setting switches the rendered text; auto without a program langua
   assert.equal(app.calls.at(-1).label, 'AI 잔량');
   assert.equal(app.requests.length, before);
   const noKey = await boot(async () => body, { language: 'en' });
-  assert.ok(noKey.calls.at(-1).view.children[0].hint.includes('Set the management key'));
+  assert.ok(noKey.calls.at(-1).gauges[0].hint.includes('Set the management key'));
 });

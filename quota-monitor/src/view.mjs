@@ -1,4 +1,4 @@
-// Presentation lives in the extension: the worker builds plain data, components/Gauge.svelte draws it in the app.
+// What the worker hands to components/Gauge.svelte (plain data); the component draws it in the app.
 // Rings and popovers show only the upstream overall remaining quota.
 import { LOGOS, COLORS } from './logos.mjs';
 import { t } from './i18n.mjs';
@@ -17,7 +17,7 @@ function rows(list, color, group) {
   });
 }
 
-export function gaugeNode(gauge, error, fetchedAt = null) {
+export function gaugeData(gauge, error, fetchedAt = null) {
   const antigravity = gauge.brand === 'antigravity';
   const ring = (value, color, label) => ({ value, color: tone(value, color), label });
   const rings = antigravity
@@ -32,7 +32,7 @@ export function gaugeNode(gauge, error, fetchedAt = null) {
   if (!detailRows.length) detailRows = [{ label: t('noQuotaInfo'), value: null }];
   const title = t('remainingOf', { name: gauge.label });
   const node = {
-    type: 'gauge', id: gauge.id, label: gauge.label, size: 'small', rings,
+    id: gauge.id, label: gauge.label, rings,
     icon: LOGOS[gauge.brand],
     hint: [gauge.hint, error].filter(Boolean).join(' · ').slice(0, 500),
     details: { title: title.slice(0, 40), rows: detailRows.slice(0, 12) }
@@ -44,11 +44,8 @@ export function gaugeNode(gauge, error, fetchedAt = null) {
   return node;
 }
 
-export function navbarView(model, error) {
-  return {
-    type: 'stack', id: 'usage', direction: 'horizontal', gap: 'small',
-    children: model.gauges.map(gauge => gaugeNode(gauge, error, model.fetchedAt))
-  };
+export function gaugesData(model, error) {
+  return model.gauges.map(gauge => gaugeData(gauge, error, model.fetchedAt));
 }
 
 // Text the component needs, already in the extension's language (the component never translates).
