@@ -24,24 +24,16 @@
 | [prompt-templates](prompt-templates) | server | Save a long prompt as a Markdown file and call it with `/prompt:name` |
 | [session-retention](session-retention) | server | Deletes chats that have not been used for a while (off by default) |
 | [peer-names](peer-names) | client | `@name` labels, `@` completion and peer message bubbles (pairs with peer-tools) |
-| [quota-monitor](quota-monitor) | client | Claude, GPT and Antigravity quota gauges in the navbar |
+| [quota-monitor](quota-monitor) | client | Claude, GPT and Antigravity quota gauges in the header |
 
 ## Install
 
-Each folder is listed in the marketplace on its own, so you install only what you need:
-
-```bash
-git clone https://github.com/dohwi/pipaya-marketplace && cd pipaya-marketplace
-bun scripts/market.ts install peer-tools     # copies the peer-tools folder to ~/.pipaya/extensions/
-curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
-```
-
-Client extensions (`quota-monitor`, `peer-names`) install from the pipaya app: **Settings → Extensions → Marketplace**.
+In pipaya, open **Settings → Extensions → Marketplace**. Every folder here is listed on its own: server extensions are fetched by the server at their pinned release, client extensions are installed on the device. A pair (peer-tools + peer-names) offers to install both.
 
 ## Layout
 
 ```
-pipaya-extensions/
+extensions/                # this repository (dohwi/pipaya-extensions)
 └── <id>/                  # one extension: index.ts + package.json (server), or manifest.json + dist/<id>.json (client)
     ├── package.json       # name, version, description, license, author, pipaya.title
     ├── README.md          # what it reads, runs and sends
@@ -51,17 +43,17 @@ pipaya-extensions/
 ## Adding or updating an extension
 
 1. Add or change `<id>/`. A server extension needs `index.ts` and `package.json`; the README must state what it reads, runs and sends.
-2. Bump `version` in its `package.json`.
+2. Bump `version` in its `package.json` (and `manifest.json` for a client one, then rebuild `dist/`).
 3. Tag the release `<id>-v<version>` (for example `peer-tools-v0.2.0`). One tag per extension, so each folder versions on its own.
 4. In [pipaya-marketplace](https://github.com/dohwi/pipaya-marketplace) run `bun scripts/pin.ts <id> <tag>` and commit the result.
 
 ## Development
 
-Requires [Bun](https://bun.sh) (`mise install`). Server extensions have no build step. Tests that need a running pipaya server read `PIPAYA_APP=<pipaya>/server`:
+Requires [Bun](https://bun.sh) (`mise install`). Server extensions have no build step. Tests that need a running pipaya server read `PIPAYA_APP=<pipaya>/server`. The usual checkout puts this repository as `extensions/` beside `app/` (pipaya) and `marketplace/`:
 
 ```bash
 bun scripts/check.ts                          # every extension: package.json is valid, entry exists, tests that need no server pass
-PIPAYA_APP=~/pipaya/app/server bun scripts/check.ts peer-tools   # one extension, with its server tests
+PIPAYA_APP=../app/server bun scripts/check.ts peer-tools   # one extension, with its server tests
 ```
 
 ## License

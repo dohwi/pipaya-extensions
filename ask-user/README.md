@@ -23,13 +23,9 @@
 
 ## Install
 
-```bash
-git clone https://github.com/dohwi/pipaya-marketplace && cd pipaya-marketplace
-bun scripts/market.ts install ask-user        # copies to ~/.pipaya/extensions/ask-user
-curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
-```
+In pipaya, open **Settings → Extensions → Marketplace** and install **ask-user**. The server fetches the pinned release into `~/.pipaya/extensions/ask-user/` and reloads.
 
-Or copy this folder (`ask-user`) into `~/.pipaya/extensions/ask-user/` and reload. To turn it off, remove the folder and reload: without it the agent never asks and simply assumes.
+By hand: copy this folder to `~/.pipaya/extensions/ask-user/` and reload (`POST /server-extensions/reload` or Settings → Extensions). To turn it off, remove the folder and reload: without it the agent never asks and simply assumes.
 
 ## Security
 

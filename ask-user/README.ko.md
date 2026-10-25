@@ -23,13 +23,9 @@
 
 ## 설치
 
-```bash
-git clone https://github.com/dohwi/pipaya-marketplace && cd pipaya-marketplace
-bun scripts/market.ts install ask-user        # ~/.pipaya/extensions/ask-user 로 복사
-curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
-```
+pipaya의 **설정 → 확장 → 마켓플레이스**에서 **ask-user** 확장을 설치하세요. 서버가 고정된 릴리스를 `~/.pipaya/extensions/ask-user/`에 받아 다시 불러옵니다.
 
-또는 `ask-user` 폴더를 `~/.pipaya/extensions/ask-user/`에 복사하고 reload 하세요. 끄려면 폴더를 지우고 reload 합니다. 확장이 없으면 에이전트는 묻지 않고 가정하고 진행합니다.
+직접 설치: 이 폴더를 `~/.pipaya/extensions/ask-user/`에 복사하고 다시 불러오세요(`POST /server-extensions/reload` 또는 설정 → 확장). 끄려면 폴더를 지우고 다시 불러옵니다. 확장이 없으면 에이전트는 묻지 않고 가정하고 진행합니다.
 
 ## 보안
 

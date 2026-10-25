@@ -25,13 +25,9 @@
 
 ## Install
 
-```bash
-git clone https://github.com/dohwi/pipaya-marketplace && cd pipaya-marketplace
-bun scripts/market.ts install prompt-templates        # copies to ~/.pipaya/extensions/prompt-templates
-curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
-```
+In pipaya, open **Settings → Extensions → Marketplace** and install **prompt-templates**. The server fetches the pinned release into `~/.pipaya/extensions/prompt-templates/` and reloads.
 
-Or copy this folder (`prompt-templates`) into `~/.pipaya/extensions/prompt-templates/` and reload. To turn it off, remove the folder and reload.
+By hand: copy this folder to `~/.pipaya/extensions/prompt-templates/` and reload (`POST /server-extensions/reload` or Settings → Extensions). To turn it off, remove the folder and reload.
 
 ## Security
 

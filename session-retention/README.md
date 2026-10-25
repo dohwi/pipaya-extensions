@@ -25,13 +25,9 @@
 
 ## Install
 
-```bash
-git clone https://github.com/dohwi/pipaya-marketplace && cd pipaya-marketplace
-bun scripts/market.ts install session-retention        # copies to ~/.pipaya/extensions/session-retention
-curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" http://<server>/server-extensions/reload
-```
+In pipaya, open **Settings → Extensions → Marketplace** and install **session-retention**. The server fetches the pinned release into `~/.pipaya/extensions/session-retention/` and reloads.
 
-Or copy this folder (`session-retention`) into `~/.pipaya/extensions/session-retention/` and reload. To turn it off, remove the folder and reload.
+By hand: copy this folder to `~/.pipaya/extensions/session-retention/` and reload (`POST /server-extensions/reload` or Settings → Extensions). To turn it off, remove the folder and reload.
 
 ## Security
 
