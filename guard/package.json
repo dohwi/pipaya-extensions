@@ -1,19 +1,23 @@
 {
   "name": "pipaya-extension-guard",
-  "version": "0.1.1",
-  "description": "Blocks destructive shell commands (rm -rf /, mkfs, fork bombs) before they run.",
+  "version": "0.1.2",
+  "description": "Blocks destructive shell commands (wiping / or ~, formatting or overwriting a disk, fork bombs) before they run.",
   "license": "MIT",
   "author": "dohwi",
   "pipaya": {
     "title": "Guard",
     "descriptions": {
-      "en": "Blocks destructive shell commands (rm -rf /, mkfs, fork bombs) before they run.",
-      "ko": "파괴적인 셸 명령(rm -rf /, mkfs, 포크 폭탄)을 실행되기 전에 차단합니다."
+      "en": "Blocks destructive shell commands (wiping / or ~, formatting or overwriting a disk, fork bombs) before they run.",
+      "ko": "파괴적인 셸 명령(/·~ 삭제, 디스크 포맷·덮어쓰기, 포크 폭탄)을 실행되기 전에 차단합니다."
     }
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/dohwi/pipaya-extensions.git",
     "directory": "guard"
+  },
+  "type": "module",
+  "scripts": {
+    "test": "bun test"
   }
 }
