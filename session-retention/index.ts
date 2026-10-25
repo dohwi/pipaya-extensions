@@ -66,6 +66,9 @@ export default (pi: any) => {
 	});
 	pi.registerMethod("run", () => ({ deleted: run() }));
 
+	// A policy saved from the settings form is told to clients at once (the next clean-up uses it anyway).
+	pi.settings.onChange(() => { try { pi.emit(null, "policy_changed", info().policy); } catch (e) { pi.log("policy_changed failed", String(e)); } });
+
 	const timer = setInterval(() => { try { run(); } catch (e) { pi.log("clean-up failed", String(e)); } }, EVERY_MS);
 	// Shortly after start, so a server that was off for a while does not wait a full hour.
 	const first = setTimeout(() => { try { run(); } catch (e) { pi.log("clean-up failed", String(e)); } }, 30_000);

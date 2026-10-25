@@ -12,7 +12,6 @@ export default (pi: any) => {
 		name: "ask_user",
 		label: "Ask user",
 		description: DESCRIPTION,
-		mutating: false,
 		parameters: T.Object({
 			question: T.Optional(T.String({ minLength: 1, maxLength: 2000, description: "One clear question. Omit when using `questions`" })),
 			options: options({ description: "Suggested answers" }),

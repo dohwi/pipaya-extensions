@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-ask-user",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Lets the agent ask you a question (with options and a recommended choice) and wait for your answer.",
   "license": "MIT",
   "author": "dohwi",
