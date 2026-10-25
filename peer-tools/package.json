@@ -21,7 +21,7 @@
         "key": "language",
         "type": "string",
         "label": "이름 언어 (Name language)",
-        "description": "@이름에 쓸 언어 태그(예: ko, en). peer-names가 UI 언어에 맞춰 자동으로 바꿉니다. Language tag for @names (e.g. ko, en); peer-names updates it with the UI language.",
+        "description": "@이름에 쓸 언어 태그 (예: ko, en) / Language tag for @names",
         "placeholder": "ko"
       }
     ],
