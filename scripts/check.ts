@@ -29,6 +29,17 @@ export function checkExtension(id: string, dir = join(DIR, id)): Problem[] {
 		if (m.version !== pkg.version) errs.push(`manifest.json version ${m.version} differs from package.json ${pkg.version}`);
 		if (!existsSync(join(dir, "dist", `${id}.json`))) errs.push(`dist/${id}.json is missing (run the build)`);
 	} else if (!["index.ts", "index.js"].some((f) => existsSync(join(dir, f)))) errs.push("no index.ts or index.js");
+	// A server extension that carries its client half (`pipaya.client`) must carry the current build of `pipaya.companion`.
+	const meta = pkg.pipaya ?? {};
+	if (meta.client !== undefined) {
+		if (typeof meta.companion !== "string") errs.push("package.json: pipaya.client needs pipaya.companion");
+		else if (typeof meta.client !== "string" || !/^(?!.*\.\.)[\w./-]+\.json$/.test(meta.client) || !existsSync(join(dir, meta.client))) errs.push(`package.json: pipaya.client "${meta.client}" is not a .json file in the folder`);
+		else {
+			const built = join(ROOT, meta.companion, "dist", `${meta.companion}.json`);
+			if (existsSync(built) && readFileSync(built, "utf8") !== readFileSync(join(dir, meta.client), "utf8")) errs.push(`${meta.client} differs from ${meta.companion}/dist/${meta.companion}.json (build ${meta.companion})`);
+			if (JSON.parse(readFileSync(join(dir, meta.client), "utf8"))?.manifest?.id !== meta.companion) errs.push(`${meta.client}: manifest.id is not "${meta.companion}"`);
+		}
+	}
 	return errs;
 }
 

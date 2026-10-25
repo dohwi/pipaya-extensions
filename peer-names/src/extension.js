@@ -6,6 +6,7 @@ let busy = false;
 let again = false;
 
 let language = '';
+const REFRESH = new Set(['session_created', 'session_updated', 'session_deleted', 'run_finished', 'group_created', 'group_updated', 'group_deleted', 'extensions_updated']);
 
 // Names follow the UI language (민수 <-> Minsu): peer-tools renames, then tells us through a names_changed event.
 async function followLanguage() {
@@ -26,7 +27,8 @@ async function refresh() {
     const overview = await sdk.server.call('peer-tools', 'overview', {});
     const labels = labelsOf(overview);
     await sdk.sessionLabels.set(labels);
-    await sdk.mentions.set(mentionsOf(overview, typeof navigator === 'object' ? navigator.language : 'en'));
+    // Menu words follow the app's language (from the host), not the browser's.
+    await sdk.mentions.set(mentionsOf(overview, language || 'en'));
   } catch (error) {
     // The server may be offline or peer-tools not installed: show nothing rather than stale names.
     await sdk.sessionLabels.set({}).catch(() => {});
@@ -45,7 +47,8 @@ function schedule() {
 await sdk.messages.setHeader(SENDER);
 await sdk.events.on(event => {
   if (event.type === 'language_changed') void followLanguage().then(schedule);
-  if (event.type === 'session_created' || event.type === 'session_updated' || event.type === 'session_deleted' || event.type === 'run_finished') schedule();
+  // Groups are @-addressable too, so a group change refreshes the completions.
+  if (REFRESH.has(event.type)) schedule();
 });
 await sdk.server.on(event => {
   if (event.extension === 'peer-tools') schedule();

@@ -12,4 +12,7 @@ const output = JSON.stringify({ manifest, code }, null, 2) + '\n';
 if (Buffer.byteLength(code) > 128 * 1024 || Buffer.byteLength(output) > 256 * 1024) throw new Error('SDK package size limit exceeded');
 await mkdir(new URL('dist/', root), { recursive: true });
 await writeFile(new URL(`dist/${manifest.id}.json`, root), output);
+// peer-tools (the server half) carries this build so the app can install the pair from the server alone.
+await mkdir(new URL('../peer-tools/client/', root), { recursive: true });
+await writeFile(new URL(`../peer-tools/client/${manifest.id}.json`, root), output);
 console.log(`Built ${fileURLToPath(new URL(`dist/${manifest.id}.json`, root))} (${Buffer.byteLength(output)} bytes)`);

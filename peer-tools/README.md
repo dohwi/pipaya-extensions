@@ -17,6 +17,7 @@
 - At most 10 `peer_send` calls per run, so two chats cannot answer each other forever. `peer_read` output is capped.
 - Both tools can be switched off in Settings → Tools.
 - Gives every active chat a short `@name` (a Korean first name, or its romanized twin when the UI is not Korean) and keeps it in the chat itself. A closed chat gives its name up. With [peer-names](../peer-names) installed, names follow the UI language (the language tag is kept in this extension's settings).
+- Carries the [peer-names](../peer-names) client package (`client/peer-names.json`, `pipaya.client`): pipaya offers to install it from the server itself, same version, no marketplace needed.
 
 > Before this existed as an extension, the same two tools were built into the server. Install it to keep them.
 

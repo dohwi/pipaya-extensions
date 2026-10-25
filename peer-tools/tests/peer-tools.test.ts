@@ -37,6 +37,14 @@ run("peer-tools (needs PIPAYA_APP=<pipaya>/server)", () => {
 		rmSync(dir, { recursive: true, force: true });
 	});
 
+	test("carries its client half (peer-names), served by the server", async () => {
+		const info = (await api("GET", "/server-extensions")).json.extensions.find((e: any) => e.name === "peer-tools");
+		expect(info.companion).toBe("peer-names");
+		const r = await api("GET", "/server-extensions/peer-tools/client");
+		// servers from before `pipaya.client` answer 404; on a current one the package comes back as built
+		if (info.clientPackage !== undefined) expect(r.json.package.manifest.id).toBe("peer-names");
+	});
+
 	test("the tools are listed as switchable", async () => {
 		const toggleable = (await api("GET", "/configuration")).json.tools.toggleable as string[];
 		expect(toggleable).toContain("peer_send");

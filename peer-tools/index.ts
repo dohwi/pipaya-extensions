@@ -129,17 +129,21 @@ export default (pi: any) => {
 		for (const sess of active) { const n = stored[sess.id]; if (typeof n === "string" && n && !seen.has(n.toLowerCase())) seen.add(n.toLowerCase()); }
 		const used = new Set<string>([...seen, ...taken]);
 		const done = new Set<string>();
-		return active.map((sess) => {
+		let changed = false;
+		const out = active.map((sess) => {
 			let name = stored[sess.id];
 			if (typeof name !== "string" || !name || done.has(name.toLowerCase())) {
 				name = nextMemberName(used, typeof name === "string" && name ? poolOfName(name) : poolForLang(lang));
 				used.add(name.toLowerCase());
 				pi.sessions.data.set(sess.id, "name", name);
-				pi.emit(null, "names_changed", {}, { ephemeral: true });
+				changed = true;
 			}
 			done.add(name.toLowerCase());
 			return { ...sess, name };
 		});
+		// One event however many sessions got a name, so the client refreshes once.
+		if (changed) pi.emit(null, "names_changed", {}, { ephemeral: true });
+		return out;
 	};
 	const peers = (self: string) => named().filter((s: any) => s.id !== self);
 	const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
