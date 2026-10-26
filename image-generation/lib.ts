@@ -71,7 +71,3 @@ export function replyText(prompt: string, text: string, paths: string[]): string
 	const alt = prompt.trim().replace(/[\[\]\n]/g, " ").slice(0, 80);
 	return [...(text ? [text] : []), ...paths.map((p) => `![${alt}](${p})`)].join("\n\n");
 }
-
-/** Model ids from the settings field (comma or newline separated), without duplicates. */
-export const parseModels = (value: unknown): string[] =>
-	[...new Set(String(value ?? "").split(/[\s,]+/).map((s) => s.trim()).filter((s) => /^[\w./:-]{1,200}$/.test(s)))];

@@ -22,7 +22,7 @@
 | [guard](guard) | server | 위험한 셸 명령(`rm -rf /`, `mkfs`, 포크 폭탄)을 실행 전에 차단 |
 | [peer-tools](peer-tools) | server | 에이전트가 서로의 대화에 메시지를 보내고(`peer_send`) 읽게 함(`peer_read`) |
 | [prompt-templates](prompt-templates) | server | 긴 프롬프트를 Markdown 파일로 저장해 `/prompt:이름`으로 호출 |
-| [image-generation](image-generation) | server | 이미지 생성 모델: 대화에서 그림을 설명하면 답이 그림으로 옴 |
+| [image-generation](image-generation) | server | 연결의 이미지 모델 실행: 대화에서 그림을 설명하면 답이 그림으로 옴 |
 | [peer-names](peer-names) | client | `@이름` 라벨, `@` 자동완성, 대화 간 메시지 말풍선 (peer-tools와 함께 사용) |
 | [quota-monitor](quota-monitor) | client | Claude, GPT, Antigravity 잔량 게이지를 상단 바에 표시 |
 

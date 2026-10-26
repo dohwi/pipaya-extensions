@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { lastUser, parseModels, parseResponse, picturePath, previousPicturePath, replyText, requestBody } from "../lib.ts";
+import { lastUser, parseResponse, picturePath, previousPicturePath, replyText, requestBody } from "../lib.ts";
 
 // 1x1 PNG
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
@@ -28,7 +28,6 @@ describe("lib", () => {
 	test("names files and writes the reply", () => {
 		expect(picturePath("image/jpeg", 36, "abc")).toBe(".pipaya/generated/10-abc.jpg");
 		expect(replyText("a [red]\ncat", "ok", ["p.png"])).toBe("ok\n\n![a  red  cat](p.png)");
-		expect(parseModels("a/b, c\nbad model, a/b")).toEqual(["a/b", "c", "bad", "model"]);
 	});
 });
 
@@ -55,26 +54,28 @@ run("image-generation in a server (needs PIPAYA_APP=<pipaya>/server)", () => {
 		upstream = Bun.serve({
 			port: 0,
 			fetch: async (req) => {
+				if (req.method === "GET") return Response.json({ data: [{ id: "img/one" }] }); // the connection's model list
 				seen.push({ auth: req.headers.get("authorization"), body: await req.json() });
 				return Response.json({ id: "r1", choices: [{ message: { content: "Here", images: [{ image_url: { url: `data:image/png;base64,${PNG}` } }] } }], usage: { prompt_tokens: 5, completion_tokens: 7 } });
 			},
 		});
 		app = await buildApp({ host: "0.0.0.0", port: 0, dataDir: dir, dbPath: join(dir, "db.sqlite"), token: "t", workspaceRoot: ws, logLevel: "silent" }, { strictResponses: true, home: join(dir, "home"), extensionDirs: [join(dir, "ext")] });
-		expect((await api("PUT", "/extensions/image-generation/settings", { settings: { apiKey: "sk-test", baseUrl: `http://127.0.0.1:${upstream.port}/v1`, models: "img/one" } })).status).toBe(200);
+		// an ordinary connection whose model is marked as making pictures; its key is the one the runner gets
+		expect((await api("PUT", "/configuration/providers/up", { name: "Up", baseUrl: `http://127.0.0.1:${upstream.port}/v1`, api: "openai-completions", authRequired: true, models: [{ id: "img/one", contextWindow: 65536, maxTokens: 32768, reasoning: false, vision: true, imageGeneration: true }] })).status).toBe(200);
+		expect((await api("PUT", "/providers/up/credential", { key: "sk-test" })).status).toBe(200);
 	});
 	afterAll(async () => { await app?.close(); upstream?.stop(); rmSync(dir, { recursive: true, force: true }); });
 
 	test("lists its model and answers a chat with a saved picture, then edits it", async () => {
 		const ext = (await api("GET", "/server-extensions")).json.extensions.find((x: any) => x.name === "image-generation");
 		expect(ext && !ext.error).toBe(true);
-		const models = (await api("GET", "/models")).json.models.filter((m: any) => m.provider === "image-generation");
-		expect(models.map((m: any) => [m.id, m.configured])).toEqual([["img/one", true]]);
+		const model = (await api("GET", "/models?provider=up")).json.models.find((m: any) => m.id === "img/one");
+		expect(model).toMatchObject({ imageGeneration: true, runnable: true, configured: true });
 
-		const id = (await api("POST", "/sessions", { cwd: ws, provider: "image-generation", model: "img/one" })).json.id;
-		expect((await api("POST", `/sessions/${id}/messages`, { text: "a red cat" })).status).toBeLessThan(300);
+		const id = (await api("POST", "/sessions", { cwd: ws, provider: "up", model: "img/one" })).json.id;
+		expect((await api("POST", `/sessions/${id}/messages`, { text: "a red cat" })).status).toBe(202);
 		await idle(id);
-		const msgs = (await api("GET", `/sessions/${id}/messages`)).json.messages;
-		const reply = msgs.at(-1).message;
+		const reply = (await api("GET", `/sessions/${id}/messages`)).json.messages.at(-1).message;
 		expect(reply.stopReason).toBe("stop");
 		const path = /\]\((\.pipaya\/generated\/[^)]+\.png)\)/.exec(reply.content[0].text)?.[1];
 		expect(path && existsSync(join(ws, path))).toBe(true);

@@ -12,34 +12,26 @@
 
 ## What it does
 
-- Adds the model provider **Image generation** with the models you list (default `google/gemini-3.1-flash-image`).
-- Pick one of its models in a chat: each message is a picture request and the reply is the picture. Pictures you attach go along.
+- pipaya lists image models (an OpenRouter connection lists them itself; for others, turn on **Makes & edits images** in the model's settings) but does not run them. This extension runs them.
+- Pick an image model in a chat: each message is a picture request and the reply is the picture. Pictures you attach go along.
 - Pictures are saved under `.pipaya/generated/` in the chat's folder and shown in the chat as markdown images.
 - A follow-up without a picture ("make it bluer") sends the last generated picture along, so the model edits it.
-- No tools, no reasoning: the model only draws.
-
-## Settings
-
-Settings → server extensions → Image Generation:
-
-| Field | Meaning |
-|---|---|
-| API key | Key of the endpoint (stored in the extension settings on the server) |
-| Endpoint | Chat-completions base URL with image output. Empty: `https://openrouter.ai/api/v1` |
-| Models | Model ids, comma separated |
+- It uses the connection's own address and key. There is nothing to set up here.
+- Without this extension, image models show **Needs extension** and the chat cannot send to them.
 
 ## Requirements
 
-- A pipaya server where image generation is no longer built in (it moved into this extension).
+- A pipaya server with `pi.registerModelRunner` (image models are listed by the core and run by an extension).
+- A connection whose endpoint does chat completions with image output (OpenRouter and compatible ones).
 
 ## Install
 
-In pipaya, open **Settings → Extensions → Marketplace** and install **image-generation**. The server fetches the pinned release into `~/.pipaya/extensions/image-generation/` and reloads.
+In pipaya, press **Install extension** on an image model, or open **Settings → server → Server extensions → Marketplace** and install **image-generation**. The server fetches the pinned release into `~/.pipaya/extensions/image-generation/` and reloads.
 
 ## Security
 
 - Server extensions run with the server's full privileges. Read `index.ts` before you install it.
-- It sends your message text, the pictures you attach and the last generated picture to the endpoint you set, with your API key. Nothing else.
+- It sends your message text, the pictures you attach and the last generated picture to the image model's own connection, with that connection's key. Nothing else.
 - It writes picture files only under `.pipaya/generated/` in the chat's folder, and reads back only a picture it linked there.
 
 ## Development
