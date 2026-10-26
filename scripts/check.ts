@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Checks every top-level folder that holds an extension (one folder = one extension): package.json fields, the entry file, and the tests that can run here.
 //   bun scripts/check.ts                 every extension
-//   bun scripts/check.ts peer-tools      one extension (set PIPAYA_APP=<pipaya>/server to run its server tests too)
+//   bun scripts/check.ts guard      one extension (set PIPAYA_APP=<pipaya>/server to run its server tests too)
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 

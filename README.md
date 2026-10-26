@@ -18,16 +18,13 @@
 
 | Folder | Kind | What it does |
 |---|---|---|
-| [ask-user](ask-user) | server | Lets the agent ask you a question (options, recommended choice) and wait for the answer |
 | [guard](guard) | server | Blocks destructive shell commands (`rm -rf /`, `mkfs`, fork bombs) before they run |
-| [peer-tools](peer-tools) | server | Lets agents message (`peer_send`) and read (`peer_read`) each other's chats |
 | [prompt-templates](prompt-templates) | server | Save a long prompt as a Markdown file and call it with `/prompt:name` |
-| [peer-names](peer-names) | client | `@name` labels, `@` completion and peer message bubbles (pairs with peer-tools) |
 | [quota-monitor](quota-monitor) | client | Claude, GPT and Antigravity quota gauges in the header |
 
 ## Install
 
-In pipaya, open **Settings → Extensions → Marketplace**. Every folder here is listed on its own: server extensions are fetched by the server at their pinned release, client extensions are installed on the device. A pair (peer-tools + peer-names) offers to install both.
+In pipaya, open **Settings → Extensions → Marketplace**. Every folder here is listed on its own: server extensions are fetched by the server at their pinned release, client extensions are installed on the device.
 
 ## Layout
 
@@ -43,7 +40,7 @@ extensions/                # this repository (dohwi/pipaya-extensions)
 
 1. Add or change `<id>/`. A server extension needs `index.ts` and `package.json`; the README must state what it reads, runs and sends.
 2. Bump `version` in its `package.json` (and `manifest.json` for a client one, then rebuild `dist/`).
-3. Tag the release `<id>-v<version>` (for example `peer-tools-v0.2.0`). One tag per extension, so each folder versions on its own.
+3. Tag the release `<id>-v<version>` (for example `guard-v0.2.0`). One tag per extension, so each folder versions on its own.
 4. In [pipaya-marketplace](https://github.com/dohwi/pipaya-marketplace) run `bun scripts/pin.ts <id> <tag>` and commit the result.
 
 ## Development
@@ -52,7 +49,7 @@ Requires [Bun](https://bun.sh) (`mise install`). Server extensions have no build
 
 ```bash
 bun scripts/check.ts                          # every extension: package.json is valid, entry exists, tests that need no server pass
-PIPAYA_APP=../app/server bun scripts/check.ts peer-tools   # one extension, with its server tests
+PIPAYA_APP=../app/server bun scripts/check.ts guard   # one extension, with its server tests
 ```
 
 ## License

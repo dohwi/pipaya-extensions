@@ -18,16 +18,13 @@
 
 | 폴더 | 종류 | 설명 |
 |---|---|---|
-| [ask-user](ask-user) | server | 에이전트가 선택지·추천과 함께 질문하고 답을 기다리게 함 |
 | [guard](guard) | server | 위험한 셸 명령(`rm -rf /`, `mkfs`, 포크 폭탄)을 실행 전에 차단 |
-| [peer-tools](peer-tools) | server | 에이전트가 서로의 대화에 메시지를 보내고(`peer_send`) 읽게 함(`peer_read`) |
 | [prompt-templates](prompt-templates) | server | 긴 프롬프트를 Markdown 파일로 저장해 `/prompt:이름`으로 호출 |
-| [peer-names](peer-names) | client | `@이름` 라벨, `@` 자동완성, 대화 간 메시지 말풍선 (peer-tools와 함께 사용) |
 | [quota-monitor](quota-monitor) | client | Claude, GPT, Antigravity 잔량 게이지를 상단 바에 표시 |
 
 ## 설치
 
-pipaya의 **설정 → 확장 → 마켓플레이스**에서 설치합니다. 폴더마다 따로 등록되어 있어 필요한 것만 고르면 됩니다. 서버 확장은 서버가 고정된 릴리스를 받아 오고, 클라이언트 확장은 기기에 설치됩니다. 짝이 있는 확장(peer-tools + peer-names)은 함께 설치할지 묻습니다.
+pipaya의 **설정 → 확장 → 마켓플레이스**에서 설치합니다. 폴더마다 따로 등록되어 있어 필요한 것만 고르면 됩니다. 서버 확장은 서버가 고정된 릴리스를 받아 오고, 클라이언트 확장은 기기에 설치됩니다.
 
 ## 구조
 
@@ -43,7 +40,7 @@ extensions/                # 이 저장소 (dohwi/pipaya-extensions)
 
 1. `<id>/`를 추가하거나 고칩니다. 서버 확장에는 `index.ts`와 `package.json`이 필요하고, README에 무엇을 읽고 실행하고 보내는지 적어야 합니다.
 2. `package.json`의 `version`을 올립니다(클라이언트 확장은 `manifest.json`도 올리고 `dist/`를 다시 빌드).
-3. 릴리스 태그를 `<id>-v<버전>`으로 만듭니다(예: `peer-tools-v0.2.0`). 확장마다 태그가 따로라서 폴더별로 버전이 독립적입니다.
+3. 릴리스 태그를 `<id>-v<버전>`으로 만듭니다(예: `guard-v0.2.0`). 확장마다 태그가 따로라서 폴더별로 버전이 독립적입니다.
 4. [pipaya-marketplace](https://github.com/dohwi/pipaya-marketplace)에서 `bun scripts/pin.ts <id> <태그>`를 실행하고 결과를 커밋합니다.
 
 ## 개발
@@ -52,7 +49,7 @@ extensions/                # 이 저장소 (dohwi/pipaya-extensions)
 
 ```bash
 bun scripts/check.ts                          # 전체: package.json 유효성, 진입 파일, 서버가 필요 없는 테스트
-PIPAYA_APP=../app/server bun scripts/check.ts peer-tools   # 확장 하나, 서버 테스트 포함
+PIPAYA_APP=../app/server bun scripts/check.ts guard   # 확장 하나, 서버 테스트 포함
 ```
 
 ## 라이선스
