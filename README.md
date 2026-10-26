@@ -22,7 +22,7 @@
 | [guard](guard) | server | Blocks destructive shell commands (`rm -rf /`, `mkfs`, fork bombs) before they run |
 | [peer-tools](peer-tools) | server | Lets agents message (`peer_send`) and read (`peer_read`) each other's chats |
 | [prompt-templates](prompt-templates) | server | Save a long prompt as a Markdown file and call it with `/prompt:name` |
-| [session-retention](session-retention) | server | Deletes chats that have not been used for a while (off by default) |
+| [image-generation](image-generation) | server | Image-generation models: describe a picture in a chat, the reply is the picture |
 | [peer-names](peer-names) | client | `@name` labels, `@` completion and peer message bubbles (pairs with peer-tools) |
 | [quota-monitor](quota-monitor) | client | Claude, GPT and Antigravity quota gauges in the header |
 

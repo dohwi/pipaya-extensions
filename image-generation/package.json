@@ -1,0 +1,46 @@
+{
+  "name": "pipaya-extension-image-generation",
+  "version": "0.1.0",
+  "description": "Adds image-generation models: pick one in a chat, describe a picture, and the reply is the picture. A follow-up edits the last one.",
+  "license": "MIT",
+  "author": "dohwi",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dohwi/pipaya-extensions.git",
+    "directory": "image-generation"
+  },
+  "pipaya": {
+    "title": "Image Generation",
+    "descriptions": {
+      "en": "Adds image-generation models: pick one in a chat, describe a picture, and the reply is the picture. A follow-up edits the last one.",
+      "ko": "이미지 생성 모델을 추가합니다. 대화에서 모델을 고르고 그림을 설명하면 답이 그림으로 옵니다. 이어서 보내면 마지막 그림을 고칩니다."
+    },
+    "settings": [
+      {
+        "key": "apiKey",
+        "type": "string",
+        "label": "API 키 (API key)",
+        "description": "OpenRouter 등 이미지 출력을 지원하는 엔드포인트의 키 / Key of an endpoint with image output, e.g. OpenRouter",
+        "secret": true
+      },
+      {
+        "key": "baseUrl",
+        "type": "string",
+        "label": "엔드포인트 (Endpoint)",
+        "description": "비우면 https://openrouter.ai/api/v1 / Empty: https://openrouter.ai/api/v1",
+        "placeholder": "https://openrouter.ai/api/v1"
+      },
+      {
+        "key": "models",
+        "type": "string",
+        "label": "모델 (Models)",
+        "description": "쉼표로 구분한 모델 ID / Model ids, comma separated",
+        "placeholder": "google/gemini-3.1-flash-image"
+      }
+    ]
+  },
+  "scripts": {
+    "test": "bun test"
+  }
+}
