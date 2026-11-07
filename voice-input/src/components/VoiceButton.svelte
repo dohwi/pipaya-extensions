@@ -6,11 +6,13 @@
 </script>
 
 <script>
-	// Microphone button for the composer toolbar. Click: record. Click again: stop, upload to the CLIProxyAPI
+	// Microphone button next to the send control (mounted by VoiceSend.svelte). Click: record. Click again: stop, upload to the CLIProxyAPI
 	// mistral-support route (Mistral Voxtral) and append the transcript to the draft. It never sends the message.
 	import { onDestroy } from "svelte";
 	import { ext, app, getPane } from "pipaya";
 
+	// `offline`: the app has no server connection (its input box is dimmed then), so there is nothing to type into.
+	let { offline = false } = $props();
 	const pane = getPane();
 	const lang = $derived(ext.language);
 	const tr = (key, params) => message(lang, key, params);
@@ -34,6 +36,8 @@
 	let gone = false;
 
 	const busy = $derived(phase === "starting" || phase === "transcribing");
+	// While recording or working the button must stay usable to stop; only an idle button is blocked offline.
+	const blocked = $derived(busy || (offline && phase === "idle"));
 
 	function say(key, params) {
 		clearTimeout(noticeTimer);
@@ -202,26 +206,6 @@
 </script>
 
 <div class="vi" bind:this={root} data-state={phase}>
-	<button
-		type="button"
-		class="iconbtn mic"
-		class:rec={phase === "recording"}
-		class:err={!!notice && phase === "idle"}
-		aria-label={label}
-		aria-pressed={phase === "recording"}
-		title={label}
-		disabled={busy}
-		{onclick}
-	>
-		{#if phase === "recording"}
-			<svg viewBox="0 0 24 24" aria-hidden="true"><rect class="solid" x="7" y="7" width="10" height="10" rx="2" /></svg>
-		{:else if busy}
-			<svg class="spin" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
-		{:else}
-			<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z" /><path d="M19 11a7 7 0 0 1-14 0M12 18v3" /></svg>
-		{/if}
-	</button>
-
 	<span class="status" role="status" aria-live="polite">
 		{#if phase === "recording"}
 			<span class="chip live"><i class="dot"></i>{formatTime(elapsed)}</span>
@@ -234,17 +218,40 @@
 			<span class="chip bad" title={notice.text}>{notice.short}</span>
 		{/if}
 	</span>
+
+	<button
+		type="button"
+		class="iconbtn mic"
+		class:rec={phase === "recording"}
+		class:err={!!notice && phase === "idle"}
+		aria-label={label}
+		aria-pressed={phase === "recording"}
+		title={label}
+		disabled={blocked}
+		{onclick}
+	>
+		{#if phase === "recording"}
+			<svg viewBox="0 0 24 24" aria-hidden="true"><rect class="solid" x="7" y="7" width="10" height="10" rx="2" /></svg>
+		{:else if busy}
+			<svg class="spin" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
+		{:else}
+			<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z" /><path d="M19 11a7 7 0 0 1-14 0M12 18v3" /></svg>
+		{/if}
+	</button>
 </div>
 
 <style>
-	.vi { display: inline-flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; }
-	.status { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
+	/* The status chip opens to the left of the microphone, so the microphone stays beside the send control and the
+	   chip is what gives way (clipped) when the bar is narrow, never the send control. */
+	.vi { display: inline-flex; align-items: center; justify-content: flex-end; gap: 2px; min-width: 0; flex: 0 1 auto; }
+	.status { display: inline-flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; }
+	.mic { flex: none; }
 	.mic.rec { color: var(--danger); background: var(--danger-soft); }
 	.mic.err { color: var(--danger); }
 	.mic:disabled { opacity: 0.7; cursor: default; }
 	.mic .solid { fill: currentColor; stroke: currentColor; }
 	.spin { animation: vi-spin 0.9s linear infinite; }
-	.chip { display: inline-flex; align-items: center; gap: 6px; max-width: 9em; padding: 0 4px; overflow: hidden; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; color: var(--text-dim); white-space: nowrap; text-overflow: ellipsis; }
+	.chip { flex: 0 1 auto; display: inline-flex; align-items: center; gap: 6px; max-width: 9em; padding: 0 4px; overflow: hidden; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; color: var(--text-dim); white-space: nowrap; text-overflow: ellipsis; }
 	.chip.live { color: var(--danger); }
 	.chip.bad { color: var(--danger); }
 	.dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--danger); animation: vi-pulse 1.2s ease-in-out infinite; }
@@ -252,5 +259,5 @@
 	@keyframes vi-spin { to { transform: rotate(360deg); } }
 	@keyframes vi-pulse { 50% { opacity: 0.35; } }
 	@media (prefers-reduced-motion: reduce) { .spin, .dot { animation: none; } }
-	@media (max-width: 480px) { .chip { max-width: 6.5em; padding: 0 2px; font-size: var(--fs-xs); } }
+	@media (max-width: 480px) { .chip { max-width: 5.5em; padding: 0 2px; font-size: var(--fs-xs); } }
 </style>

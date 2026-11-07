@@ -10,9 +10,11 @@ const helpers = (await readFile(new URL('src/helpers.mjs', root), 'utf8')).repla
 const source = await readFile(new URL('src/components/VoiceButton.svelte', root), 'utf8');
 if (!source.includes('/* @helpers */')) throw new Error('VoiceButton.svelte lost its /* @helpers */ marker');
 const component = source.replace('/* @helpers */', () => helpers);
+const send = await readFile(new URL('src/components/VoiceSend.svelte', root), 'utf8');
 
-// No Worker code: the microphone, the upload and the key all live in the component (ui-components).
-const output = JSON.stringify({ manifest, components: { VoiceButton: component }, mounts: [{ slot: 'composer.toolbar', component: 'VoiceButton' }] }, null, 2) + '\n';
+// The button sits beside the send control by replacing the app's `composer.send` part (the original control is
+// still drawn by the part's `fallback`), so there is no mount. No Worker code: the microphone, the upload and the key all live in the component (ui-components).
+const output = JSON.stringify({ manifest, components: { VoiceButton: component, VoiceSend: send }, replaces: { 'composer.send': 'VoiceSend' } }, null, 2) + '\n';
 if (Buffer.byteLength(component) > 64 * 1024 || Buffer.byteLength(output) > 256 * 1024) throw new Error('SDK package size limit exceeded');
 await mkdir(new URL('dist/', root), { recursive: true });
 await writeFile(new URL(`dist/${manifest.id}.json`, root), output);

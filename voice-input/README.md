@@ -47,7 +47,7 @@ Only the last two rows were exercised with real requests. For the others the req
 
 ## Usage
 
-- Click the mic: recording starts (red button, elapsed time). Click again (or the stop square) to transcribe. **✕** cancels without uploading.
+- The microphone is just left of the send button. Click it: recording starts (red button, elapsed time). Click again (or the stop square) to transcribe. **✕** cancels without uploading.
 - The text is appended after the current draft, separated by a space. Review it, then send yourself.
 - Recording stops by itself after 5 minutes. The microphone is released as soon as recording ends (and when the button is removed).
 
@@ -68,7 +68,11 @@ Only the last two rows were exercised with real requests. For the others the req
 
 The browser's own `MediaRecorder` format is uploaded as is (Chrome/Firefox: `audio/webm` opus, Safari: `audio/mp4`), named `voice.webm` / `voice.m4a`. OpenAI, Groq and Mistral list webm and m4a among the accepted formats. No WAV conversion is done.
 
-## Upgrading from 0.1.0
+## Upgrading
+
+0.2.1 moves the button from the toolbar (beside the model picker) to the left of the send button. Re-import `dist/voice-input.json`; settings are kept.
+
+### From 0.1.0
 
 0.1.0 sent every request to `/v0/management/audio/transcriptions`. 0.2.0 reads `transcribePath` (default `/v1/audio/transcriptions`) and the setting is empty after an upgrade, so such setups break until you set `transcribePath` to `/v0/management/audio/transcriptions` and the model again. The key is unchanged.
 
@@ -80,7 +84,14 @@ No core change is needed. In pipaya: **Settings → (your server tab) → edit**
 
 | Permission | Why |
 | --- | --- |
-| `ui-components` | The only one. Mounts the button in `composer.toolbar`. The microphone and upload are done by the component itself (`getUserMedia`, `fetch`), so no `http`, `composer`, `storage` or `context` permission is requested. |
+| `ui-components` | The only one. Replaces the app's `composer.send` part so the microphone sits right beside the send button. The original send control is still drawn by the app (`fallback`), untouched. The microphone and upload are done by the component itself (`getUserMedia`, `fetch`), so no `http`, `composer`, `storage` or `context` permission is requested. |
+
+### Replacing `composer.send`
+
+- Only one extension can replace a given part, and **the first installed wins**. This extension therefore cannot be used together with another extension that replaces `composer.send`.
+- Symptom if another extension already holds it: the microphone button is simply not there (nothing else breaks). Fix: turn that extension off (or delete it) and reload this one, or install this one first.
+- If this extension's component fails, the app falls back to its normal send button, so sending never depends on it.
+- Send, queue, steer, stop and the compaction cancel are the app's own controls and behave as before; the microphone is just placed to their left. It is disabled while the app is offline.
 
 > [!WARNING]
 > `ui-components` runs this extension's Svelte code **inside the pipaya app, without a sandbox**, so it can reach everything the app holds (chats, server connections, tokens). The key is only sent as an `Authorization` header to your `apiBase` and is never logged, stored elsewhere or put in a URL or message (tests enforce this), but install only builds you trust. Your voice goes to the service you configure; read its privacy terms.

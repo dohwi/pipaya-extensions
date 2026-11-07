@@ -4,13 +4,17 @@ import { readFile } from 'node:fs/promises';
 
 const pkg = JSON.parse(await readFile(new URL('../dist/voice-input.json', import.meta.url), 'utf8'));
 const source = pkg.components.VoiceButton;
+const sendSource = pkg.components.VoiceSend;
 
 test('package is a single ui-components extension with no worker code', () => {
+  assert.equal(pkg.manifest.version, pkg.manifest.version.match(/^\d+\.\d+\.\d+$/)?.[0]);
   assert.equal(pkg.manifest.id, 'voice-input');
   assert.equal(pkg.manifest.sdkVersion, 1);
   assert.deepEqual(pkg.manifest.permissions, ['ui-components'], 'least privilege: no http, storage or composer permission');
   assert.equal(pkg.code, undefined);
-  assert.deepEqual(pkg.mounts, [{ slot: 'composer.toolbar', component: 'VoiceButton' }]);
+  assert.equal(pkg.mounts, undefined, 'no second button: the microphone is drawn only by the replaced send part');
+  assert.deepEqual(pkg.replaces, { 'composer.send': 'VoiceSend' });
+  assert.deepEqual(Object.keys(pkg.components).sort(), ['VoiceButton', 'VoiceSend']);
   assert.ok(Buffer.byteLength(JSON.stringify(pkg)) < 256 * 1024);
   assert.ok(Buffer.byteLength(source) < 64 * 1024);
 });
@@ -30,7 +34,7 @@ test('settings: no built-in address, required origin and secret key, standard de
   assert.ok(!('default' in byKey.model) && !byKey.model.required, 'no service-specific model is assumed');
   assert.equal(byKey.language.default, 'ko');
   assert.equal(pkg.manifest.settingsScope, 'local');
-  assert.equal(pkg.manifest.version, '0.2.0');
+  assert.equal(pkg.manifest.version, '0.2.1');
 });
 
 test('component hard-codes no service route', () => {
@@ -71,4 +75,21 @@ test('no personal address or key is baked into the package', () => {
 test('component asks for the address before the key and before any request', () => {
   const begin = source.slice(source.indexOf('async function begin'), source.indexOf('async function begin') + 1200);
   assert.ok(begin.indexOf('needBase') > 0 && begin.indexOf('needBase') < begin.indexOf('badPath') && begin.indexOf('badPath') < begin.indexOf('needKey'));
+});
+
+test('the send part keeps the original control and only adds the microphone before it', () => {
+  assert.match(sendSource, /\{@render fallback\(\)\}/, 'the original control is always drawn');
+  assert.ok(sendSource.indexOf('<VoiceButton') < sendSource.indexOf('{@render fallback()}'), 'microphone to the left of send');
+  const code = sendSource.replace(/<script>[\s\S]*?<\/script>/, '').replace(/<style>[\s\S]*?<\/style>/, '');
+  const script = sendSource.match(/<script>([\s\S]*?)<\/script>/)[1].replace(/\/\/.*$/gm, '');
+  assert.equal(script.match(/\$props\(\)/g)?.length, 1);
+  assert.match(script, /let \{ fallback \} = \$props\(\)/, 'takes only fallback; the part props stay with the original control');
+  assert.ok(!/canSend|hasInput|compacting|running/.test(code + script), 'no send state is read or re-implemented');
+  assert.deepEqual([...sendSource.matchAll(/^\s*import .* from ["']([^"']+)["']/gm)].map((m) => m[1]).sort(), ['./VoiceButton.svelte', 'pipaya']);
+  assert.ok(!/fetch\(|getUserMedia|localStorage/.test(sendSource), 'no I/O in the wrapper');
+});
+
+test('the microphone is blocked offline but never while it can still be stopped', () => {
+  assert.match(source, /blocked = \$derived\(busy \|\| \(offline && phase === "idle"\)\)/);
+  assert.match(source, /disabled=\{blocked\}/);
 });

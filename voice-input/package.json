@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-voice-input",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Speak into pipaya: a microphone button in the composer sends your voice to an OpenAI-compatible transcription API (OpenAI, Groq, Mistral, a local Whisper server, ...) and puts the transcript in the input box.",
   "private": true,
   "type": "module",
