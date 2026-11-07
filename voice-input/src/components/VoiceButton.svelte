@@ -115,6 +115,8 @@
 		rec.onstop = () => void finish(rec, mine);
 		// The microphone was unplugged or revoked: finish with what was captured.
 		for (const track of media.getAudioTracks()) track.onended = () => stop();
+		// A hold shortcut released while the microphone was still opening: nothing is kept.
+		if (holdingStart && !heldDownAt) { for (const track of media.getTracks()) track.stop(); reset(); return; }
 		rec.start(1000);
 		startedAt = performance.now();
 		elapsed = 0;
@@ -196,6 +198,78 @@
 		else if (phase === "idle") void begin();
 	}
 
+	// ── keyboard shortcut ───────────────────────────────────────────────────────────────────────────────────────────
+	// No default: the setting is empty until the user types a combination, and then nothing is listening at all. The
+	// listeners are on `window` in the capture-free bubble phase, after the app's own handler, so a combination the app
+	// already uses wins (the app calls preventDefault and this code steps aside).
+	const shortcut = $derived(parseShortcut(ext.settings?.shortcut));
+	const mode = $derived(ext.settings?.shortcutMode === "hold" ? "hold" : "toggle");
+	const hint = $derived(shortcutLabel(shortcut, mode, lang));
+	let heldDownAt = 0; // when the hold key went down; 0 = not holding
+	let holdingStart = false; // the key is down and the recording is being started by it
+
+	function endHold(next = "send") {
+		if (!heldDownAt) return;
+		const verdict = holdVerdict(heldDownAt, performance.now());
+		heldDownAt = 0;
+		holdingStart = false;
+		if (phase === "recording") stop(verdict === "send" && next === "send" ? "send" : "cancel");
+		else if (phase === "starting") { token++; phase = "idle"; } // released before the microphone opened: abandon it (begin() closes the stream when it arrives)
+	}
+
+	function onKeyDown(e) {
+		if (!shortcut.ok || !shortcut.combo) return;
+		if (!shouldHandleKey(e, { recordingKey: app.prefs?.recordingKey })) return;
+		if (!matchesShortcut(shortcut, e)) return;
+		// The app handled this key first (one of its own shortcuts): it wins.
+		if (e.defaultPrevented) return;
+		e.preventDefault(); // Alt+letter must not type a character into the input box
+		if (e.repeat) return; // a held key repeats: only the first press counts
+		if (mode === "hold") {
+			if (phase !== "idle") return;
+			heldDownAt = performance.now();
+			holdingStart = true;
+			void begin();
+		} else if (phase === "recording") stop();
+		else if (phase === "idle") void begin();
+	}
+
+	function onKeyUp(e) {
+		if (mode !== "hold" || !heldDownAt) return;
+		if (releasesShortcut(shortcut, e) || releasesModifier(shortcut, e)) endHold();
+	}
+
+	// The window lost the keyboard (alt-tab, a dialog stole focus, the tab was hidden): the key-up will never arrive.
+	function onFocusLoss() { endHold("send"); }
+	function onHidden() { if (document.hidden) endHold("send"); }
+
+	$effect(() => {
+		// Registered only while a valid combination is set. Changing the setting re-runs this and swaps the listeners.
+		if (!shortcut.ok || !shortcut.combo) return;
+		window.addEventListener("keydown", onKeyDown);
+		window.addEventListener("keyup", onKeyUp);
+		window.addEventListener("blur", onFocusLoss);
+		document.addEventListener("visibilitychange", onHidden);
+		return () => {
+			window.removeEventListener("keydown", onKeyDown);
+			window.removeEventListener("keyup", onKeyUp);
+			window.removeEventListener("blur", onFocusLoss);
+			document.removeEventListener("visibilitychange", onHidden);
+			endHold("cancel"); // a held recording must not outlive its shortcut
+		};
+	});
+
+	// A bad or taken combination is told once, when it is set, not on every key press.
+	let warnedFor = "";
+	$effect(() => {
+		const text = String(ext.settings?.shortcut ?? "").trim();
+		if (!text || text === warnedFor) return;
+		warnedFor = text;
+		if (!shortcut.ok) return void say("shortcutBad");
+		const taken = conflictsWithApp(shortcut, app.prefs?.bindings);
+		if (taken) say("shortcutConflict");
+	});
+
 	onDestroy(() => {
 		gone = true;
 		token++;
@@ -206,7 +280,10 @@
 		release();
 	});
 
-	const label = $derived(insecure && phase === "idle" ? tr("insecure") : phase === "recording" ? tr("recording") : phase === "transcribing" ? tr("transcribing") : tr("idle"));
+	const baseLabel = $derived(insecure && phase === "idle" ? tr("insecure") : phase === "recording" ? tr("recording") : phase === "transcribing" ? tr("transcribing") : tr("idle"));
+	const label = $derived(baseLabel);
+	// The tooltip also names the shortcut and its mode; the accessible name stays the plain action.
+	const tip = $derived(hint ? `${baseLabel} (${hint})` : baseLabel);
 </script>
 
 <div class="vi" bind:this={root} data-state={phase}>
@@ -232,7 +309,7 @@
 		aria-disabled={insecure || undefined}
 		aria-label={label}
 		aria-pressed={phase === "recording"}
-		title={label}
+		title={tip}
 		disabled={blocked}
 		{onclick}
 	>

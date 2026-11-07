@@ -203,6 +203,12 @@ export const STRINGS = {
     errorShort: '오류',
     needBase: '설정에서 서버 주소를 입력하세요(예: https://서버 주소).',
     needBaseShort: '주소 필요',
+    shortcutBad: '단축키 형식이 올바르지 않습니다. Alt+M, Mod+Shift+K처럼 Ctrl(Mod)/Alt와 키 하나로 쓰세요.',
+    shortcutBadShort: '단축키 오류',
+    shortcutConflict: '이 단축키는 pipaya의 다른 기능이 이미 씁니다. 앱 단축키가 먼저 동작하니 다른 조합을 고르세요.',
+    shortcutConflictShort: '단축키 충돌',
+    modeToggle: '누르면 시작/다시 누르면 정지',
+    modeHold: '누르고 있는 동안 녹음',
     needHttps: 'https 화면에서는 http 주소를 쓸 수 없습니다(브라우저가 차단). https 주소를 쓰세요. 같은 컴퓨터의 localhost는 http도 됩니다.',
     needHttpsShort: 'https 주소 필요',
     badPath: '전사 경로가 올바르지 않습니다. /로 시작하는 경로만 쓸 수 있습니다(예: /v1/audio/transcriptions).',
@@ -253,6 +259,12 @@ export const STRINGS = {
     errorShort: 'Error',
     needBase: 'Enter the server address in the extension settings (for example https://your-server).',
     needBaseShort: 'Address needed',
+    shortcutBad: 'The shortcut is not valid. Use Ctrl (Mod) or Alt plus one key, for example Alt+M or Mod+Shift+K.',
+    shortcutBadShort: 'Bad shortcut',
+    shortcutConflict: 'pipaya already uses this shortcut for something else, and the app wins. Choose another combination.',
+    shortcutConflictShort: 'Shortcut taken',
+    modeToggle: 'press to start, press again to stop',
+    modeHold: 'hold to record',
     needHttps: 'An http address cannot be used from an https page (the browser blocks it). Use an https address. localhost on this same computer may use http.',
     needHttpsShort: 'Use https',
     badPath: 'The transcription path is not valid. Use a path starting with / (for example /v1/audio/transcriptions).',
@@ -299,4 +311,108 @@ export const STRINGS = {
 export function message(lang, key, params = {}) {
   const table = STRINGS[String(lang || '').toLowerCase().startsWith('ko') ? 'ko' : 'en'];
   return String(table[key] ?? STRINGS.en[key] ?? key).replace(/\{(\w+)\}/g, (m, k) => (k in params ? String(params[k]) : m));
+}
+
+// ── keyboard shortcut ──────────────────────────────────────────────────────────────────────────────────────────────
+// The combo is typed as text, in the same notation as pipaya's own shortcuts: modifiers `Mod` (Ctrl, or ⌘ on macOS),
+// `Alt`, `Shift`, then exactly one key: `Alt+M`, `Mod+Shift+K`, `Alt+Space`, `F9`. There is no default: empty = none.
+// Keys are matched on KeyboardEvent.code, so they do not depend on the layout, on a Korean IME state, or on what Alt
+// turns a letter into on macOS.
+export const SHORTCUT_MIN_HOLD_MS = 300;
+const NAMED_KEYS = new Set(['Space', 'Enter', 'Tab', 'Backspace', 'Escape', 'Minus', 'Equal', 'Comma', 'Period', 'Slash', 'Backslash', 'Semicolon', 'Quote', 'Backquote', 'BracketLeft', 'BracketRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown', 'Insert', 'Delete']);
+const MOD_NAMES = ['Mod', 'Alt', 'Shift'];
+
+export function keyNameOf(code) {
+  const c = String(code ?? '');
+  return c.startsWith('Key') ? c.slice(3) : c.startsWith('Digit') ? c.slice(5) : c;
+}
+
+function isKeyName(k) {
+  return /^[A-Z]$/.test(k) || /^[0-9]$/.test(k) || /^F([1-9]|1[0-9]|2[0-4])$/.test(k) || NAMED_KEYS.has(k);
+}
+
+// -> { ok: true, combo, mods: {mod, alt, shift}, key } | { ok: false, reason }.  Empty text is `{ ok: true, combo: '' }`.
+// reason: format | needMod | oneKey | badKey | reserved
+export function parseShortcut(text) {
+  const raw = String(text ?? '').trim();
+  if (!raw) return { ok: true, combo: '', mods: null, key: '' };
+  const parts = raw.split('+').map((p) => p.trim());
+  if (parts.some((p) => !p)) return { ok: false, reason: 'format' };
+  const fixCase = (p) => (/^(mod|ctrl|control|cmd|command|meta)$/i.test(p) ? 'Mod' : /^(alt|option|opt)$/i.test(p) ? 'Alt' : /^shift$/i.test(p) ? 'Shift' : p);
+  const fixed = parts.map(fixCase);
+  const mods = fixed.filter((p) => MOD_NAMES.includes(p));
+  const keys = fixed.filter((p) => !MOD_NAMES.includes(p));
+  if (new Set(mods).size !== mods.length) return { ok: false, reason: 'format' };
+  if (keys.length !== 1) return { ok: false, reason: keys.length ? 'oneKey' : 'format' };
+  let key = keys[0];
+  if (/^[a-z]$/.test(key)) key = key.toUpperCase();
+  else if (/^f\d{1,2}$/i.test(key)) key = key.toUpperCase();
+  else if (!/^[A-Z0-9]$/.test(key)) key = NAMED_KEYS.has(key) ? key : [...NAMED_KEYS].find((n) => n.toLowerCase() === key.toLowerCase()) ?? key;
+  if (!isKeyName(key)) return { ok: false, reason: 'badKey' };
+  const flags = { mod: mods.includes('Mod'), alt: mods.includes('Alt'), shift: mods.includes('Shift') };
+  // A bare letter (or Shift+letter) would be typed into the input box, so a combo needs Ctrl/⌘ or Alt, like the app's own
+  // extension shortcuts. F-keys type nothing and may stand alone.
+  const isF = /^F\d{1,2}$/.test(key);
+  if (!isF && !flags.mod && !flags.alt) return { ok: false, reason: 'needMod' };
+  // Keys the app and the browser keep for themselves.
+  if (key === 'Escape' || key === 'Enter' || key === 'Tab' || key === 'Backspace') return { ok: false, reason: 'reserved' };
+  const canon = [flags.mod && 'Mod', flags.alt && 'Alt', flags.shift && 'Shift', key].filter(Boolean).join('+');
+  return { ok: true, combo: canon, mods: flags, key };
+}
+
+// Does this keyboard event press exactly that combo? `e` needs `code`, ctrlKey, metaKey, altKey, shiftKey.
+export function matchesShortcut(parsed, e) {
+  if (!parsed?.ok || !parsed.combo) return false;
+  if (keyNameOf(e.code) !== parsed.key) return false;
+  const mod = !!(e.ctrlKey || e.metaKey);
+  return mod === parsed.mods.mod && !!e.altKey === parsed.mods.alt && !!e.shiftKey === parsed.mods.shift;
+}
+
+// Is it the release of the shortcut's key (modifiers may already be up)?
+export function releasesShortcut(parsed, e) {
+  return !!parsed?.ok && !!parsed.combo && keyNameOf(e.code) === parsed.key;
+}
+
+// A release of a modifier that is part of the combo also ends a held shortcut.
+export function releasesModifier(parsed, e) {
+  if (!parsed?.ok || !parsed.mods) return false;
+  const k = String(e.key ?? '');
+  return (parsed.mods.mod && (k === 'Control' || k === 'Meta')) || (parsed.mods.alt && k === 'Alt') || (parsed.mods.shift && k === 'Shift');
+}
+
+// `bindings` is the app's own shortcut table ({ actionId: combo }), read from `app.prefs.bindings`. The app's shortcuts win
+// over this one, so a combo it already uses is reported: the extension keeps listening but the app acts first only for
+// combos it handles itself, so tell the user. Order of keys inside a combo does not matter to the app for held keys.
+export function conflictsWithApp(parsed, bindings) {
+  if (!parsed?.ok || !parsed.combo) return '';
+  const want = parsed.combo;
+  for (const [id, combo] of Object.entries(bindings ?? {})) {
+    if (typeof combo !== 'string' || !combo) continue;
+    const parts = combo.split('+');
+    const keys = parts.filter((p) => !MOD_NAMES.includes(p));
+    const sameMods = MOD_NAMES.filter((m) => parts.includes(m)).join('+');
+    // a combo made of one key + the same modifiers, or one that starts a longer app shortcut (Mod+B starts Mod+B+B)
+    if (combo === want || (keys.length > 1 && [sameMods, keys[0]].filter(Boolean).join('+') === want)) return id;
+  }
+  return '';
+}
+
+// Where a key event comes from, to decide what the extension may do with it. IME composition is never touched.
+export function shouldHandleKey(e, { recordingKey = false } = {}) {
+  if (e.isComposing || e.keyCode === 229) return false;
+  if (recordingKey) return false;
+  return true;
+}
+
+export function shortcutLabel(parsed, mode, lang) {
+  if (!parsed?.ok || !parsed.combo) return '';
+  const names = { Mod: /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? '') ? '⌘' : 'Ctrl' };
+  const text = parsed.combo.split('+').map((p) => names[p] ?? p).join('+');
+  return `${text} · ${message(lang, mode === 'hold' ? 'modeHold' : 'modeToggle')}`;
+}
+
+// ── hold-to-talk bookkeeping ───────────────────────────────────────────────────────────────────────────────────────
+// Pure: given when the key went down and when it came up, was it a real press?
+export function holdVerdict(downAt, upAt, minMs = SHORTCUT_MIN_HOLD_MS) {
+  return upAt - downAt >= minMs ? 'send' : 'discard';
 }

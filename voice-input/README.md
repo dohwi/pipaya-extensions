@@ -27,6 +27,8 @@ A microphone button in the [pipaya](https://github.com/dohwi/pipaya) composer. P
 | `apiKey` | *(required, none)* | Sent only as `Authorization: Bearer`. Secret field. |
 | `model` | *(empty)* | Model name. Most hosted services require one (see the table). Empty: the field is not sent and the server default is used. There is no default because any value would suit only one service. |
 | `language` | `ko` | ISO 639-1 code. Empty lets the server detect it. |
+| `shortcut` | *(empty = none)* | Keyboard shortcut for dictation, for example `Alt+M` or `Mod+Shift+K`. See [Keyboard shortcut](#keyboard-shortcut). |
+| `shortcutMode` | `toggle` | `toggle` or `hold` (hold to talk). Only used when `shortcut` is set. |
 
 `settingsScope` is **`local`**: the key is a credential, and `server` scope would store it in plain text on the pipaya server and share it with every connected device. With `local` it stays on this browser/app only (and is never exported). Enter it once per device.
 
@@ -76,11 +78,28 @@ Everything else is allowed. On a page that is *not* https (for example `http://l
 
 **Loopback exception on https pages**: `http://localhost`, `http://127.0.0.1` and `http://[::1]` are accepted even from an https page, for a Whisper server on your own machine. Checked in headless Chromium 158 (an https page `fetch` to each of the three over plain `http` succeeded, while the same call to a public host was blocked as mixed content). Other private addresses (`192.168.x.x`, `10.x.x.x`, `*.local`, a LAN or tailnet IP) were also reachable in that Chromium, but that is not guaranteed in other browsers or versions, so on an https page this extension does not treat them as an exception: give such a server an `https://` address (reverse proxy, `tailscale serve`).
 
+## Keyboard shortcut
+
+**There is no default shortcut.** While `shortcut` is empty the extension listens to no keys at all. Type your own combination in the extension settings; it applies at once, no restart.
+
+- **Format**: the same notation as pipaya's own shortcuts. `Mod` is Ctrl (⌘ on macOS), then optionally `Alt` and `Shift`, then **one** key: `Alt+M`, `Mod+Shift+K`, `Alt+Space`, `F9`. Case does not matter (`ctrl+shift+k` works). A combination needs `Mod` or `Alt` (so it never types a letter into the input box); an F-key may stand alone. `Esc`, `Enter`, `Tab` and `Backspace` are not allowed. Keys are matched by their physical position, so a Korean keyboard layout or the character `Alt` produces on macOS does not matter.
+- **`toggle`** (default): press once to start recording, press again to stop, transcribe and append. It does exactly what clicking the microphone does.
+- **`hold`**: record while the keys are held; releasing them stops, transcribes and appends. A press shorter than 0.3 s is thrown away silently (nothing is uploaded), so an accidental tap does nothing. Key auto-repeat is ignored. If the window loses focus or the tab is hidden while the key is down, recording stops by itself (the key-up would never arrive), and the microphone is always closed.
+- The shortcut works while the input box has focus. During Korean (or other IME) composition it is ignored.
+- The microphone tooltip shows the combination and the mode when one is set.
+- Like the button, it explains why it cannot start (no address, no key, offline, page not https) instead of failing silently.
+
+**If pipaya already uses the combination** (for example `Mod+M`, the model picker, or `Mod+N`), the app handles the key first and wins; the extension steps aside and tells you once, when you save the setting ("shortcut taken"). Pick another combination. A combination the browser or your OS reserves (for example `Ctrl+W`, `Alt+Tab`) may never reach the page at all.
+
+The SDK's own `shortcuts` permission is not used: it has no key-release signal, so it cannot do `hold`, and it would add a second permission. The component listens to the keyboard itself, and removes every listener when the setting is cleared, the extension is turned off, or the button goes away.
+
 ## Recording format
 
 The browser's own `MediaRecorder` format is uploaded as is (Chrome/Firefox: `audio/webm` opus, Safari: `audio/mp4`), named `voice.webm` / `voice.m4a`. OpenAI, Groq and Mistral list webm and m4a among the accepted formats. No WAV conversion is done.
 
 ## Upgrading
+
+0.3.0 adds the optional keyboard shortcut (`shortcut`, `shortcutMode`). Nothing changes until you set one.
 
 0.2.1 moves the button from the toolbar (beside the model picker) to the left of the send button. Re-import `dist/voice-input.json`; settings are kept.
 

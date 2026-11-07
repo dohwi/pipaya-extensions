@@ -21,7 +21,7 @@ test('package is a single ui-components extension with no worker code', () => {
 
 test('settings: no built-in address, required origin and secret key, standard default path, device-local scope', () => {
   const byKey = Object.fromEntries(pkg.manifest.settings.map((f) => [f.key, f]));
-  assert.deepEqual(Object.keys(byKey), ['apiBase', 'transcribePath', 'apiKey', 'model', 'language']);
+  assert.deepEqual(Object.keys(byKey), ['apiBase', 'transcribePath', 'apiKey', 'model', 'language', 'shortcut', 'shortcutMode']);
   assert.ok(!('format' in byKey.apiBase), 'no origin format: a scheme-less address must still be savable (it is read as https at run time)');
   assert.equal(byKey.apiBase.required, true);
   assert.ok(!('default' in byKey.apiBase), 'the user enters their own address');
@@ -36,7 +36,7 @@ test('settings: no built-in address, required origin and secret key, standard de
   assert.ok(!('default' in byKey.model) && !byKey.model.required, 'no service-specific model is assumed');
   assert.equal(byKey.language.default, 'ko');
   assert.equal(pkg.manifest.settingsScope, 'local');
-  assert.equal(pkg.manifest.version, '0.2.2');
+  assert.equal(pkg.manifest.version, '0.3.0');
 });
 
 test('component hard-codes no service route', () => {
@@ -112,4 +112,52 @@ test('an insecure page never reaches getUserMedia, and the button says why', () 
 test('the component passes the page protocol, so http providers work from an http page', () => {
   assert.match(source, /checkBase\(settings\.apiBase, location\.protocol\)/);
   assert.match(source, /pageProtocol: location\.protocol/);
+});
+
+test('shortcut settings: no default combination, toggle is the default mode, both modes offered', () => {
+  const byKey = Object.fromEntries(pkg.manifest.settings.map((f) => [f.key, f]));
+  assert.equal(byKey.shortcut.type, 'string');
+  assert.ok(!('default' in byKey.shortcut) && !byKey.shortcut.required, 'unassigned until the user sets it');
+  assert.match(byKey.shortcut.placeholder, /^Alt\+M$/);
+  assert.equal(byKey.shortcutMode.type, 'select');
+  assert.equal(byKey.shortcutMode.default, 'toggle');
+  assert.deepEqual(byKey.shortcutMode.options.map((o) => o.value), ['toggle', 'hold']);
+  assert.ok(pkg.manifest.settings.length <= 20);
+  assert.deepEqual(pkg.manifest.permissions, ['ui-components'], 'no `shortcuts` permission: the component listens itself');
+});
+
+test('shortcut wiring: listeners only for a set combination, all removed on teardown, app wins, no repeat', () => {
+  const code = source.replace(/<style[\s\S]*<\/style>/, '');
+  const effect = code.slice(code.indexOf('$effect(() => {\n\t\t// Registered only while'), code.indexOf('// A bad or taken combination'));
+  assert.match(effect, /if \(!shortcut\.ok \|\| !shortcut\.combo\) return;/, 'empty = nothing registered');
+  for (const type of ['keydown', 'keyup', 'blur']) {
+    assert.match(effect, new RegExp(`window\\.addEventListener\\("${type}"`), `adds ${type}`);
+    assert.match(effect, new RegExp(`window\\.removeEventListener\\("${type}"`), `removes ${type}`);
+  }
+  assert.match(effect, /document\.addEventListener\("visibilitychange"/);
+  assert.match(effect, /document\.removeEventListener\("visibilitychange"/);
+  assert.match(effect, /endHold\("cancel"\)/, 'a held recording does not outlive its shortcut');
+  const down = code.slice(code.indexOf('function onKeyDown'), code.indexOf('function onKeyUp'));
+  assert.ok(down.indexOf('shouldHandleKey') < down.indexOf('matchesShortcut'), 'IME check first');
+  assert.ok(down.indexOf('defaultPrevented') < down.indexOf('preventDefault()'), 'the app\'s own shortcut wins');
+  assert.match(down, /if \(e\.repeat\) return;/);
+  assert.match(down, /phase === "recording"\) stop\(\)/, 'toggle uses the same stop() as the button');
+  assert.match(down, /void begin\(\)/, 'and the same begin()');
+  assert.ok(!/requestSubmit|submit\(/.test(down), 'a shortcut only records, it never sends');
+});
+
+test('hold stops the recording on key-up, blur and a hidden tab, and short taps are cancelled', () => {
+  const code = source.replace(/<style[\s\S]*<\/style>/, '');
+  assert.match(code, /function endHold\(next = "send"\)/);
+  assert.match(code, /holdVerdict\(heldDownAt, performance\.now\(\)\)/);
+  assert.match(code, /stop\(verdict === "send" && next === "send" \? "send" : "cancel"\)/);
+  assert.match(code, /function onFocusLoss\(\) \{ endHold\("send"\); \}/);
+  assert.match(code, /if \(document\.hidden\) endHold\("send"\)/);
+  assert.match(code, /releasesShortcut\(shortcut, e\) \|\| releasesModifier\(shortcut, e\)/);
+});
+
+test('the tooltip shows the shortcut, the accessible name stays the plain action', () => {
+  assert.match(source, /title=\{tip\}/);
+  assert.match(source, /aria-label=\{label\}/);
+  assert.match(source, /hint \? `\$\{baseLabel\} \(\$\{hint\}\)` : baseLabel/);
 });

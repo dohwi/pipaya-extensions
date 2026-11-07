@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   pickMimeType, extensionFor, formatTime, joinDraft, endpoint, originOf, checkBase, withScheme, isLoopbackHost, pathOf, DEFAULT_TRANSCRIBE_PATH, buildForm, micErrorKind, httpErrorKind,
+  parseShortcut, matchesShortcut, releasesShortcut, releasesModifier, conflictsWithApp, shouldHandleKey, holdVerdict, keyNameOf, shortcutLabel, SHORTCUT_MIN_HOLD_MS,
   transcribe, VoiceError, message, STRINGS
 } from '../src/helpers.mjs';
 
@@ -190,10 +191,11 @@ test('timeout and caller abort are told apart', async () => {
 
 test('every string exists in Korean and English, with the same placeholders', () => {
   assert.deepEqual(Object.keys(STRINGS.ko).sort(), Object.keys(STRINGS.en).sort());
+  for (const k of ['modeToggle', 'modeHold']) assert.ok(STRINGS.ko[k] && STRINGS.en[k], k);
   const holes = (s) => (s.match(/\{\w+\}/g) ?? []).sort().join();
   for (const key of Object.keys(STRINGS.ko)) assert.equal(holes(STRINGS.ko[key]), holes(STRINGS.en[key]), key);
   // Every error the button can show has a long text (toast, tooltip) and a short chip text.
-  const errors = ['needBase', 'needHttps', 'badPath', 'notFound', 'needKey', 'badKey', 'micDenied', 'noMic', 'micBusy', 'micFailed', 'insecure', 'unsupported', 'network', 'timeout', 'rateLimited', 'tooBig', 'serverError', 'tooShort', 'empty', 'badResponse', 'paneChanged'];
+  const errors = ['shortcutBad', 'shortcutConflict', 'needBase', 'needHttps', 'badPath', 'notFound', 'needKey', 'badKey', 'micDenied', 'noMic', 'micBusy', 'micFailed', 'insecure', 'unsupported', 'network', 'timeout', 'rateLimited', 'tooBig', 'serverError', 'tooShort', 'empty', 'badResponse', 'paneChanged'];
   for (const key of errors) assert.ok(STRINGS.ko[key] && STRINGS.ko[`${key}Short`] && STRINGS.en[key] && STRINGS.en[`${key}Short`], key);
   assert.equal(message('ko-KR', 'needKeyShort'), '키 필요');
   assert.equal(message('en', 'needKeyShort'), 'Key needed');
@@ -215,4 +217,87 @@ test('a scheme-less address reaches the network over https, and loopback http as
   await run(fetchImpl, { apiBase: 'api.example.com' });
   await run(fetchImpl, { apiBase: 'http://127.0.0.1:8000' });
   assert.deepEqual(urls, ['https://api.example.com/v1/audio/transcriptions', 'http://127.0.0.1:8000/v1/audio/transcriptions']);
+});
+
+// ── keyboard shortcut ──────────────────────────────────────────────────────────────────────────────────────────────
+const ev = (o) => ({ code: '', key: '', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...o });
+
+test('an empty shortcut means none: it parses to nothing and matches no key', () => {
+  for (const empty of ['', '   ', undefined, null]) {
+    const p = parseShortcut(empty);
+    assert.deepEqual(p, { ok: true, combo: '', mods: null, key: '' });
+    assert.equal(matchesShortcut(p, ev({ code: 'KeyM', altKey: true })), false);
+    assert.equal(releasesShortcut(p, ev({ code: 'KeyM' })), false);
+    assert.equal(conflictsWithApp(p, { x: 'Alt+M' }), '');
+    assert.equal(shortcutLabel(p, 'toggle', 'ko'), '', 'nothing to show in the tooltip');
+  }
+});
+
+test('shortcut parsing: pipaya notation, tolerant spelling, one key, needs Ctrl/Alt (or an F-key)', () => {
+  const ok = { 'Alt+M': 'Alt+M', 'alt+m': 'Alt+M', ' Mod + Shift + K ': 'Mod+Shift+K', 'ctrl+shift+k': 'Mod+Shift+K', 'cmd+j': 'Mod+J', 'Option+Space': 'Alt+Space', 'F9': 'F9', 'f12': 'F12', 'Alt+5': 'Alt+5', 'Alt+period': 'Alt+Period', 'Mod+Alt+ArrowUp': 'Mod+Alt+ArrowUp' };
+  for (const [text, combo] of Object.entries(ok)) assert.equal(parseShortcut(text).combo, combo, text);
+  const bad = { 'M': 'needMod', 'Shift+M': 'needMod', 'Alt+Shift': 'format', 'Alt+M+K': 'oneKey', 'Alt++': 'format', '+': 'format', 'mod+mod+k': 'format', 'Alt+Ö': 'badKey', 'Alt+F25': 'badKey', 'Alt+Escape': 'reserved', 'Mod+Enter': 'reserved', 'Alt+Tab': 'reserved', 'Alt+Backspace': 'reserved' };
+  for (const [text, reason] of Object.entries(bad)) assert.deepEqual(parseShortcut(text), { ok: false, reason }, text);
+});
+
+test('matching is on the physical key (code), with exactly the stated modifiers', () => {
+  const p = parseShortcut('Alt+M');
+  assert.ok(matchesShortcut(p, ev({ code: 'KeyM', altKey: true })));
+  assert.ok(matchesShortcut(p, ev({ code: 'KeyM', key: 'µ', altKey: true })), 'what Alt turns the letter into does not matter');
+  assert.ok(matchesShortcut(p, ev({ code: 'KeyM', key: 'ㅡ', altKey: true })), 'nor does the Korean layout');
+  assert.ok(!matchesShortcut(p, ev({ code: 'KeyM' })));
+  assert.ok(!matchesShortcut(p, ev({ code: 'KeyM', altKey: true, shiftKey: true })), 'an extra modifier is a different combination');
+  assert.ok(!matchesShortcut(p, ev({ code: 'KeyM', altKey: true, ctrlKey: true })));
+  assert.ok(!matchesShortcut(p, ev({ code: 'KeyN', altKey: true })));
+  const mod = parseShortcut('Mod+Shift+K');
+  assert.ok(matchesShortcut(mod, ev({ code: 'KeyK', ctrlKey: true, shiftKey: true })));
+  assert.ok(matchesShortcut(mod, ev({ code: 'KeyK', metaKey: true, shiftKey: true })), '⌘ counts as Mod');
+  assert.ok(matchesShortcut(parseShortcut('F9'), ev({ code: 'F9' })));
+  assert.ok(matchesShortcut(parseShortcut('Alt+5'), ev({ code: 'Digit5', altKey: true })));
+  assert.equal(keyNameOf('KeyA'), 'A');
+});
+
+test('hold: the key-up ends it, even when the modifier came up first, and a modifier release ends it too', () => {
+  const p = parseShortcut('Alt+M');
+  assert.ok(releasesShortcut(p, ev({ code: 'KeyM' })), 'Alt may already be up');
+  assert.ok(!releasesShortcut(p, ev({ code: 'KeyN' })));
+  assert.ok(releasesModifier(p, ev({ key: 'Alt', code: 'AltLeft' })));
+  assert.ok(!releasesModifier(p, ev({ key: 'Shift', code: 'ShiftLeft' })), 'a modifier that is not part of the combination');
+  assert.ok(releasesModifier(parseShortcut('Mod+K'), ev({ key: 'Control' })) && releasesModifier(parseShortcut('Mod+K'), ev({ key: 'Meta' })));
+  assert.ok(!releasesModifier(parseShortcut('F9'), ev({ key: 'Alt' })));
+});
+
+test('hold: a press shorter than the minimum is discarded, a real one is kept', () => {
+  assert.equal(SHORTCUT_MIN_HOLD_MS, 300);
+  assert.equal(holdVerdict(1000, 1120), 'discard');
+  assert.equal(holdVerdict(1000, 1299), 'discard');
+  assert.equal(holdVerdict(1000, 1300), 'send');
+  assert.equal(holdVerdict(1000, 5000), 'send');
+});
+
+test('IME composition and the app\'s own shortcut recorder are never touched', () => {
+  assert.equal(shouldHandleKey({ isComposing: true, keyCode: 65 }), false);
+  assert.equal(shouldHandleKey({ isComposing: false, keyCode: 229 }), false, 'keyCode 229 is how some browsers flag composition');
+  assert.equal(shouldHandleKey({ isComposing: false, keyCode: 77 }, { recordingKey: true }), false, 'the user is assigning an app shortcut');
+  assert.equal(shouldHandleKey({ isComposing: false, keyCode: 77 }), true);
+});
+
+test('a combination the app already uses is reported (the app wins), a free one is not', () => {
+  const app = { newChat: 'Mod+N', modelPicker: 'Mod+M', prevSession: 'Alt+ArrowUp', toggleSidebar: 'Mod+B+B', newTerminal: 'Mod+Alt+N', unbound: '', renameTab: 'F2' };
+  assert.equal(conflictsWithApp(parseShortcut('Mod+N'), app), 'newChat');
+  assert.equal(conflictsWithApp(parseShortcut('ctrl+m'), app), 'modelPicker');
+  assert.equal(conflictsWithApp(parseShortcut('Alt+Up'.replace('Up', 'ArrowUp')), app), 'prevSession');
+  assert.equal(conflictsWithApp(parseShortcut('Mod+B'), app), 'toggleSidebar', 'Mod+B starts the app\'s Mod+B+B');
+  assert.equal(conflictsWithApp(parseShortcut('Mod+Alt+N'), app), 'newTerminal');
+  assert.equal(conflictsWithApp(parseShortcut('F2'), app), 'renameTab');
+  for (const free of ['Alt+M', 'Mod+Shift+K', 'F9', 'Alt+Space']) assert.equal(conflictsWithApp(parseShortcut(free), app), '', free);
+  assert.equal(conflictsWithApp({ ok: false, reason: 'format' }, app), '');
+});
+
+test('the tooltip names the combination and the mode, in both languages', () => {
+  const p = parseShortcut('Alt+M');
+  assert.match(shortcutLabel(p, 'toggle', 'ko'), /^Alt\+M · /);
+  assert.notEqual(shortcutLabel(p, 'toggle', 'ko'), shortcutLabel(p, 'hold', 'ko'));
+  assert.notEqual(shortcutLabel(p, 'hold', 'en'), shortcutLabel(p, 'hold', 'ko'));
+  assert.match(shortcutLabel(parseShortcut('Mod+K'), 'toggle', 'en'), /^(Ctrl|⌘)\+K · /);
 });
