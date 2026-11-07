@@ -34,18 +34,20 @@ A microphone button in the [pipaya](https://github.com/dohwi/pipaya) composer. P
 
 ## Services
 
-Set `apiBase`, `transcribePath` and `model` as below. Examples use each service's public address; use your own for self-hosted ones.
+Set `apiBase`, `transcribePath` and `model` as below. The values come from each service's public documentation (linked); for a self-hosted server use your own address.
 
-| Service | `apiBase` | `transcribePath` | `model` examples | Verified |
+| Service | `apiBase` | `transcribePath` | `model` examples | Documentation |
 | --- | --- | --- | --- | --- |
-| OpenAI | `https://api.openai.com` | `/v1/audio/transcriptions` | `whisper-1`, `gpt-4o-mini-transcribe` | Docs only (request format and model names read from the API reference). CORS not tested. |
-| Groq | `https://api.groq.com` | `/openai/v1/audio/transcriptions` | `whisper-large-v3-turbo`, `whisper-large-v3` | Docs only (path and models read from Groq's speech-to-text page). Not called. |
-| Mistral | `https://api.mistral.ai` | `/v1/audio/transcriptions` | `voxtral-mini-latest` | Docs only (route and model read from Mistral's API reference). Not called. |
-| Local Whisper server (faster-whisper-server, whisper.cpp server, LiteLLM, …) | your server | usually `/v1/audio/transcriptions` | what the server lists | Not tried. Check the server's docs, and that it allows browser (CORS) requests. |
-| CLIProxyAPI with the `mistral-support` plugin | your CLIProxyAPI | `/v0/management/audio/transcriptions` | `voxtral-mini-transcribe-3-0` | **Really run** end to end (record, upload, text in the input box). The key is the management key. The server adds its own term list, so the extension never sends `context_bias`. |
-| Mock OpenAI-style server (test) | local | custom prefix path | any | **Really run**: multipart fields, Bearer header, route and error handling checked against a local mock. |
+| OpenAI | `https://api.openai.com` | `/v1/audio/transcriptions` | `gpt-transcribe` (recommended, see the note below) | [File transcription](https://developers.openai.com/api/docs/guides/speech-to-text) |
+| Groq | `https://api.groq.com` | `/openai/v1/audio/transcriptions` | `whisper-large-v3-turbo`, `whisper-large-v3` | [Speech to text](https://console.groq.com/docs/speech-to-text) |
+| Mistral | `https://api.mistral.ai` | `/v1/audio/transcriptions` | `voxtral-mini-transcribe-3` (also `voxtral-mini-latest` in the API reference) | [File transcription](https://docs.mistral.ai/studio/audio/speech-to-text/transcribe-files) |
+| Self-hosted OpenAI-compatible server (for example [speaches](https://github.com/speaches-ai/speaches), formerly faster-whisper-server) | your server | the route its documentation lists, usually `/v1/audio/transcriptions` | what the server lists | the server's own documentation |
 
-Only the last two rows were exercised with real requests. For the others the request format is the same as what was tested, but the service itself was not called, so treat them as "documented, not verified".
+Notes:
+
+- **OpenAI models.** OpenAI's documentation lists `whisper-1`, `gpt-4o-transcribe` and `gpt-4o-mini-transcribe` as deprecated, shutting down on **26 February 2027**, and recommends `gpt-transcribe`. That model takes `languages` instead of `language` and says not to send both. This extension sends a single `language` (default `ko`), so with `gpt-transcribe` clear the `language` setting if OpenAI rejects the request.
+- **Self-hosted servers.** Any server that implements the OpenAI transcription request (multipart `file`, `model`, `language`; JSON `{ "text": ... }` back) works; if it serves the route under another path, set `transcribePath`. Not every server speaks this format: for example the `whisper.cpp` example server answers on `/inference` with its own request format, so it needs an OpenAI-compatible front end. The server must also allow browser (CORS) requests.
+- **What was tested.** During development the full flow (record, upload, text in the input box) was run end to end against one OpenAI-compatible server. The hosted services above follow their published request format, but the author of this repository has not called them.
 
 ## Usage
 
@@ -104,10 +106,6 @@ The browser's own `MediaRecorder` format is uploaded as is (Chrome/Firefox: `aud
 0.3.0 adds the optional keyboard shortcut (`shortcut`, `shortcutMode`). Nothing changes until you set one.
 
 0.2.1 moves the button from the toolbar (beside the model picker) to the left of the send button. Re-import `dist/voice-input.json`; settings are kept.
-
-### From 0.1.0
-
-0.1.0 sent every request to `/v0/management/audio/transcriptions`. 0.2.0 reads `transcribePath` (default `/v1/audio/transcriptions`) and the setting is empty after an upgrade, so such setups break until you set `transcribePath` to `/v0/management/audio/transcriptions` and the model again. The key is unchanged.
 
 ## Server address (HTTPS)
 

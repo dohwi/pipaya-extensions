@@ -7,8 +7,8 @@ export const MIN_RECORD_MS = 400;
 export const MIN_BLOB_BYTES = 800;
 export const UPLOAD_TIMEOUT_MS = 60 * 1000;
 
-// Preference order. Chrome/Firefox/Edge make webm or ogg (opus), Safari makes mp4. Voxtral accepts them all
-// (checked by uploading m4a, webm/opus and wav), so the browser's own format is uploaded as is.
+// Preference order. Chrome/Firefox/Edge make webm or ogg (opus), Safari makes mp4. The services listed in the README
+// accept webm and m4a, so the browser's own format is uploaded as is (no conversion).
 export const MIME_CANDIDATES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/ogg'];
 
 export function pickMimeType(isSupported) {
@@ -117,7 +117,7 @@ export function hostOf(apiBase) {
   try { return new URL(String(apiBase)).host; } catch { return String(apiBase ?? ''); }
 }
 
-// context_bias is deliberately never sent: the server adds its stored term list.
+// Only file, model and language are sent. Optional extras some services support (prompt, context or keyword hints) are left to the server.
 export function buildForm(blob, { model, language }) {
   const form = new FormData();
   const type = baseMime(blob.type) || 'audio/webm';

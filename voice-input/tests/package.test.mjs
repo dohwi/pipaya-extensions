@@ -40,7 +40,7 @@ test('settings: no built-in address, required origin and secret key, standard de
 });
 
 test('component hard-codes no service route', () => {
-  assert.ok(!/v0\/management/.test(source));
+  assert.ok(!/\/v0\//.test(source));
   const routes = source.replace(/<style[\s\S]*<\/style>/, '').match(/['"`]\/[\w/.-]*transcriptions['"`]/g) ?? [];
   assert.deepEqual(routes, ["'/v1/audio/transcriptions'"], 'the only route in the code is the OpenAI default');
 });
@@ -53,9 +53,10 @@ test('component imports only what the host allows and inlines the helpers', () =
   assert.ok(!/^\s*export /m.test(source.replace(/<style[\s\S]*<\/style>/, '')), 'no leftover exports');
 });
 
-test('component never sends context_bias, never stores or logs the key', () => {
+test('component sends no extra form fields, never stores or logs the key', () => {
   const body = source.replace(/<style[\s\S]*<\/style>/, '');
-  assert.ok(!/context_bias['"]\s*,\s*[^)]/.test(body.replace(/\/\/.*$/gm, '')), 'context_bias must not be appended');
+  const own = body.replace(/<script module>[\s\S]*?<\/script>/, '').replace(/\/\/.*$/gm, ''); // the component's own script, without the inlined helpers
+  assert.ok(!/\.append\(/.test(own), 'the form is built only in helpers.mjs');
   assert.ok(!/localStorage|sessionStorage|indexedDB|document\.cookie/.test(body));
   assert.ok(!/console\./.test(body));
   assert.ok(!/(toast|say)\([^)]*apiKey/.test(body));
@@ -213,4 +214,18 @@ test('design: reduced motion stops the spinner, the pulse and the press animatio
   assert.match(reduced, /\.spin, \.dot \{ animation: none; \}/);
   assert.match(reduced, /\.mic, \.x \{ transition: none; \}/);
   assert.match(reduced, /\.mic:active:not\(:disabled\) \{ transform: none; \}/);
+});
+
+test('docs: the Services table lists only public services with documentation links, no private setups', async () => {
+  for (const file of ['README.md', 'README.ko.md', '../README.md', '../README.ko.md']) {
+    const text = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');
+    assert.ok(!/CLIProxyAPI|mistral-support|management key|관리 키|context_bias|\/v0\/management/i.test(text), `${file}: no private setup`);
+    assert.ok(!/Really run|실제로 끝까지|모의 서버|mock server/i.test(text), `${file}: no internal test results`);
+  }
+  for (const file of ['README.md', 'README.ko.md']) {
+    const text = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');
+    for (const url of ['https://developers.openai.com/api/docs/guides/speech-to-text', 'https://console.groq.com/docs/speech-to-text', 'https://docs.mistral.ai/studio/audio/speech-to-text/transcribe-files']) assert.ok(text.includes(url), `${file}: ${url}`);
+    assert.match(text, /2027/, `${file}: the OpenAI shutdown date is mentioned`);
+    assert.ok(!/### From 0\.1\.0|### 0\.1\.0에서/.test(text), `${file}: no 0.1.0 migration section`);
+  }
 });

@@ -1,13 +1,13 @@
 <script module>
 	/* @helpers */
-	// A key the server refused stays refused until the stored key changes: some servers (CLIProxyAPI, for one) block
-	// an IP for a while after a few rejected requests, so a wrong key is never retried.
+	// A key the server refused stays refused until the stored key changes: some servers block an IP for a while after a
+	// few rejected requests, so a wrong key is never retried.
 	let rejectedKey = "";
 </script>
 
 <script>
-	// Microphone button next to the send control (mounted by VoiceSend.svelte). Click: record. Click again: stop, upload to the CLIProxyAPI
-	// mistral-support route (Mistral Voxtral) and append the transcript to the draft. It never sends the message.
+	// Microphone button next to the send control (mounted by VoiceSend.svelte). Click: record. Click again: stop, upload to the
+	// configured OpenAI-compatible transcription route and append the transcript to the draft. It never sends the message.
 	import { onDestroy } from "svelte";
 	import { ext, app, getPane } from "pipaya";
 

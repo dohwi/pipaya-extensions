@@ -132,13 +132,13 @@ test('request follows the OpenAI transcription format on the configured route', 
   assert.ok(!seen.url.includes('k-secret') && !seen.url.includes('?'));
 });
 
-test('form carries file, model and language but never context_bias', () => {
-  const form = buildForm(blob('audio/mp4'), { model: ' voxtral-mini-transcribe-3-0 ', language: 'ko' });
-  assert.equal(form.get('model'), 'voxtral-mini-transcribe-3-0');
+test('form carries only file, model and language', () => {
+  const form = buildForm(blob('audio/mp4'), { model: ' whisper-large-v3-turbo ', language: 'ko' });
+  assert.equal(form.get('model'), 'whisper-large-v3-turbo');
   assert.equal(form.get('language'), 'ko');
   assert.equal(form.get('file').name, 'voice.m4a');
   assert.equal(form.get('file').type, 'audio/mp4');
-  assert.ok(!form.has('context_bias'));
+  assert.deepEqual([...form.keys()].sort(), ['file', 'language', 'model'], 'no other field is sent');
   const bare = buildForm(blob(), { model: '', language: '' });
   assert.ok(!bare.has('model') && !bare.has('language'), 'empty settings fall back to the server defaults');
 });

@@ -36,8 +36,8 @@
       "key": "model",
       "type": "string",
       "label": "모델 (Model)",
-      "description": "받아쓰기 모델 이름입니다(예: whisper-1). OpenAI, Groq, Mistral 등은 필수입니다. 비우면 보내지 않아 서버 기본값을 씁니다. / Model name; most hosted services require one.",
-      "placeholder": "whisper-1"
+      "description": "받아쓰기 모델 이름입니다(예: gpt-transcribe). OpenAI, Groq, Mistral 등은 필수입니다. 비우면 보내지 않아 서버 기본값을 씁니다. / Model name; most hosted services require one.",
+      "placeholder": "gpt-transcribe"
     },
     {
       "key": "language",

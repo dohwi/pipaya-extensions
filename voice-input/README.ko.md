@@ -32,20 +32,22 @@
 
 `settingsScope`는 **`local`**입니다. 키는 자격 증명이라, `server` 범위면 pipaya 서버에 평문으로 저장되어 연결된 모든 기기에 공유됩니다. `local`이면 이 브라우저/앱에만 남고 내보내기에서도 빠집니다. 대신 기기마다 한 번 입력해야 합니다.
 
-## 서비스별 설정
+## 서비스
 
-`apiBase`, `transcribePath`, `model`을 아래처럼 넣습니다. 예시는 각 서비스의 공개 주소이고, 직접 운영하는 서버는 자기 주소를 쓰세요.
+`apiBase`, `transcribePath`, `model`을 아래처럼 넣습니다. 값은 각 서비스의 공개 문서에서 확인한 것이며(링크), 직접 운영하는 서버는 자기 주소를 쓰세요.
 
-| 서비스 | `apiBase` | `transcribePath` | `model` 예 | 검증 수준 |
+| 서비스 | `apiBase` | `transcribePath` | `model` 예 | 문서 |
 | --- | --- | --- | --- | --- |
-| OpenAI | `https://api.openai.com` | `/v1/audio/transcriptions` | `whisper-1`, `gpt-4o-mini-transcribe` | 문서 기준(API 레퍼런스에서 요청 형식과 모델명 확인). CORS는 시험하지 않음. |
-| Groq | `https://api.groq.com` | `/openai/v1/audio/transcriptions` | `whisper-large-v3-turbo`, `whisper-large-v3` | 문서 기준(Groq 음성 인식 문서에서 경로와 모델 확인). 호출하지 않음. |
-| Mistral | `https://api.mistral.ai` | `/v1/audio/transcriptions` | `voxtral-mini-latest` | 문서 기준(Mistral API 레퍼런스에서 경로와 모델 확인). 호출하지 않음. |
-| 로컬 Whisper 서버(faster-whisper-server, whisper.cpp server, LiteLLM 등) | 내 서버 | 보통 `/v1/audio/transcriptions` | 서버가 제공하는 이름 | 시험하지 않음. 서버 문서와 브라우저(CORS) 허용 여부를 확인하세요. |
-| `mistral-support` 플러그인이 있는 CLIProxyAPI | 내 CLIProxyAPI | `/v0/management/audio/transcriptions` | `voxtral-mini-transcribe-3-0` | **실제로 끝까지 실행**(녹음, 업로드, 입력창에 글). 키는 관리 키입니다. 서버가 용어 목록을 붙이므로 확장은 `context_bias`를 보내지 않습니다. |
-| OpenAI 형식 모의 서버(테스트) | 로컬 | 임의의 접두 경로 | 아무거나 | **실제로 실행**: multipart 필드, Bearer 헤더, 경로, 오류 처리를 로컬 모의 서버로 확인. |
+| OpenAI | `https://api.openai.com` | `/v1/audio/transcriptions` | `gpt-transcribe`(권장, 아래 참고) | [File transcription](https://developers.openai.com/api/docs/guides/speech-to-text) |
+| Groq | `https://api.groq.com` | `/openai/v1/audio/transcriptions` | `whisper-large-v3-turbo`, `whisper-large-v3` | [Speech to text](https://console.groq.com/docs/speech-to-text) |
+| Mistral | `https://api.mistral.ai` | `/v1/audio/transcriptions` | `voxtral-mini-transcribe-3`(API 레퍼런스 예시는 `voxtral-mini-latest`) | [File transcription](https://docs.mistral.ai/studio/audio/speech-to-text/transcribe-files) |
+| 직접 운영하는 OpenAI 호환 서버(예: [speaches](https://github.com/speaches-ai/speaches), 예전 이름 faster-whisper-server) | 운영 중인 서버 주소 | 서버 문서가 안내하는 경로, 보통 `/v1/audio/transcriptions` | 서버가 제공하는 이름 | 해당 서버의 문서 |
 
-마지막 두 행만 실제 요청으로 확인했습니다. 나머지는 시험한 것과 요청 형식이 같지만 서비스를 직접 호출하지는 않았으므로 "문서 기준, 미검증"으로 보세요.
+참고:
+
+- **OpenAI 모델.** OpenAI 문서는 `whisper-1`, `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`를 지원 중단 예정(**2027년 2월 26일 종료**)으로 표시하고 `gpt-transcribe`를 권장합니다. 이 모델은 `language` 대신 `languages`를 받고, 둘을 함께 보내지 말라고 안내합니다. 이 확장은 `language` 하나(기본 `ko`)를 보내므로, `gpt-transcribe`에서 OpenAI가 요청을 거절하면 `language` 설정을 비우세요.
+- **직접 운영하는 서버.** OpenAI 전사 요청 형식(multipart `file`, `model`, `language`, 응답은 JSON `{ "text": ... }`)을 구현한 서버면 됩니다. 경로가 다르면 `transcribePath`를 바꾸세요. 모든 서버가 이 형식을 쓰는 것은 아닙니다. 예를 들어 `whisper.cpp` 예제 서버는 `/inference`에서 자기 고유 형식으로 받으므로 OpenAI 호환 앞단이 필요합니다. 서버가 브라우저(CORS) 요청을 허용해야 하는 것도 같습니다.
+- **확인한 범위.** 개발 중 OpenAI 호환 서버 한 곳에서 전체 흐름(녹음, 업로드, 입력창에 글)을 끝까지 확인했습니다. 위 상용 서비스는 공개된 요청 형식을 따르지만, 이 저장소의 작성자가 직접 호출해 보지는 않았습니다.
 
 ## 사용법
 
@@ -104,10 +106,6 @@ SDK의 `shortcuts` 권한은 쓰지 않습니다. 키를 뗀 신호가 없어 `h
 0.3.0은 선택 사항인 단축키(`shortcut`, `shortcutMode`)를 추가합니다. 설정하기 전에는 아무것도 바뀌지 않습니다.
 
 0.2.1은 버튼을 툴바(모델 선택 옆)에서 전송 버튼 왼쪽으로 옮깁니다. `dist/voice-input.json`을 다시 가져오세요. 설정은 유지됩니다.
-
-### 0.1.0에서
-
-0.1.0은 모든 요청을 `/v0/management/audio/transcriptions`로 보냈습니다. 0.2.0은 `transcribePath`(기본 `/v1/audio/transcriptions`)를 읽고 업그레이드 후에는 이 설정이 비어 있으므로, 그 구성은 `transcribePath`를 `/v0/management/audio/transcriptions`로, 모델도 다시 넣기 전까지 동작하지 않습니다. 키는 그대로입니다.
 
 ## 서버 주소 (HTTPS)
 
