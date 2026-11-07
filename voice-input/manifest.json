@@ -1,9 +1,9 @@
 {
   "id": "voice-input",
   "name": "Voice Input",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "sdkVersion": 1,
-  "description": "입력창에 마이크 버튼을 추가합니다. 말한 내용을 CLIProxyAPI의 Mistral Voxtral로 받아써서 입력창에 넣습니다. / Adds a microphone button to the composer and transcribes speech with Mistral Voxtral.",
+  "description": "입력창에 마이크 버튼을 추가합니다. 말한 내용을 OpenAI 호환 음성 인식 API(OpenAI, Groq, Mistral, 로컬 Whisper 등)로 받아써서 입력창에 넣습니다. / Adds a microphone button to the composer and dictates through any OpenAI-compatible transcription API.",
   "permissions": [
     "ui-components"
   ],
@@ -11,17 +11,25 @@
     {
       "key": "apiBase",
       "type": "string",
-      "label": "CLIProxyAPI 주소 (API base)",
-      "description": "mistral-support 플러그인이 있는 CLIProxyAPI의 origin입니다. 경로나 계정 정보는 넣지 마세요. 마이크는 HTTPS 화면에서만 켜지므로 https 주소를 권장합니다. / Origin of your CLIProxyAPI that has the mistral-support plugin.",
-      "placeholder": "https://your-cliproxyapi.example.com",
+      "label": "서버 주소 (API base)",
+      "description": "음성 인식 API 서버의 origin입니다(예: https://api.openai.com). 경로나 계정 정보는 넣지 마세요. 마이크는 HTTPS 화면에서만 켜지므로 https 주소를 권장합니다. / Origin of the transcription API server.",
+      "placeholder": "https://your-server.example.com",
       "required": true,
       "format": "origin"
     },
     {
+      "key": "transcribePath",
+      "type": "string",
+      "label": "전사 경로 (Transcription path)",
+      "description": "/로 시작하는 경로만 씁니다. 비우면 /v1/audio/transcriptions입니다. Groq는 /openai/v1/audio/transcriptions입니다. / Path only, starting with /.",
+      "placeholder": "/v1/audio/transcriptions",
+      "default": "/v1/audio/transcriptions"
+    },
+    {
       "key": "apiKey",
       "type": "string",
-      "label": "관리 키 (Management Key)",
-      "description": "CLIProxyAPI 관리 키입니다. 이 기기에만 평문으로 저장되고 내보내기에서는 제외됩니다. 비어 있으면 마이크 버튼이 설정을 안내합니다. / Stored in plain text on this device only.",
+      "label": "API 키 (API key)",
+      "description": "서버가 요구하는 키입니다. Authorization: Bearer 헤더로만 보내며, 이 기기에만 평문으로 저장되고 내보내기에서는 제외됩니다. / Sent only as a Bearer header; stored in plain text on this device only.",
       "secret": true,
       "required": true
     },
@@ -29,15 +37,14 @@
       "key": "model",
       "type": "string",
       "label": "모델 (Model)",
-      "description": "받아쓰기 모델입니다. 비우면 서버 기본값을 씁니다.",
-      "default": "voxtral-mini-transcribe-3-0",
-      "placeholder": "voxtral-mini-transcribe-3-0"
+      "description": "받아쓰기 모델 이름입니다(예: whisper-1). OpenAI, Groq, Mistral 등은 필수입니다. 비우면 보내지 않아 서버 기본값을 씁니다. / Model name; most hosted services require one.",
+      "placeholder": "whisper-1"
     },
     {
       "key": "language",
       "type": "string",
       "label": "말하는 언어 (Language)",
-      "description": "ISO 639-1 코드입니다(예: ko, en, ja). 비우면 자동으로 감지합니다.",
+      "description": "ISO 639-1 코드입니다(예: ko, en, ja). 비우면 보내지 않아 서버가 자동 감지합니다. / Empty lets the server detect it.",
       "default": "ko",
       "placeholder": "ko"
     }

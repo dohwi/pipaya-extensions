@@ -58,8 +58,27 @@ export function originOf(apiBase) {
   return url.origin;
 }
 
-export function endpoint(apiBase) {
-  return `${originOf(apiBase)}/v0/management/audio/transcriptions`;
+// The standard OpenAI-style route. It is only the default of the `transcribePath` setting; servers that mount
+// the same API elsewhere (a prefix, a gateway route) change the setting instead of the code.
+export const DEFAULT_TRANSCRIBE_PATH = '/v1/audio/transcriptions';
+
+// A request path only: starts with one `/`, no scheme, origin, query, fragment, `..`/`.` segments, backslashes,
+// spaces or control characters. Empty means the default. Returns '' when the value is not acceptable.
+export function pathOf(transcribePath) {
+  const text = transcribePath === undefined || transcribePath === null ? '' : String(transcribePath).trim();
+  if (!text) return DEFAULT_TRANSCRIBE_PATH;
+  if (text.length > 200 || !/^\/(?!\/)[A-Za-z0-9._~\-\/%:@!$&'()*+,;=]*$/.test(text)) return '';
+  if (text.split('/').some((part) => part === '.' || part === '..' || /^(%2e)+$/i.test(part))) return '';
+  return text;
+}
+
+// origin + path, or '' when either part is not acceptable (then nothing is sent).
+export function endpoint(apiBase, transcribePath) {
+  const origin = originOf(apiBase);
+  const path = pathOf(transcribePath);
+  if (!origin || !path) return '';
+  try { if (new URL(origin + path).origin !== origin) return ''; } catch { return ''; }
+  return origin + path;
 }
 
 export function hostOf(apiBase) {
@@ -87,9 +106,10 @@ export class VoiceError extends Error {
 }
 
 // One upload. The key goes only into the Authorization header and never into a message or log.
-// Throws VoiceError(kind) with kind in needBase | aborted | timeout | network | badKey | rateLimited | tooBig | serverError | badResponse | empty.
-export async function transcribe({ fetchImpl, apiBase, apiKey, model, language, blob, timeoutMs = UPLOAD_TIMEOUT_MS, signal }) {
+// Throws VoiceError(kind) with kind in needBase | badPath | notFound | aborted | timeout | network | badKey | rateLimited | tooBig | serverError | badResponse | empty.
+export async function transcribe({ fetchImpl, apiBase, transcribePath, apiKey, model, language, blob, timeoutMs = UPLOAD_TIMEOUT_MS, signal }) {
   if (!originOf(apiBase)) throw new VoiceError('needBase');
+  if (!pathOf(transcribePath)) throw new VoiceError('badPath');
   const control = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; control.abort(); }, timeoutMs);
@@ -98,7 +118,7 @@ export async function transcribe({ fetchImpl, apiBase, apiKey, model, language, 
   try {
     let response;
     try {
-      response = await fetchImpl(endpoint(apiBase), {
+      response = await fetchImpl(endpoint(apiBase, transcribePath), {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}` },
         body: buildForm(blob, { model, language }),
@@ -134,6 +154,7 @@ export function micErrorKind(error) {
 
 export function httpErrorKind(status) {
   if (status === 401 || status === 403) return 'badKey';
+  if (status === 404 || status === 405) return 'notFound';
   if (status === 429) return 'rateLimited';
   if (status === 413) return 'tooBig';
   return 'serverError';
@@ -147,11 +168,13 @@ export const STRINGS = {
     transcribingShort: '변환 중',
     cancel: '녹음 취소',
     errorShort: '오류',
-    needBase: '설정에서 CLIProxyAPI 주소를 입력하세요(예: https://서버 주소).',
+    needBase: '설정에서 서버 주소를 입력하세요(예: https://서버 주소).',
     needBaseShort: '주소 필요',
-    needKey: 'CLIProxyAPI 관리 키가 없습니다. 확장 설정에서 키를 입력하세요.',
+    badPath: '전사 경로가 올바르지 않습니다. /로 시작하는 경로만 쓸 수 있습니다(예: /v1/audio/transcriptions).',
+    badPathShort: '경로 오류',
+    needKey: 'API 키가 없습니다. 확장 설정에서 키를 입력하세요.',
     needKeyShort: '키 필요',
-    badKey: '관리 키가 거부되었습니다({status}). 설정에서 키를 고치세요. 서버의 IP 차단을 피하려고 키를 바꿀 때까지 요청하지 않습니다.',
+    badKey: 'API 키가 거부되었습니다({status}). 설정에서 키를 고치세요. 반복 실패로 인한 차단을 피하려고 키를 바꿀 때까지 요청하지 않습니다.',
     badKeyShort: '키 거부됨',
     micDenied: '마이크 권한이 거부되었습니다. 주소창의 사이트 설정에서 마이크를 허용한 뒤 다시 누르세요.',
     micDeniedShort: '마이크 거부됨',
@@ -169,11 +192,13 @@ export const STRINGS = {
     networkShort: '연결 실패',
     timeout: '변환 요청이 {sec}초 안에 끝나지 않았습니다.',
     timeoutShort: '시간 초과',
+    notFound: '전사 경로를 찾을 수 없습니다({status}). 설정의 서버 주소와 전사 경로를 확인하세요.',
+    notFoundShort: '경로 없음',
     rateLimited: '요청이 너무 많습니다(429). 잠시 후 다시 시도하세요.',
     rateLimitedShort: '요청 과다',
     tooBig: '녹음이 너무 깁니다(413). 더 짧게 나눠 말해 주세요.',
     tooBigShort: '너무 김',
-    serverError: '변환 서버 오류({status}).',
+    serverError: '변환 서버 오류({status}). 모델 이름이 맞는지도 확인하세요.',
     serverErrorShort: '서버 오류',
     tooShort: '녹음이 너무 짧습니다.',
     tooShortShort: '너무 짧음',
@@ -191,11 +216,13 @@ export const STRINGS = {
     transcribingShort: 'Working',
     cancel: 'Cancel recording',
     errorShort: 'Error',
-    needBase: 'Enter the CLIProxyAPI address in the extension settings (for example https://your-server).',
+    needBase: 'Enter the server address in the extension settings (for example https://your-server).',
     needBaseShort: 'Address needed',
-    needKey: 'The CLIProxyAPI management key is not set. Enter it in the extension settings.',
+    badPath: 'The transcription path is not valid. Use a path starting with / (for example /v1/audio/transcriptions).',
+    badPathShort: 'Bad path',
+    needKey: 'The API key is not set. Enter it in the extension settings.',
     needKeyShort: 'Key needed',
-    badKey: 'The management key was rejected ({status}). Fix it in the settings. Requests stop until the key changes, to avoid a server IP ban.',
+    badKey: 'The API key was rejected ({status}). Fix it in the settings. Requests stop until the key changes, to avoid being blocked after repeated failures.',
     badKeyShort: 'Key rejected',
     micDenied: 'Microphone permission was denied. Allow the microphone in the site settings next to the address bar, then try again.',
     micDeniedShort: 'Mic denied',
@@ -213,11 +240,13 @@ export const STRINGS = {
     networkShort: 'Unreachable',
     timeout: 'Transcription did not finish within {sec} seconds.',
     timeoutShort: 'Timed out',
+    notFound: 'The transcription route was not found ({status}). Check the server address and transcription path in the settings.',
+    notFoundShort: 'Not found',
     rateLimited: 'Too many requests (429). Try again in a moment.',
     rateLimitedShort: 'Rate limited',
     tooBig: 'The recording is too long (413). Speak in shorter parts.',
     tooBigShort: 'Too long',
-    serverError: 'Transcription server error ({status}).',
+    serverError: 'Transcription server error ({status}). Also check the model name.',
     serverErrorShort: 'Server error',
     tooShort: 'The recording is too short.',
     tooShortShort: 'Too short',

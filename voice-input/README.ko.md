@@ -2,15 +2,15 @@
 
 # voice-input
 
-[pipaya](https://github.com/dohwi/pipaya) 입력창의 마이크 버튼입니다. 누르고 말하고 다시 누르면 `mistral-support` CLIProxyAPI 플러그인을 거쳐 **Mistral Voxtral**이 받아써서 입력창에 붙여 넣습니다. 메시지를 대신 보내지는 않습니다.
+[pipaya](https://github.com/dohwi/pipaya) 입력창의 마이크 버튼입니다. 누르고 말하고 다시 누르면 음성을 **OpenAI 호환 음성 인식 API**로 보내 받아쓴 글을 입력창에 붙여 넣습니다. 메시지를 대신 보내지는 않습니다.
 
-| 녹음 중 | 완료 (390px, 다크) |
-| :---: | :---: |
-| <img src="docs/preview-recording.png" alt="녹음 중" width="100%" /> | <img src="docs/preview-mobile.png" alt="모바일" width="60%" /> |
+| 녹음 중 | 설정 | 완료 (390px, 다크) |
+| :---: | :---: | :---: |
+| <img src="docs/preview-recording.png" alt="녹음 중" width="100%" /> | <img src="docs/preview-settings.png" alt="설정" width="100%" /> | <img src="docs/preview-mobile.png" alt="모바일" width="60%" /> |
 
 ## 필요한 것
 
-- `mistral-support` 플러그인이 있는 CLIProxyAPI(`POST /v0/management/audio/transcriptions`)와 **관리 키**.
+- `POST <origin><경로>`에 multipart(`file`, `model`, `language`)와 `Authorization: Bearer` 키를 받고 `text` 필드가 있는 JSON을 돌려주는(OpenAI `audio/transcriptions` 형식) 음성 인식 서버. 그리고 **브라우저 요청을 허용(CORS)** 해야 합니다.
 - **HTTPS**로 연 pipaya(마이크는 보안 컨텍스트에서만 켜집니다). 일반 `http://<ip>:<port>` 화면은 안 됩니다. 리버스 프록시나 `tailscale serve` 등으로 HTTPS로 제공하세요.
 - pipaya가 HTTPS이면 **서버 주소도 HTTPS**여야 합니다(혼합 콘텐츠 차단). [서버 주소](#서버-주소-https) 참고.
 
@@ -22,33 +22,55 @@
 
 | 설정 | 기본값 | 설명 |
 | --- | --- | --- |
-| `apiBase` | *(필수, 없음)* | 내 CLIProxyAPI의 origin. 예: `https://your-cliproxyapi.example.com`. 경로나 계정 정보는 넣지 마세요. 내장된 주소는 없고, 비었거나 형식이 틀리면 버튼이 안내만 하고 요청을 보내지 않습니다. |
-| `apiKey` | *(필수, 없음)* | 관리 키. 비밀 필드. 비어 있으면 버튼이 설정을 안내합니다. |
-| `model` | `voxtral-mini-transcribe-3-0` | 비우면 서버 기본값. |
-| `language` | `ko` | ISO 639-1 코드. 비우면 자동 감지. |
+| `apiBase` | *(필수, 없음)* | 서버 origin. 예: `https://api.openai.com`. 경로나 계정 정보는 넣지 마세요. 내장된 주소는 없고, 비었거나 형식이 틀리면 버튼이 안내만 하고 요청을 보내지 않습니다. |
+| `transcribePath` | `/v1/audio/transcriptions` | `/`로 시작하는 요청 경로. 단순한 경로만 받습니다(스킴, 호스트, 쿼리, `..` 불가). 요청 주소는 `apiBase` + 이 경로입니다. |
+| `apiKey` | *(필수, 없음)* | `Authorization: Bearer` 헤더로만 보냅니다. 비밀 필드. |
+| `model` | *(빈 값)* | 모델 이름. 대부분의 호스팅 서비스는 필수입니다(아래 표). 비우면 보내지 않고 서버 기본값을 씁니다. 기본값이 없는 이유는 어떤 값을 넣어도 한 서비스에만 맞기 때문입니다. |
+| `language` | `ko` | ISO 639-1 코드. 비우면 서버가 자동 감지. |
 
-`settingsScope`는 **`local`**입니다. 관리 키는 자격 증명이라, `server` 범위면 pipaya 서버에 평문으로 저장되어 연결된 모든 기기에 공유됩니다. `local`이면 이 브라우저/앱에만 남고 내보내기에서도 빠집니다. 대신 기기마다 한 번 입력해야 합니다.
+`settingsScope`는 **`local`**입니다. 키는 자격 증명이라, `server` 범위면 pipaya 서버에 평문으로 저장되어 연결된 모든 기기에 공유됩니다. `local`이면 이 브라우저/앱에만 남고 내보내기에서도 빠집니다. 대신 기기마다 한 번 입력해야 합니다.
+
+## 서비스별 설정
+
+`apiBase`, `transcribePath`, `model`을 아래처럼 넣습니다. 예시는 각 서비스의 공개 주소이고, 직접 운영하는 서버는 자기 주소를 쓰세요.
+
+| 서비스 | `apiBase` | `transcribePath` | `model` 예 | 검증 수준 |
+| --- | --- | --- | --- | --- |
+| OpenAI | `https://api.openai.com` | `/v1/audio/transcriptions` | `whisper-1`, `gpt-4o-mini-transcribe` | 문서 기준(API 레퍼런스에서 요청 형식과 모델명 확인). CORS는 시험하지 않음. |
+| Groq | `https://api.groq.com` | `/openai/v1/audio/transcriptions` | `whisper-large-v3-turbo`, `whisper-large-v3` | 문서 기준(Groq 음성 인식 문서에서 경로와 모델 확인). 호출하지 않음. |
+| Mistral | `https://api.mistral.ai` | `/v1/audio/transcriptions` | `voxtral-mini-latest` | 문서 기준(Mistral API 레퍼런스에서 경로와 모델 확인). 호출하지 않음. |
+| 로컬 Whisper 서버(faster-whisper-server, whisper.cpp server, LiteLLM 등) | 내 서버 | 보통 `/v1/audio/transcriptions` | 서버가 제공하는 이름 | 시험하지 않음. 서버 문서와 브라우저(CORS) 허용 여부를 확인하세요. |
+| `mistral-support` 플러그인이 있는 CLIProxyAPI | 내 CLIProxyAPI | `/v0/management/audio/transcriptions` | `voxtral-mini-transcribe-3-0` | **실제로 끝까지 실행**(녹음, 업로드, 입력창에 글). 키는 관리 키입니다. 서버가 용어 목록을 붙이므로 확장은 `context_bias`를 보내지 않습니다. |
+| OpenAI 형식 모의 서버(테스트) | 로컬 | 임의의 접두 경로 | 아무거나 | **실제로 실행**: multipart 필드, Bearer 헤더, 경로, 오류 처리를 로컬 모의 서버로 확인. |
+
+마지막 두 행만 실제 요청으로 확인했습니다. 나머지는 시험한 것과 요청 형식이 같지만 서비스를 직접 호출하지는 않았으므로 "문서 기준, 미검증"으로 보세요.
 
 ## 사용법
 
 - 마이크를 누르면 녹음이 시작됩니다(빨간 버튼, 경과 시간). 다시 누르면(정지 ■) 변환합니다. **✕**는 업로드 없이 취소합니다.
 - 결과는 기존 초안 뒤에 공백으로 이어 붙습니다. 확인하고 직접 전송하세요.
 - 5분이 지나면 자동으로 멈춥니다. 녹음이 끝나면(버튼이 제거될 때도) 마이크를 바로 닫습니다.
-- `context_bias`는 보내지 않습니다. 서버가 저장된 용어 목록(커밋, 푸시, git …)을 붙입니다.
 
 | 표시 | 의미 |
 | --- | --- |
 | 주소 필요 | `apiBase`가 비었거나 http(s) origin이 아님(설정을 엽니다). |
-| 키 필요 | 설정에 관리 키가 없음(설정을 엽니다). |
-| 키 거부됨 | 401/403. 반복 실패 시 CLIProxyAPI의 IP 차단을 피하려고 키를 바꿀 때까지 다시 요청하지 않습니다. |
+| 경로 오류 | `transcribePath`가 `/`로 시작하는 단순 경로가 아님. |
+| 키 필요 | 설정에 키가 없음(설정을 엽니다). |
+| 키 거부됨 | 401/403. 반복 실패 시 차단을 피하려고 키를 바꿀 때까지 다시 요청하지 않습니다. |
+| 경로 없음 | 404/405: 주소나 경로가 틀림. |
 | 마이크 거부됨 / 마이크 없음 / 마이크 사용 불가 | 브라우저 사이트 설정에서 마이크 허용, 장치 확인, 다른 앱 종료. |
 | HTTPS 필요 | pipaya가 보안 컨텍스트가 아님. |
-| 연결 실패 / 시간 초과 | `apiBase`에 닿지 않음(60초 제한). |
+| 연결 실패 / 시간 초과 | `apiBase`에 닿지 않음(60초 제한), 또는 서버가 브라우저 요청(CORS)을 막음. |
+| 서버 오류 | 그 밖의 비정상 응답. 모델 이름도 확인하세요. |
 | 인식 없음 / 너무 짧음 | 빈 결과, 또는 0.4초 미만 녹음. |
 
 ## 녹음 포맷
 
-브라우저 `MediaRecorder`의 기본 포맷을 그대로 올립니다(Chrome/Firefox는 `audio/webm` opus, Safari는 `audio/mp4`). m4a, webm/opus, wav를 실제로 올려 모두 같은 결과가 나오는 것을 확인했으므로 WAV 변환은 하지 않습니다.
+브라우저 `MediaRecorder`의 기본 포맷을 그대로 올립니다(Chrome/Firefox는 `audio/webm` opus, Safari는 `audio/mp4`). 파일 이름은 `voice.webm` / `voice.m4a`입니다. OpenAI, Groq, Mistral은 webm과 m4a를 지원 포맷으로 안내합니다. WAV 변환은 하지 않습니다.
+
+## 0.1.0에서 올릴 때
+
+0.1.0은 모든 요청을 `/v0/management/audio/transcriptions`로 보냈습니다. 0.2.0은 `transcribePath`(기본 `/v1/audio/transcriptions`)를 읽고 업그레이드 후에는 이 설정이 비어 있으므로, 그 구성은 `transcribePath`를 `/v0/management/audio/transcriptions`로, 모델도 다시 넣기 전까지 동작하지 않습니다. 키는 그대로입니다.
 
 ## 서버 주소 (HTTPS)
 
@@ -61,7 +83,7 @@
 | `ui-components` | 이것만 요청합니다. `composer.toolbar`에 버튼을 달기 위해서입니다. 마이크와 업로드는 컴포넌트가 직접 처리하므로(`getUserMedia`, `fetch`) `http`, `composer`, `storage`, `context` 권한은 요청하지 않습니다. |
 
 > [!WARNING]
-> `ui-components`는 이 확장의 Svelte 코드를 pipaya 앱 **안에서 샌드박스 없이** 실행하므로 앱이 가진 모든 것(대화, 서버 연결 정보, 토큰)에 접근할 수 있습니다. 키는 `apiBase`로 가는 `Authorization` 헤더로만 보내고 로그·다른 저장소·메시지에 넣지 않지만(테스트로 확인), 신뢰하는 빌드만 설치하세요.
+> `ui-components`는 이 확장의 Svelte 코드를 pipaya 앱 **안에서 샌드박스 없이** 실행하므로 앱이 가진 모든 것(대화, 서버 연결 정보, 토큰)에 접근할 수 있습니다. 키는 `apiBase`로 가는 `Authorization` 헤더로만 보내고 로그·다른 저장소·URL·메시지에 넣지 않지만(테스트로 확인), 신뢰하는 빌드만 설치하세요. 음성은 설정한 서비스로 전송되므로 그 서비스의 개인정보 약관을 확인하세요.
 
 ## 개발
 

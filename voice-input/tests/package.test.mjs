@@ -15,19 +15,28 @@ test('package is a single ui-components extension with no worker code', () => {
   assert.ok(Buffer.byteLength(source) < 64 * 1024);
 });
 
-test('settings: no built-in address, required origin and secret key, device-local scope', () => {
+test('settings: no built-in address, required origin and secret key, standard default path, device-local scope', () => {
   const byKey = Object.fromEntries(pkg.manifest.settings.map((f) => [f.key, f]));
-  assert.deepEqual(Object.keys(byKey), ['apiBase', 'apiKey', 'model', 'language']);
+  assert.deepEqual(Object.keys(byKey), ['apiBase', 'transcribePath', 'apiKey', 'model', 'language']);
   assert.equal(byKey.apiBase.format, 'origin');
   assert.equal(byKey.apiBase.required, true);
   assert.ok(!('default' in byKey.apiBase), 'the user enters their own address');
   assert.match(byKey.apiBase.placeholder, /example\.com/);
+  assert.equal(byKey.transcribePath.default, '/v1/audio/transcriptions');
+  assert.ok(!byKey.transcribePath.required);
   assert.equal(byKey.apiKey.secret, true);
   assert.equal(byKey.apiKey.required, true);
   assert.ok(!('default' in byKey.apiKey));
-  assert.equal(byKey.model.default, 'voxtral-mini-transcribe-3-0');
+  assert.ok(!('default' in byKey.model) && !byKey.model.required, 'no service-specific model is assumed');
   assert.equal(byKey.language.default, 'ko');
   assert.equal(pkg.manifest.settingsScope, 'local');
+  assert.equal(pkg.manifest.version, '0.2.0');
+});
+
+test('component hard-codes no service route', () => {
+  assert.ok(!/v0\/management/.test(source));
+  const routes = source.replace(/<style[\s\S]*<\/style>/, '').match(/['"`]\/[\w/.-]*transcriptions['"`]/g) ?? [];
+  assert.deepEqual(routes, ["'/v1/audio/transcriptions'"], 'the only route in the code is the OpenAI default');
 });
 
 test('component imports only what the host allows and inlines the helpers', () => {
@@ -60,6 +69,6 @@ test('no personal address or key is baked into the package', () => {
 });
 
 test('component asks for the address before the key and before any request', () => {
-  const begin = source.slice(source.indexOf('async function begin'), source.indexOf('async function begin') + 900);
-  assert.ok(begin.indexOf('needBase') > 0 && begin.indexOf('needBase') < begin.indexOf('needKey'));
+  const begin = source.slice(source.indexOf('async function begin'), source.indexOf('async function begin') + 1200);
+  assert.ok(begin.indexOf('needBase') > 0 && begin.indexOf('needBase') < begin.indexOf('badPath') && begin.indexOf('badPath') < begin.indexOf('needKey'));
 });

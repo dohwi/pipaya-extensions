@@ -2,16 +2,16 @@
 
 # voice-input
 
-A microphone button in the [pipaya](https://github.com/dohwi/pipaya) composer. Press it, speak, press again: the audio is transcribed by **Mistral Voxtral** through the `mistral-support` CLIProxyAPI plugin and the text is appended to the input box. It never sends the message for you.
+A microphone button in the [pipaya](https://github.com/dohwi/pipaya) composer. Press it, speak, press again: the audio is sent to **any OpenAI-compatible transcription API** and the text is appended to the input box. It never sends the message for you.
 
-| Recording | Done (390 px, dark) |
-| :---: | :---: |
-| <img src="docs/preview-recording.png" alt="Recording" width="100%" /> | <img src="docs/preview-mobile.png" alt="Mobile" width="60%" /> |
+| Recording | Settings | Done (390 px, dark) |
+| :---: | :---: | :---: |
+| <img src="docs/preview-recording.png" alt="Recording" width="100%" /> | <img src="docs/preview-settings.png" alt="Settings" width="100%" /> | <img src="docs/preview-mobile.png" alt="Mobile" width="60%" /> |
 
 ## Requirements
 
-- CLIProxyAPI with the `mistral-support` plugin (route `POST /v0/management/audio/transcriptions`) and its **management key**.
-- pipaya opened over **HTTPS** (browsers only allow the microphone in a secure context). a plain `http://<ip>:<port>` page will not work; serve it over HTTPS (for example with a reverse proxy or `tailscale serve`).
+- A transcription server that answers `POST <origin><path>` with multipart `file`, `model`, `language` and an `Authorization: Bearer` key, and returns JSON with a `text` field (the OpenAI `audio/transcriptions` format), and that **allows requests from the browser (CORS)**.
+- pipaya opened over **HTTPS** (browsers only allow the microphone in a secure context). A plain `http://<ip>:<port>` page will not work; serve it over HTTPS (for example with a reverse proxy or `tailscale serve`).
 - When pipaya is on HTTPS, its **server address must be HTTPS too** (mixed content is blocked). See [Server address](#server-address-https).
 
 ## Install
@@ -22,33 +22,55 @@ A microphone button in the [pipaya](https://github.com/dohwi/pipaya) composer. P
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `apiBase` | *(required, none)* | Origin of your CLIProxyAPI, for example `https://your-cliproxyapi.example.com`. No path or credentials. Nothing is built in: empty or malformed, the button asks for it and sends no request. |
-| `apiKey` | *(required, none)* | Management key. Secret field. Empty: the button tells you to set it. |
-| `model` | `voxtral-mini-transcribe-3-0` | Empty uses the server default. |
-| `language` | `ko` | ISO 639-1 code. Empty lets Voxtral detect it. |
+| `apiBase` | *(required, none)* | Origin of the server, for example `https://api.openai.com`. No path or credentials. Nothing is built in: empty or malformed, the button asks for it and sends no request. |
+| `transcribePath` | `/v1/audio/transcriptions` | Request path, starting with `/`. Only a plain path is accepted (no scheme, host, query, `..`). The URL is `apiBase` + this path. |
+| `apiKey` | *(required, none)* | Sent only as `Authorization: Bearer`. Secret field. |
+| `model` | *(empty)* | Model name. Most hosted services require one (see the table). Empty: the field is not sent and the server default is used. There is no default because any value would suit only one service. |
+| `language` | `ko` | ISO 639-1 code. Empty lets the server detect it. |
 
-`settingsScope` is **`local`**: the management key is a credential, and `server` scope would store it in plain text on the pipaya server and share it with every connected device. With `local` it stays on this browser/app only (and is never exported). Enter it once per device.
+`settingsScope` is **`local`**: the key is a credential, and `server` scope would store it in plain text on the pipaya server and share it with every connected device. With `local` it stays on this browser/app only (and is never exported). Enter it once per device.
+
+## Services
+
+Set `apiBase`, `transcribePath` and `model` as below. Examples use each service's public address; use your own for self-hosted ones.
+
+| Service | `apiBase` | `transcribePath` | `model` examples | Verified |
+| --- | --- | --- | --- | --- |
+| OpenAI | `https://api.openai.com` | `/v1/audio/transcriptions` | `whisper-1`, `gpt-4o-mini-transcribe` | Docs only (request format and model names read from the API reference). CORS not tested. |
+| Groq | `https://api.groq.com` | `/openai/v1/audio/transcriptions` | `whisper-large-v3-turbo`, `whisper-large-v3` | Docs only (path and models read from Groq's speech-to-text page). Not called. |
+| Mistral | `https://api.mistral.ai` | `/v1/audio/transcriptions` | `voxtral-mini-latest` | Docs only (route and model read from Mistral's API reference). Not called. |
+| Local Whisper server (faster-whisper-server, whisper.cpp server, LiteLLM, …) | your server | usually `/v1/audio/transcriptions` | what the server lists | Not tried. Check the server's docs, and that it allows browser (CORS) requests. |
+| CLIProxyAPI with the `mistral-support` plugin | your CLIProxyAPI | `/v0/management/audio/transcriptions` | `voxtral-mini-transcribe-3-0` | **Really run** end to end (record, upload, text in the input box). The key is the management key. The server adds its own term list, so the extension never sends `context_bias`. |
+| Mock OpenAI-style server (test) | local | custom prefix path | any | **Really run**: multipart fields, Bearer header, route and error handling checked against a local mock. |
+
+Only the last two rows were exercised with real requests. For the others the request format is the same as what was tested, but the service itself was not called, so treat them as "documented, not verified".
 
 ## Usage
 
 - Click the mic: recording starts (red button, elapsed time). Click again (or the stop square) to transcribe. **✕** cancels without uploading.
 - The text is appended after the current draft, separated by a space. Review it, then send yourself.
 - Recording stops by itself after 5 minutes. The microphone is released as soon as recording ends (and when the button is removed).
-- `context_bias` is never sent: the server adds its stored term list (commit, push, git, …).
 
 | Message | Meaning |
 | --- | --- |
 | Address needed | `apiBase` is empty or not a bare http(s) origin (opens the settings). |
-| Key needed | No management key in the settings (opens the settings). |
-| Key rejected | 401/403. No request is made again until the key changes, to avoid CLIProxyAPI's IP ban after repeated failures. |
+| Bad path | `transcribePath` is not a plain path starting with `/`. |
+| Key needed | No key in the settings (opens the settings). |
+| Key rejected | 401/403. No request is made again until the key changes, to avoid being blocked after repeated failures. |
+| Not found | 404/405: wrong address or path. |
 | Mic denied / No mic / Mic unavailable | Allow the microphone in the browser's site settings, check the device, close other apps using it. |
 | HTTPS needed | pipaya is not in a secure context. |
-| Unreachable / Timed out | Cannot reach `apiBase` (60 s limit). |
+| Unreachable / Timed out | Cannot reach `apiBase` (60 s limit), or the server blocks browser requests (CORS). |
+| Server error | Other non-2xx answers; also check the model name. |
 | Nothing heard / Too short | Empty transcript or recording under 0.4 s. |
 
 ## Recording format
 
-The browser's own `MediaRecorder` format is uploaded as is (Chrome/Firefox: `audio/webm` opus, Safari: `audio/mp4`). Voxtral was checked with real uploads of m4a, webm/opus and wav, all returning the same transcript, so no WAV conversion is done.
+The browser's own `MediaRecorder` format is uploaded as is (Chrome/Firefox: `audio/webm` opus, Safari: `audio/mp4`), named `voice.webm` / `voice.m4a`. OpenAI, Groq and Mistral list webm and m4a among the accepted formats. No WAV conversion is done.
+
+## Upgrading from 0.1.0
+
+0.1.0 sent every request to `/v0/management/audio/transcriptions`. 0.2.0 reads `transcribePath` (default `/v1/audio/transcriptions`) and the setting is empty after an upgrade, so such setups break until you set `transcribePath` to `/v0/management/audio/transcriptions` and the model again. The key is unchanged.
 
 ## Server address (HTTPS)
 
@@ -61,7 +83,7 @@ No core change is needed. In pipaya: **Settings → (your server tab) → edit**
 | `ui-components` | The only one. Mounts the button in `composer.toolbar`. The microphone and upload are done by the component itself (`getUserMedia`, `fetch`), so no `http`, `composer`, `storage` or `context` permission is requested. |
 
 > [!WARNING]
-> `ui-components` runs this extension's Svelte code **inside the pipaya app, without a sandbox**, so it can reach everything the app holds (chats, server connections, tokens). The key is only sent as an `Authorization` header to your `apiBase` and is never logged, stored elsewhere or put in a message (tests enforce this), but install only builds you trust.
+> `ui-components` runs this extension's Svelte code **inside the pipaya app, without a sandbox**, so it can reach everything the app holds (chats, server connections, tokens). The key is only sent as an `Authorization` header to your `apiBase` and is never logged, stored elsewhere or put in a URL or message (tests enforce this), but install only builds you trust. Your voice goes to the service you configure; read its privacy terms.
 
 ## Development
 

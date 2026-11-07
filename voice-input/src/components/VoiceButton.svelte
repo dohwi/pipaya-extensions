@@ -1,7 +1,7 @@
 <script module>
 	/* @helpers */
-	// A key the server refused stays refused until the stored key changes: CLIProxyAPI bans an IP for 30 minutes
-	// after five rejected management requests, so a wrong key is never retried.
+	// A key the server refused stays refused until the stored key changes: some servers (CLIProxyAPI, for one) block
+	// an IP for a while after a few rejected requests, so a wrong key is never retried.
 	let rejectedKey = "";
 </script>
 
@@ -63,6 +63,11 @@
 		const settings = ext.settings ?? {};
 		if (!originOf(settings.apiBase)) {
 			say("needBase");
+			app.openSettings?.("extensions");
+			return;
+		}
+		if (!pathOf(settings.transcribePath)) {
+			say("badPath");
 			app.openSettings?.("extensions");
 			return;
 		}
@@ -139,6 +144,7 @@
 			const text = await transcribe({
 				fetchImpl: (url, init) => fetch(url, init),
 				apiBase: base,
+				transcribePath: settings.transcribePath,
 				apiKey: key,
 				model: settings.model,
 				language: settings.language,
@@ -154,7 +160,7 @@
 			const kind = error?.kind ?? "network";
 			if (kind === "aborted") return;
 			if (kind === "badKey") rejectedKey = key;
-			if (kind === "needBase") app.openSettings?.("extensions");
+			if (kind === "needBase" || kind === "badPath") app.openSettings?.("extensions");
 			say(kind, { status: error?.status ?? "", host: hostOf(base), sec: Math.round(UPLOAD_TIMEOUT_MS / 1000) });
 		} finally {
 			upload = null;
