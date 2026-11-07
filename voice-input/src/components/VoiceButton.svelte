@@ -8,8 +8,11 @@
 <script>
 	// Microphone button next to the send control (mounted by VoiceSend.svelte). Click: record. Click again: stop, upload to the
 	// configured OpenAI-compatible transcription route and append the transcript to the draft. It never sends the message.
-	import { onDestroy } from "svelte";
-	import { ext, app, getPane } from "pipaya";
+	import { onDestroy, untrack } from "svelte";
+	// The app's kit as a namespace: an app older than 0.7.1 has no `shortcuts` in it, which is simply `undefined` here (a missing
+	// named import would be `undefined` too, never a compile error), and the microphone button keeps working without it.
+	import * as kit from "pipaya";
+	const { ext, app, getPane } = kit;
 
 	// `offline`: the app has no server connection (its input box is dimmed then), so there is nothing to type into.
 	let { offline = false } = $props();
@@ -199,75 +202,67 @@
 	}
 
 	// ── keyboard shortcut ───────────────────────────────────────────────────────────────────────────────────────────
-	// No default: the setting is empty until the user types a combination, and then nothing is listening at all. The
-	// listeners are on `window` in the capture-free bubble phase, after the app's own handler, so a combination the app
-	// already uses wins (the app calls preventDefault and this code steps aside).
-	const shortcut = $derived(parseShortcut(ext.settings?.shortcut));
+	// Registered through the app's own `shortcuts` API (needs the `shortcuts` permission, app 0.7.1 or newer): the app checks the
+	// combination against its own shortcuts (they win), ignores IME composition and key repeat, tells a release from a blur or a
+	// hidden tab, and lists the shortcut in Settings > Shortcuts. No default: while the setting is empty nothing is registered.
+	const COMBO = $derived(String(ext.settings?.shortcut ?? "").trim());
 	const mode = $derived(ext.settings?.shortcutMode === "hold" ? "hold" : "toggle");
-	const hint = $derived(shortcutLabel(shortcut, mode, lang));
+	const hint = $derived(shortcutHint(COMBO, mode, lang));
+	const pane_ = pane; // the component is mounted once per pane: only the focused pane's microphone answers the keys
 	let heldDownAt = 0; // when the hold key went down; 0 = not holding
 	let holdingStart = false; // the key is down and the recording is being started by it
 
-	function endHold(next = "send") {
+	// The keys came up (release, blur, hidden tab, shortcut recording in Settings, or the shortcut was removed). Whatever the
+	// reason, the recording ends here: short presses are thrown away, and a microphone that is still opening is closed.
+	function endHold() {
 		if (!heldDownAt) return;
 		const verdict = holdVerdict(heldDownAt, performance.now());
 		heldDownAt = 0;
 		holdingStart = false;
-		if (phase === "recording") stop(verdict === "send" && next === "send" ? "send" : "cancel");
-		else if (phase === "starting") { token++; phase = "idle"; } // released before the microphone opened: abandon it (begin() closes the stream when it arrives)
+		if (phase === "recording") stop(verdict === "send" ? "send" : "cancel");
+		else if (phase === "starting") { token++; phase = "idle"; } // begin() closes the stream when it arrives
 	}
 
-	function onKeyDown(e) {
-		if (!shortcut.ok || !shortcut.combo) return;
-		if (!shouldHandleKey(e, { recordingKey: app.prefs?.recordingKey })) return;
-		if (!matchesShortcut(shortcut, e)) return;
-		// The app handled this key first (one of its own shortcuts): it wins.
-		if (e.defaultPrevented) return;
-		e.preventDefault(); // Alt+letter must not type a character into the input box
-		if (e.repeat) return; // a held key repeats: only the first press counts
+	function onShortcut(event) {
+		if (!pane_.focused) return;
+		if (event?.phase === "up") return endHold();
 		if (mode === "hold") {
 			if (phase !== "idle") return;
 			heldDownAt = performance.now();
 			holdingStart = true;
 			void begin();
-		} else if (phase === "recording") stop();
-		else if (phase === "idle") void begin();
+		} else onclick(); // exactly what clicking the button does
 	}
 
-	function onKeyUp(e) {
-		if (mode !== "hold" || !heldDownAt) return;
-		if (releasesShortcut(shortcut, e) || releasesModifier(shortcut, e)) endHold();
-	}
-
-	// The window lost the keyboard (alt-tab, a dialog stole focus, the tab was hidden): the key-up will never arrive.
-	function onFocusLoss() { endHold("send"); }
-	function onHidden() { if (document.hidden) endHold("send"); }
-
-	$effect(() => {
-		// Registered only while a valid combination is set. Changing the setting re-runs this and swaps the listeners.
-		if (!shortcut.ok || !shortcut.combo) return;
-		window.addEventListener("keydown", onKeyDown);
-		window.addEventListener("keyup", onKeyUp);
-		window.addEventListener("blur", onFocusLoss);
-		document.addEventListener("visibilitychange", onHidden);
-		return () => {
-			window.removeEventListener("keydown", onKeyDown);
-			window.removeEventListener("keyup", onKeyUp);
-			window.removeEventListener("blur", onFocusLoss);
-			document.removeEventListener("visibilitychange", onHidden);
-			endHold("cancel"); // a held recording must not outlive its shortcut
-		};
+	// A notice writes the app's toast list (it reads it too): told from inside an effect it must not become a dependency of it.
+	// A bad or taken combination is told once per value, not again every time the effect runs.
+	let toldFor = "";
+	const tell = (key, params) => untrack(() => {
+		const id = `${key}:${COMBO}`;
+		if (toldFor === id) return;
+		toldFor = id;
+		say(key, params);
 	});
 
-	// A bad or taken combination is told once, when it is set, not on every key press.
-	let warnedFor = "";
 	$effect(() => {
-		const text = String(ext.settings?.shortcut ?? "").trim();
-		if (!text || text === warnedFor) return;
-		warnedFor = text;
-		if (!shortcut.ok) return void say("shortcutBad");
-		const taken = conflictsWithApp(shortcut, app.prefs?.bindings);
-		if (taken) say("shortcutConflict");
+		const parsed = parseShortcut(COMBO);
+		if (!parsed.combo && parsed.ok) return; // empty: no shortcut
+		if (!parsed.ok) return void tell("shortcutBad");
+		const combo = parsed.combo;
+		if (typeof kit.shortcuts?.register !== "function") return void tell("shortcutUnsupported"); // an app older than 0.7.1: the button still works
+		let off;
+		try {
+			const handlers = mode === "hold" ? { down: onShortcut, up: onShortcut } : { down: onShortcut };
+			// `register` reads and writes the app's list of shortcuts. Read inside this effect, that list would become one of its
+			// own dependencies and the effect would trigger itself without end, so the call is made untracked.
+			off = untrack(() => kit.shortcuts.register({ id: "dictate", label: tr("shortcutLabel"), combo }, handlers));
+		} catch (error) {
+			return void tell("shortcutRefused", { reason: shortcutReason(error) });
+		}
+		// An app shortcut on the same keys wins and this one would never fire: tell the user once.
+		const taken = conflictsWithApp(parsed, app.prefs?.bindings);
+		if (taken) tell("shortcutConflict");
+		return () => untrack(() => { off?.(); endHold(); }); // a held recording must not outlive its shortcut (and removing it writes the list too)
 	});
 
 	onDestroy(() => {

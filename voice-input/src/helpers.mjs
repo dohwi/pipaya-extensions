@@ -211,6 +211,11 @@ export const STRINGS = {
     needBaseShort: '주소 필요',
     shortcutBad: '단축키 형식이 올바르지 않습니다. Alt+M, Mod+Shift+K처럼 Ctrl(Mod)/Alt와 키 하나로 쓰세요.',
     shortcutBadShort: '단축키 오류',
+    shortcutUnsupported: '이 pipaya 버전에서는 단축키를 쓸 수 없습니다. pipaya 0.7.1 이상으로 올리세요. 마이크 버튼은 그대로 동작합니다.',
+    shortcutUnsupportedShort: '앱 업데이트 필요',
+    shortcutRefused: '단축키를 등록하지 못했습니다: {reason}',
+    shortcutRefusedShort: '단축키 거부됨',
+    shortcutLabel: '음성 입력',
     shortcutConflict: '이 단축키는 pipaya의 다른 기능이 이미 씁니다. 앱 단축키가 먼저 동작하니 다른 조합을 고르세요.',
     shortcutConflictShort: '단축키 충돌',
     modeToggle: '누르면 시작/다시 누르면 정지',
@@ -267,6 +272,11 @@ export const STRINGS = {
     needBaseShort: 'Address needed',
     shortcutBad: 'The shortcut is not valid. Use Ctrl (Mod) or Alt plus one key, for example Alt+M or Mod+Shift+K.',
     shortcutBadShort: 'Bad shortcut',
+    shortcutUnsupported: 'This version of pipaya has no extension shortcuts. Update pipaya to 0.7.1 or newer. The microphone button still works.',
+    shortcutUnsupportedShort: 'Update pipaya',
+    shortcutRefused: 'The shortcut could not be registered: {reason}',
+    shortcutRefusedShort: 'Shortcut refused',
+    shortcutLabel: 'Dictate',
     shortcutConflict: 'pipaya already uses this shortcut for something else, and the app wins. Choose another combination.',
     shortcutConflictShort: 'Shortcut taken',
     modeToggle: 'press to start, press again to stop',
@@ -320,28 +330,25 @@ export function message(lang, key, params = {}) {
 }
 
 // ── keyboard shortcut ──────────────────────────────────────────────────────────────────────────────────────────────
-// The combo is typed as text, in the same notation as pipaya's own shortcuts: modifiers `Mod` (Ctrl, or ⌘ on macOS),
-// `Alt`, `Shift`, then exactly one key: `Alt+M`, `Mod+Shift+K`, `Alt+Space`, `F9`. There is no default: empty = none.
-// Keys are matched on KeyboardEvent.code, so they do not depend on the layout, on a Korean IME state, or on what Alt
-// turns a letter into on macOS.
+// The combo is typed as text in pipaya's own notation: modifiers `Mod` (Ctrl, or ⌘ on macOS), `Alt`, `Shift`, then exactly one
+// key: `Alt+M`, `Mod+Shift+K`, `Alt+Space`. There is no default: empty = none. The app (`shortcuts.register`) does the work of
+// listening: it ignores IME composition and key repeat, lets its own shortcuts win, and tells a release from a blur. This
+// only turns what was typed into the canonical form the app wants, and refuses what the app would refuse, so that one rule
+// is shown to the user: the app needs Ctrl/⌘ or Alt plus one key (a lone F-key is refused too). A few keys the app keeps
+// for itself (Esc, Enter, Tab, Backspace) are refused as well.
 export const SHORTCUT_MIN_HOLD_MS = 300;
 const NAMED_KEYS = new Set(['Space', 'Enter', 'Tab', 'Backspace', 'Escape', 'Minus', 'Equal', 'Comma', 'Period', 'Slash', 'Backslash', 'Semicolon', 'Quote', 'Backquote', 'BracketLeft', 'BracketRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown', 'Insert', 'Delete']);
 const MOD_NAMES = ['Mod', 'Alt', 'Shift'];
-
-export function keyNameOf(code) {
-  const c = String(code ?? '');
-  return c.startsWith('Key') ? c.slice(3) : c.startsWith('Digit') ? c.slice(5) : c;
-}
 
 function isKeyName(k) {
   return /^[A-Z]$/.test(k) || /^[0-9]$/.test(k) || /^F([1-9]|1[0-9]|2[0-4])$/.test(k) || NAMED_KEYS.has(k);
 }
 
-// -> { ok: true, combo, mods: {mod, alt, shift}, key } | { ok: false, reason }.  Empty text is `{ ok: true, combo: '' }`.
+// -> { ok: true, combo } | { ok: false, reason }.  Empty text is `{ ok: true, combo: '' }`.  `combo` is canonical (Mod, Alt, Shift, key).
 // reason: format | needMod | oneKey | badKey | reserved
 export function parseShortcut(text) {
   const raw = String(text ?? '').trim();
-  if (!raw) return { ok: true, combo: '', mods: null, key: '' };
+  if (!raw) return { ok: true, combo: '' };
   const parts = raw.split('+').map((p) => p.trim());
   if (parts.some((p) => !p)) return { ok: false, reason: 'format' };
   const fixCase = (p) => (/^(mod|ctrl|control|cmd|command|meta)$/i.test(p) ? 'Mod' : /^(alt|option|opt)$/i.test(p) ? 'Alt' : /^shift$/i.test(p) ? 'Shift' : p);
@@ -351,44 +358,18 @@ export function parseShortcut(text) {
   if (new Set(mods).size !== mods.length) return { ok: false, reason: 'format' };
   if (keys.length !== 1) return { ok: false, reason: keys.length ? 'oneKey' : 'format' };
   let key = keys[0];
-  if (/^[a-z]$/.test(key)) key = key.toUpperCase();
-  else if (/^f\d{1,2}$/i.test(key)) key = key.toUpperCase();
+  if (/^[a-z]$/.test(key) || /^f\d{1,2}$/i.test(key)) key = key.toUpperCase();
   else if (!/^[A-Z0-9]$/.test(key)) key = NAMED_KEYS.has(key) ? key : [...NAMED_KEYS].find((n) => n.toLowerCase() === key.toLowerCase()) ?? key;
   if (!isKeyName(key)) return { ok: false, reason: 'badKey' };
   const flags = { mod: mods.includes('Mod'), alt: mods.includes('Alt'), shift: mods.includes('Shift') };
-  // A bare letter (or Shift+letter) would be typed into the input box, so a combo needs Ctrl/⌘ or Alt, like the app's own
-  // extension shortcuts. F-keys type nothing and may stand alone.
-  const isF = /^F\d{1,2}$/.test(key);
-  if (!isF && !flags.mod && !flags.alt) return { ok: false, reason: 'needMod' };
-  // Keys the app and the browser keep for themselves.
+  // The app refuses a combination without Ctrl/⌘ or Alt (it would type into the input box), F-keys included.
+  if (!flags.mod && !flags.alt) return { ok: false, reason: 'needMod' };
   if (key === 'Escape' || key === 'Enter' || key === 'Tab' || key === 'Backspace') return { ok: false, reason: 'reserved' };
-  const canon = [flags.mod && 'Mod', flags.alt && 'Alt', flags.shift && 'Shift', key].filter(Boolean).join('+');
-  return { ok: true, combo: canon, mods: flags, key };
-}
-
-// Does this keyboard event press exactly that combo? `e` needs `code`, ctrlKey, metaKey, altKey, shiftKey.
-export function matchesShortcut(parsed, e) {
-  if (!parsed?.ok || !parsed.combo) return false;
-  if (keyNameOf(e.code) !== parsed.key) return false;
-  const mod = !!(e.ctrlKey || e.metaKey);
-  return mod === parsed.mods.mod && !!e.altKey === parsed.mods.alt && !!e.shiftKey === parsed.mods.shift;
-}
-
-// Is it the release of the shortcut's key (modifiers may already be up)?
-export function releasesShortcut(parsed, e) {
-  return !!parsed?.ok && !!parsed.combo && keyNameOf(e.code) === parsed.key;
-}
-
-// A release of a modifier that is part of the combo also ends a held shortcut.
-export function releasesModifier(parsed, e) {
-  if (!parsed?.ok || !parsed.mods) return false;
-  const k = String(e.key ?? '');
-  return (parsed.mods.mod && (k === 'Control' || k === 'Meta')) || (parsed.mods.alt && k === 'Alt') || (parsed.mods.shift && k === 'Shift');
+  return { ok: true, combo: [flags.mod && 'Mod', flags.alt && 'Alt', flags.shift && 'Shift', key].filter(Boolean).join('+') };
 }
 
 // `bindings` is the app's own shortcut table ({ actionId: combo }), read from `app.prefs.bindings`. The app's shortcuts win
-// over this one, so a combo it already uses is reported: the extension keeps listening but the app acts first only for
-// combos it handles itself, so tell the user. Order of keys inside a combo does not matter to the app for held keys.
+// over this one, so a combo it already uses is reported (the app also lists the clash in Settings > Shortcuts).
 export function conflictsWithApp(parsed, bindings) {
   if (!parsed?.ok || !parsed.combo) return '';
   const want = parsed.combo;
@@ -403,18 +384,20 @@ export function conflictsWithApp(parsed, bindings) {
   return '';
 }
 
-// Where a key event comes from, to decide what the extension may do with it. IME composition is never touched.
-export function shouldHandleKey(e, { recordingKey = false } = {}) {
-  if (e.isComposing || e.keyCode === 229) return false;
-  if (recordingKey) return false;
-  return true;
-}
-
 export function shortcutLabel(parsed, mode, lang) {
   if (!parsed?.ok || !parsed.combo) return '';
   const names = { Mod: /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? '') ? '⌘' : 'Ctrl' };
   const text = parsed.combo.split('+').map((p) => names[p] ?? p).join('+');
   return `${text} · ${message(lang, mode === 'hold' ? 'modeHold' : 'modeToggle')}`;
+}
+
+// The tooltip text for what the user typed (nothing for an empty or invalid combination).
+export const shortcutHint = (text, mode, lang) => shortcutLabel(parseShortcut(text), mode, lang);
+
+// The app's own refusal text (for example "another extension already uses this shortcut"), short enough for a notice.
+export function shortcutReason(error) {
+  const text = String(error?.message ?? error ?? '').replace(/\s+/g, ' ').trim();
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
 }
 
 // ── hold-to-talk bookkeeping ───────────────────────────────────────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ test('package is a single ui-components extension with no worker code', () => {
   assert.equal(pkg.manifest.version, pkg.manifest.version.match(/^\d+\.\d+\.\d+$/)?.[0]);
   assert.equal(pkg.manifest.id, 'voice-input');
   assert.equal(pkg.manifest.sdkVersion, 1);
-  assert.deepEqual(pkg.manifest.permissions, ['ui-components'], 'least privilege: no http, storage or composer permission');
+  assert.deepEqual(pkg.manifest.permissions, ['ui-components', 'shortcuts'], 'least privilege: the microphone button and the app\'s shortcut API, no http, storage or composer permission');
   assert.equal(pkg.code, undefined);
   assert.equal(pkg.mounts, undefined, 'no second button: the microphone is drawn only by the replaced send part');
   assert.deepEqual(pkg.replaces, { 'composer.send': 'VoiceSend' });
@@ -36,7 +36,7 @@ test('settings: no built-in address, required origin and secret key, standard de
   assert.ok(!('default' in byKey.model) && !byKey.model.required, 'no service-specific model is assumed');
   assert.equal(byKey.language.default, 'ko');
   assert.equal(pkg.manifest.settingsScope, 'local');
-  assert.equal(pkg.manifest.version, '0.3.1');
+  assert.equal(pkg.manifest.version, '0.4.0');
 });
 
 test('component hard-codes no service route', () => {
@@ -48,6 +48,7 @@ test('component hard-codes no service route', () => {
 test('component imports only what the host allows and inlines the helpers', () => {
   const imports = [...source.matchAll(/^\s*import .* from ["']([^"']+)["']/gm)].map((m) => m[1]);
   assert.deepEqual(imports.sort(), ['pipaya', 'svelte']);
+  assert.ok(/import \* as kit from "pipaya"/.test(source), 'the kit is read as a namespace, so an app without `shortcuts` does not break the button');
   assert.ok(!source.includes('/* @helpers */'));
   assert.match(source, /function transcribe\(|async function transcribe\(/);
   assert.ok(!/^\s*export /m.test(source.replace(/<style[\s\S]*<\/style>/, '')), 'no leftover exports');
@@ -124,37 +125,36 @@ test('shortcut settings: no default combination, toggle is the default mode, bot
   assert.equal(byKey.shortcutMode.default, 'toggle');
   assert.deepEqual(byKey.shortcutMode.options.map((o) => o.value), ['toggle', 'hold']);
   assert.ok(pkg.manifest.settings.length <= 20);
-  assert.deepEqual(pkg.manifest.permissions, ['ui-components'], 'no `shortcuts` permission: the component listens itself');
 });
 
-test('shortcut wiring: listeners only for a set combination, all removed on teardown, app wins, no repeat', () => {
-  const code = source.replace(/<style[\s\S]*<\/style>/, '');
-  const effect = code.slice(code.indexOf('$effect(() => {\n\t\t// Registered only while'), code.indexOf('// A bad or taken combination'));
-  assert.match(effect, /if \(!shortcut\.ok \|\| !shortcut\.combo\) return;/, 'empty = nothing registered');
-  for (const type of ['keydown', 'keyup', 'blur']) {
-    assert.match(effect, new RegExp(`window\\.addEventListener\\("${type}"`), `adds ${type}`);
-    assert.match(effect, new RegExp(`window\\.removeEventListener\\("${type}"`), `removes ${type}`);
-  }
-  assert.match(effect, /document\.addEventListener\("visibilitychange"/);
-  assert.match(effect, /document\.removeEventListener\("visibilitychange"/);
-  assert.match(effect, /endHold\("cancel"\)/, 'a held recording does not outlive its shortcut');
-  const down = code.slice(code.indexOf('function onKeyDown'), code.indexOf('function onKeyUp'));
-  assert.ok(down.indexOf('shouldHandleKey') < down.indexOf('matchesShortcut'), 'IME check first');
-  assert.ok(down.indexOf('defaultPrevented') < down.indexOf('preventDefault()'), 'the app\'s own shortcut wins');
-  assert.match(down, /if \(e\.repeat\) return;/);
-  assert.match(down, /phase === "recording"\) stop\(\)/, 'toggle uses the same stop() as the button');
-  assert.match(down, /void begin\(\)/, 'and the same begin()');
-  assert.ok(!/requestSubmit|submit\(/.test(down), 'a shortcut only records, it never sends');
+test('shortcut wiring: the app\'s shortcut API only, registered for a set combination, removed on teardown', () => {
+  const code = source.replace(/<style[\s\S]*<\/style>/, '').replace(/<script module>[\s\S]*?<\/script>/, '');
+  assert.ok(!/addEventListener|removeEventListener|onkeydown|onkeyup|visibilitychange|isComposing|defaultPrevented/.test(code.replace(/\/\/.*$/gm, '')), 'no key listeners of its own: the app does that');
+  const effect = code.slice(code.indexOf('$effect(() => {\n\t\tconst parsed'), code.indexOf('onDestroy(() => {'));
+  assert.match(effect, /if \(!parsed\.combo && parsed\.ok\) return;/, 'empty = nothing registered');
+  assert.match(effect, /typeof kit\.shortcuts\?\.register !== "function"\) return void tell\("shortcutUnsupported"\)/, 'an app without the API: say so, keep the button');
+  assert.match(effect, /mode === "hold" \? \{ down: onShortcut, up: onShortcut \} : \{ down: onShortcut \}/, 'toggle registers down only, hold registers down and up');
+  assert.match(effect, /return \(\) => untrack\(\(\) => \{ off\?\.\(\); endHold\(\); \}\)/, 'the cleanup removes the shortcut and ends a held recording, untracked');
+  assert.match(effect, /off = untrack\(\(\) => kit\.shortcuts\.register\(/, 'register reads and writes the app\'s shortcut list: untracked, or the effect would trigger itself');
+  assert.match(effect, /catch \(error\) \{\s*return void tell\("shortcutRefused"/, 'the app\'s refusal is shown');
+  assert.match(effect, /conflictsWithApp\(parsed, app\.prefs\?\.bindings\)/);
+  assert.ok(!/\bsay\(/.test(effect), 'notices go through `tell` (untracked): `say` writes the app\'s toast list, and inside an effect that would loop forever');
+  assert.match(code, /const tell = \(key, params\) => untrack\(\(\) => \{[\s\S]*?toldFor === id\) return;[\s\S]*?say\(key, params\);/, 'each notice is told once per value');
+  const handler = code.slice(code.indexOf('function onShortcut'), code.indexOf('$effect(() => {\n\t\tconst parsed'));
+  assert.match(handler, /if \(!pane_\.focused\) return;/, 'only the focused pane answers');
+  assert.match(handler, /event\?\.phase === "up"\) return endHold\(\)/);
+  assert.match(handler, /else onclick\(\); \/\/ exactly what clicking the button does/, 'toggle is the button\'s own handler');
+  assert.ok(!/requestSubmit|submit\(/.test(handler), 'a shortcut only records, it never sends');
 });
 
-test('hold stops the recording on key-up, blur and a hidden tab, and short taps are cancelled', () => {
+test('hold ends on every kind of `up`: short taps are cancelled and a microphone still opening is closed', () => {
   const code = source.replace(/<style[\s\S]*<\/style>/, '');
-  assert.match(code, /function endHold\(next = "send"\)/);
-  assert.match(code, /holdVerdict\(heldDownAt, performance\.now\(\)\)/);
-  assert.match(code, /stop\(verdict === "send" && next === "send" \? "send" : "cancel"\)/);
-  assert.match(code, /function onFocusLoss\(\) \{ endHold\("send"\); \}/);
-  assert.match(code, /if \(document\.hidden\) endHold\("send"\)/);
-  assert.match(code, /releasesShortcut\(shortcut, e\) \|\| releasesModifier\(shortcut, e\)/);
+  const end = code.slice(code.indexOf('function endHold()'), code.indexOf('function onShortcut'));
+  assert.match(end, /holdVerdict\(heldDownAt, performance\.now\(\)\)/);
+  assert.match(end, /stop\(verdict === "send" \? "send" : "cancel"\)/);
+  assert.match(end, /phase === "starting"\) \{ token\+\+; phase = "idle"; \}/);
+  assert.ok(!/reason/.test(end), 'every reason (release, blur, hidden, recording, removed) ends it the same way');
+  assert.match(code, /if \(holdingStart && !heldDownAt\) \{ for \(const track of media\.getTracks\(\)\) track\.stop\(\); reset\(\); return; \}/, 'the stream is closed when the key already came up');
 });
 
 test('the tooltip shows the shortcut, the accessible name stays the plain action', () => {
