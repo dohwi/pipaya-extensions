@@ -31,7 +31,9 @@ export function gaugesFromSnapshot(snapshot) {
     // The server owns fleet aggregation. Missing values never fall back to account windows.
     const remaining = typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
     const usable = group.filter(account => account.operational?.disabled !== true && account.status !== 'disabled' && account.operational?.status !== 'disabled');
-    const stale = usable.some(account => account.stale === true || account.status === 'error' || account.status === 'stale');
+    const isStale = account => account.stale === true || account.status === 'error' || account.status === 'stale';
+    // One broken account is not worth a warning while another one still reports; flag only when every usable account is stale.
+    const stale = usable.length > 0 && usable.every(isStale);
     const times = usable.map(observedAt).filter(time => time !== null);
     const updatedAt = times.length ? Math.max(...times) : null;
     const hint = [remaining === null ? t('unknownRemaining') : '', stale ? t('staleObservation') : ''].filter(Boolean).join(' · ');

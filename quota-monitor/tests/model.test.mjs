@@ -42,6 +42,13 @@ test('GPT gauge is omitted entirely when there is no GPT account', () => {
   assert.ok(!view.gauges.some(g => g.id === 'gpt'));
 });
 
+test('one stale account does not flag the gauge while another account is healthy', () => {
+  const accounts = [account('claude', [win('weekly', 44)], { status: 'stale' }), account('claude', [win('weekly', 10)])];
+  const view = gaugesFromSnapshot(snapshot(accounts, [fleet('claude', 98)]));
+  assert.equal(view.gauges[0].stale, false);
+  assert.doesNotMatch(view.gauges[0].hint, /이전 관측값/);
+});
+
 test('stale snapshots and accounts retain upstream readings', () => {
   const accounts = [account('claude', [win('weekly', 44)], { status: 'stale' })];
   const view = gaugesFromSnapshot(snapshot(accounts, [fleet('claude', 71)]));
