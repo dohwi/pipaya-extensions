@@ -37,6 +37,7 @@
 
 	const busy = $derived(phase === "starting" || phase === "transcribing");
 	// While recording or working the button must stay usable to stop; only an idle button is blocked offline.
+	const insecure = typeof window !== "undefined" && !window.isSecureContext;
 	const blocked = $derived(busy || (offline && phase === "idle"));
 
 	function say(key, params) {
@@ -65,8 +66,11 @@
 	async function begin() {
 		clearNotice();
 		const settings = ext.settings ?? {};
-		if (!originOf(settings.apiBase)) {
-			say("needBase");
+		// The page must be a secure context before anything else: without it the microphone cannot start at all.
+		if (!window.isSecureContext) return say("insecure");
+		const base = checkBase(settings.apiBase, location.protocol);
+		if (base.problem) {
+			say(base.problem);
 			app.openSettings?.("extensions");
 			return;
 		}
@@ -82,7 +86,6 @@
 			return;
 		}
 		if (key === rejectedKey) return say("badKey", { status: 401 });
-		if (!window.isSecureContext) return say("insecure");
 		if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") return say("unsupported");
 
 		const mine = ++token;
@@ -149,6 +152,7 @@
 				fetchImpl: (url, init) => fetch(url, init),
 				apiBase: base,
 				transcribePath: settings.transcribePath,
+				pageProtocol: location.protocol,
 				apiKey: key,
 				model: settings.model,
 				language: settings.language,
@@ -164,7 +168,7 @@
 			const kind = error?.kind ?? "network";
 			if (kind === "aborted") return;
 			if (kind === "badKey") rejectedKey = key;
-			if (kind === "needBase" || kind === "badPath") app.openSettings?.("extensions");
+			if (kind === "needBase" || kind === "needHttps" || kind === "badPath") app.openSettings?.("extensions");
 			say(kind, { status: error?.status ?? "", host: hostOf(base), sec: Math.round(UPLOAD_TIMEOUT_MS / 1000) });
 		} finally {
 			upload = null;
@@ -202,7 +206,7 @@
 		release();
 	});
 
-	const label = $derived(phase === "recording" ? tr("recording") : phase === "transcribing" ? tr("transcribing") : tr("idle"));
+	const label = $derived(insecure && phase === "idle" ? tr("insecure") : phase === "recording" ? tr("recording") : phase === "transcribing" ? tr("transcribing") : tr("idle"));
 </script>
 
 <div class="vi" bind:this={root} data-state={phase}>
@@ -224,6 +228,8 @@
 		class="iconbtn mic"
 		class:rec={phase === "recording"}
 		class:err={!!notice && phase === "idle"}
+		class:unavailable={insecure}
+		aria-disabled={insecure || undefined}
 		aria-label={label}
 		aria-pressed={phase === "recording"}
 		title={label}
@@ -248,6 +254,8 @@
 	.mic { flex: none; }
 	.mic.rec { color: var(--danger); background: var(--danger-soft); }
 	.mic.err { color: var(--danger); }
+	/* Not a real disabled state: the button stays clickable so that pressing it explains why it cannot record. */
+	.mic.unavailable { opacity: 0.5; }
 	.mic:disabled { opacity: 0.7; cursor: default; }
 	.mic .solid { fill: currentColor; stroke: currentColor; }
 	.spin { animation: vi-spin 0.9s linear infinite; }

@@ -46,16 +46,48 @@ export function joinDraft(current, addition) {
   return cur.trim() ? `${cur.replace(/\s+$/, '')} ${add}` : add;
 }
 
-// There is no default address: the user enters their own. Returns the bare http(s) origin, or '' when the
-// setting is empty or not an origin (no path, query, credentials), so nothing is ever sent to a guessed place.
-export function originOf(apiBase) {
-  const text = String(apiBase ?? '').trim();
-  if (!text) return '';
+// The extension talks only to the transcription server (`apiBase`), never to the pipaya server. HTTPS matters in two
+// places, and only there:
+//  1. The microphone (`getUserMedia`) needs the page to be a secure context (checked by the component).
+//  2. A page opened over https cannot call an `http://` server (mixed content), so on such a page a plain-http address is
+//     refused. The exception is a loopback host (localhost, 127.0.0.1, [::1]): browsers treat these as trustworthy and let
+//     an https page call them, which is what a Whisper server on the same machine needs. Private-network addresses are not
+//     an exception here (see README).
+// On a page that is not https (an http page, or localhost) a plain-http address is fine.
+export function isLoopbackHost(hostname) {
+  const h = String(hostname ?? '').toLowerCase();
+  return h === 'localhost' || h.endsWith('.localhost') || h === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(h);
+}
+
+// An address typed without a scheme (`api.example.com`, `localhost:8000`) is read as https://. The stored value is not
+// changed; only the reading is. Anything that already has a scheme is left alone.
+export function withScheme(text) {
+  const t = String(text ?? '').trim();
+  if (!t || /^[a-z][a-z0-9+.-]*:\/\//i.test(t)) return t;
+  // `host:port` also looks like `scheme:path`, so only a `scheme://` counts as a scheme here; other `x:y` forms fall through
+  // to URL() below and are rejected as malformed.
+  if (/^[a-z][a-z0-9+.-]*:(?!\d+(?:\/|$))/i.test(t)) return t;
+  return `https://${t}`;
+}
+
+// Splits what the user typed into { origin, problem }. `problem` is '' (fine), 'needBase' (empty or not an origin:
+// path, query, credentials, other scheme) or 'needHttps' (a well-formed http:// address, on an https page, that is not
+// loopback). `pageProtocol` is `location.protocol` of the page ('https:' / 'http:' / ...); when it is left out the
+// strict reading is used, as if the page were https. A missing scheme means https (see withScheme).
+export function checkBase(apiBase, pageProtocol = 'https:') {
+  const text = withScheme(apiBase);
+  if (!text) return { origin: '', problem: 'needBase' };
   let url;
-  try { url = new URL(text); } catch { return ''; }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') return '';
-  if (url.username || url.password || url.search || url.hash || !/^\/*$/.test(url.pathname)) return '';
-  return url.origin;
+  try { url = new URL(text); } catch { return { origin: '', problem: 'needBase' }; }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return { origin: '', problem: 'needBase' };
+  if (url.username || url.password || url.search || url.hash || !/^\/*$/.test(url.pathname)) return { origin: '', problem: 'needBase' };
+  if (url.protocol === 'http:' && pageProtocol === 'https:' && !isLoopbackHost(url.hostname)) return { origin: '', problem: 'needHttps' };
+  return { origin: url.origin, problem: '' };
+}
+
+// The bare origin to send to, or '' when the setting must not be used (see checkBase).
+export function originOf(apiBase, pageProtocol = 'https:') {
+  return checkBase(apiBase, pageProtocol).origin;
 }
 
 // The standard OpenAI-style route. It is only the default of the `transcribePath` setting; servers that mount
@@ -73,8 +105,8 @@ export function pathOf(transcribePath) {
 }
 
 // origin + path, or '' when either part is not acceptable (then nothing is sent).
-export function endpoint(apiBase, transcribePath) {
-  const origin = originOf(apiBase);
+export function endpoint(apiBase, transcribePath, pageProtocol = 'https:') {
+  const origin = originOf(apiBase, pageProtocol);
   const path = pathOf(transcribePath);
   if (!origin || !path) return '';
   try { if (new URL(origin + path).origin !== origin) return ''; } catch { return ''; }
@@ -106,9 +138,10 @@ export class VoiceError extends Error {
 }
 
 // One upload. The key goes only into the Authorization header and never into a message or log.
-// Throws VoiceError(kind) with kind in needBase | badPath | notFound | aborted | timeout | network | badKey | rateLimited | tooBig | serverError | badResponse | empty.
-export async function transcribe({ fetchImpl, apiBase, transcribePath, apiKey, model, language, blob, timeoutMs = UPLOAD_TIMEOUT_MS, signal }) {
-  if (!originOf(apiBase)) throw new VoiceError('needBase');
+// Throws VoiceError(kind) with kind in needBase | needHttps | badPath | notFound | aborted | timeout | network | badKey | rateLimited | tooBig | serverError | badResponse | empty.
+export async function transcribe({ fetchImpl, apiBase, transcribePath, pageProtocol = 'https:', apiKey, model, language, blob, timeoutMs = UPLOAD_TIMEOUT_MS, signal }) {
+  const base = checkBase(apiBase, pageProtocol);
+  if (base.problem) throw new VoiceError(base.problem);
   if (!pathOf(transcribePath)) throw new VoiceError('badPath');
   const control = new AbortController();
   let timedOut = false;
@@ -118,7 +151,7 @@ export async function transcribe({ fetchImpl, apiBase, transcribePath, apiKey, m
   try {
     let response;
     try {
-      response = await fetchImpl(endpoint(apiBase, transcribePath), {
+      response = await fetchImpl(endpoint(apiBase, transcribePath, pageProtocol), {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}` },
         body: buildForm(blob, { model, language }),
@@ -170,6 +203,8 @@ export const STRINGS = {
     errorShort: '오류',
     needBase: '설정에서 서버 주소를 입력하세요(예: https://서버 주소).',
     needBaseShort: '주소 필요',
+    needHttps: 'https 화면에서는 http 주소를 쓸 수 없습니다(브라우저가 차단). https 주소를 쓰세요. 같은 컴퓨터의 localhost는 http도 됩니다.',
+    needHttpsShort: 'https 주소 필요',
     badPath: '전사 경로가 올바르지 않습니다. /로 시작하는 경로만 쓸 수 있습니다(예: /v1/audio/transcriptions).',
     badPathShort: '경로 오류',
     needKey: 'API 키가 없습니다. 확장 설정에서 키를 입력하세요.',
@@ -184,8 +219,8 @@ export const STRINGS = {
     micBusyShort: '마이크 사용 불가',
     micFailed: '마이크를 시작하지 못했습니다.',
     micFailedShort: '마이크 오류',
-    insecure: '마이크는 HTTPS 주소에서만 켤 수 있습니다. https:// 로 접속하세요.',
-    insecureShort: 'HTTPS 필요',
+    insecure: '마이크는 HTTPS 화면에서만 켜집니다. pipaya를 https 주소로 여세요.',
+    insecureShort: 'HTTPS 화면 필요',
     unsupported: '이 브라우저는 녹음을 지원하지 않습니다.',
     unsupportedShort: '녹음 미지원',
     network: '{host}에 연결할 수 없습니다. 네트워크와 확장 설정의 서버 주소를 확인하세요.',
@@ -218,6 +253,8 @@ export const STRINGS = {
     errorShort: 'Error',
     needBase: 'Enter the server address in the extension settings (for example https://your-server).',
     needBaseShort: 'Address needed',
+    needHttps: 'An http address cannot be used from an https page (the browser blocks it). Use an https address. localhost on this same computer may use http.',
+    needHttpsShort: 'Use https',
     badPath: 'The transcription path is not valid. Use a path starting with / (for example /v1/audio/transcriptions).',
     badPathShort: 'Bad path',
     needKey: 'The API key is not set. Enter it in the extension settings.',
@@ -232,7 +269,7 @@ export const STRINGS = {
     micBusyShort: 'Mic unavailable',
     micFailed: 'Could not start the microphone.',
     micFailedShort: 'Mic error',
-    insecure: 'The microphone works only on an HTTPS address. Open pipaya with https://.',
+    insecure: 'The microphone works only on an HTTPS page. Open pipaya at an https address.',
     insecureShort: 'HTTPS needed',
     unsupported: 'This browser cannot record audio.',
     unsupportedShort: 'Unsupported',

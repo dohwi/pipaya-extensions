@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  pickMimeType, extensionFor, formatTime, joinDraft, endpoint, originOf, pathOf, DEFAULT_TRANSCRIBE_PATH, buildForm, micErrorKind, httpErrorKind,
+  pickMimeType, extensionFor, formatTime, joinDraft, endpoint, originOf, checkBase, withScheme, isLoopbackHost, pathOf, DEFAULT_TRANSCRIBE_PATH, buildForm, micErrorKind, httpErrorKind,
   transcribe, VoiceError, message, STRINGS
 } from '../src/helpers.mjs';
 
@@ -38,7 +38,8 @@ test('transcript is appended after the draft and never replaces it', () => {
 test('endpoint is origin + path; the path defaults to the OpenAI route', () => {
   assert.equal(DEFAULT_TRANSCRIBE_PATH, '/v1/audio/transcriptions');
   assert.equal(endpoint('https://ai.example///'), 'https://ai.example/v1/audio/transcriptions');
-  assert.equal(endpoint(' http://host:8317 ', ''), 'http://host:8317/v1/audio/transcriptions');
+  assert.equal(endpoint(' https://host:8317 ', ''), 'https://host:8317/v1/audio/transcriptions');
+  assert.equal(endpoint('http://host:8317', ''), '', 'plain http to a non-loopback host is refused');
   assert.equal(endpoint('https://ai.example', '/openai/v1/audio/transcriptions'), 'https://ai.example/openai/v1/audio/transcriptions');
   assert.equal(endpoint('https://ai.example', '/custom/route'), 'https://ai.example/custom/route');
   assert.equal(endpoint('', '/v1/x'), '');
@@ -54,14 +55,67 @@ test('the transcription path accepts only a plain path', () => {
 });
 
 test('an empty or malformed address is rejected, there is no default', () => {
-  for (const bad of ['', '   ', undefined, null, 'ai.example', 'ftp://ai.example', 'https://ai.example/path', 'https://user:pw@ai.example', 'https://ai.example?x=1', 'javascript:alert(1)']) assert.equal(originOf(bad), '', String(bad));
+  for (const bad of ['', '   ', undefined, null, 'ftp://ai.example', 'https://ai.example/path', 'https://user:pw@ai.example', 'https://ai.example?x=1', 'https://ai.example#f', 'javascript:alert(1)', 'https://', 'a b']) {
+    assert.equal(originOf(bad), '', String(bad));
+    assert.equal(checkBase(bad).problem, 'needBase', String(bad));
+  }
   assert.equal(originOf('https://ai.example/'), 'https://ai.example');
+});
+
+test('on an https page a plain-http address is refused (the browser would block it as mixed content)', () => {
+  for (const http of ['http://ai.example', 'http://ai.example:8317', 'http://192.168.7.9:8000', 'http://100.64.0.1', 'http://10.1.1.2', 'http://my-nas.local', 'HTTP://AI.EXAMPLE']) {
+    assert.deepEqual(checkBase(http, 'https:'), { origin: '', problem: 'needHttps' }, http);
+    assert.deepEqual(checkBase(http), { origin: '', problem: 'needHttps' }, 'no page given = the strict reading');
+    assert.equal(originOf(http, 'https:'), '', http);
+    assert.equal(endpoint(http, '', 'https:'), '', http);
+  }
+  assert.equal(checkBase('https://ai.example', 'https:').origin, 'https://ai.example');
+  assert.equal(checkBase('https://ai.example:8443/', 'https:').origin, 'https://ai.example:8443');
+});
+
+test('on a page that is not https a plain-http address is fine (nothing mixes)', () => {
+  for (const page of ['http:', 'file:', 'tauri:', 'app:']) {
+    for (const http of ['http://ai.example', 'http://192.168.7.9:8000', 'http://10.1.1.2', 'http://my-nas.local:9000', 'http://localhost:8000']) {
+      assert.equal(checkBase(http, page).problem, '', `${page} ${http}`);
+      assert.equal(checkBase(http, page).origin, new URL(http).origin);
+    }
+    assert.equal(endpoint('http://192.168.7.9:8000', '', page), 'http://192.168.7.9:8000/v1/audio/transcriptions');
+    assert.equal(checkBase('https://ai.example', page).origin, 'https://ai.example');
+  }
+  // other problems are still problems on any page
+  assert.equal(checkBase('http://ai.example/path', 'http:').problem, 'needBase');
+  assert.equal(checkBase('', 'http:').problem, 'needBase');
+});
+
+test('an address without a scheme is read as https, the stored text is not changed', () => {
+  assert.equal(withScheme('api.example.com'), 'https://api.example.com');
+  assert.equal(withScheme('  api.example.com:8443 '), 'https://api.example.com:8443');
+  assert.equal(withScheme('localhost:8000'), 'https://localhost:8000', 'a host:port is a host, not a scheme');
+  assert.equal(withScheme('http://x.example'), 'http://x.example');
+  assert.equal(withScheme(''), '');
+  assert.equal(checkBase('api.example.com').origin, 'https://api.example.com');
+  assert.equal(checkBase('api.example.com:8443').origin, 'https://api.example.com:8443');
+  assert.equal(endpoint('api.example.com', '/v1/audio/transcriptions'), 'https://api.example.com/v1/audio/transcriptions');
+  assert.equal(checkBase('api.example.com/v1').problem, 'needBase', 'a path is still refused');
+  assert.equal(checkBase('mailto:me@example.com').problem, 'needBase');
+});
+
+test('loopback http is allowed even on an https page; other private addresses are not', () => {
+  for (const ok of ['http://localhost:8000', 'http://127.0.0.1:8000', 'http://127.1.2.3', 'http://[::1]:9000', 'http://app.localhost:80']) assert.ok(checkBase(ok, 'https:').origin, ok);
+  assert.equal(checkBase('http://localhost:8000', 'https:').origin, 'http://localhost:8000');
+  assert.equal(checkBase('http://[::1]:9000', 'https:').origin, 'http://[::1]:9000');
+  for (const no of ['http://127.0.0.1.example.com', 'http://localhost.example.com', 'http://0.0.0.0:8000', 'http://192.168.1.1', 'http://10.1.2.3', 'http://[fe80::1]', 'http://localhostx']) assert.equal(checkBase(no, 'https:').problem, 'needHttps', no);
+  assert.ok(isLoopbackHost('LOCALHOST') && !isLoopbackHost('') && !isLoopbackHost(undefined));
 });
 
 test('no request is made without a valid address or path', async () => {
   let calls = 0;
   const fetchImpl = async () => { calls++; return reply(200, { text: 'x' }); };
-  for (const apiBase of ['', 'nonsense', 'https://ai.example/x']) await assert.rejects(run(fetchImpl, { apiBase }), { kind: 'needBase' });
+  for (const apiBase of ['', 'ftp://ai.example', 'https://ai.example/x']) await assert.rejects(run(fetchImpl, { apiBase }), { kind: 'needBase' });
+  for (const apiBase of ['http://ai.example', 'http://192.168.7.9:8000', 'http://10.1.1.2']) {
+    await assert.rejects(run(fetchImpl, { apiBase, pageProtocol: 'https:' }), { kind: 'needHttps' }, apiBase);
+    await assert.rejects(run(fetchImpl, { apiBase }), { kind: 'needHttps' }, 'default page protocol is the strict one');
+  }
   for (const transcribePath of ['v1/x', 'https://evil.example/x', '/a/../b', '/a?k=1']) await assert.rejects(run(fetchImpl, { transcribePath }), { kind: 'badPath' });
   assert.equal(calls, 0);
 });
@@ -139,9 +193,26 @@ test('every string exists in Korean and English, with the same placeholders', ()
   const holes = (s) => (s.match(/\{\w+\}/g) ?? []).sort().join();
   for (const key of Object.keys(STRINGS.ko)) assert.equal(holes(STRINGS.ko[key]), holes(STRINGS.en[key]), key);
   // Every error the button can show has a long text (toast, tooltip) and a short chip text.
-  const errors = ['needBase', 'badPath', 'notFound', 'needKey', 'badKey', 'micDenied', 'noMic', 'micBusy', 'micFailed', 'insecure', 'unsupported', 'network', 'timeout', 'rateLimited', 'tooBig', 'serverError', 'tooShort', 'empty', 'badResponse', 'paneChanged'];
+  const errors = ['needBase', 'needHttps', 'badPath', 'notFound', 'needKey', 'badKey', 'micDenied', 'noMic', 'micBusy', 'micFailed', 'insecure', 'unsupported', 'network', 'timeout', 'rateLimited', 'tooBig', 'serverError', 'tooShort', 'empty', 'badResponse', 'paneChanged'];
   for (const key of errors) assert.ok(STRINGS.ko[key] && STRINGS.ko[`${key}Short`] && STRINGS.en[key] && STRINGS.en[`${key}Short`], key);
   assert.equal(message('ko-KR', 'needKeyShort'), '키 필요');
   assert.equal(message('en', 'needKeyShort'), 'Key needed');
   assert.equal(message('fr', 'serverError', { status: 500 }), 'Transcription server error (500). Also check the model name.');
+});
+
+test('on an http page a plain-http provider is called as written', async () => {
+  const urls = [];
+  const fetchImpl = async (url) => { urls.push(url); return reply(200, { text: 'x' }); };
+  await run(fetchImpl, { apiBase: 'http://192.168.7.9:8000', pageProtocol: 'http:' });
+  await run(fetchImpl, { apiBase: 'http://localhost:8000', pageProtocol: 'http:' });
+  await run(fetchImpl, { apiBase: 'http://localhost:8000', pageProtocol: 'https:' });
+  assert.deepEqual(urls, ['http://192.168.7.9:8000/v1/audio/transcriptions', 'http://localhost:8000/v1/audio/transcriptions', 'http://localhost:8000/v1/audio/transcriptions']);
+});
+
+test('a scheme-less address reaches the network over https, and loopback http as written', async () => {
+  const urls = [];
+  const fetchImpl = async (url) => { urls.push(url); return reply(200, { text: 'x' }); };
+  await run(fetchImpl, { apiBase: 'api.example.com' });
+  await run(fetchImpl, { apiBase: 'http://127.0.0.1:8000' });
+  assert.deepEqual(urls, ['https://api.example.com/v1/audio/transcriptions', 'http://127.0.0.1:8000/v1/audio/transcriptions']);
 });

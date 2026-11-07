@@ -11,8 +11,8 @@ A microphone button in the [pipaya](https://github.com/dohwi/pipaya) composer. P
 ## Requirements
 
 - A transcription server that answers `POST <origin><path>` with multipart `file`, `model`, `language` and an `Authorization: Bearer` key, and returns JSON with a `text` field (the OpenAI `audio/transcriptions` format), and that **allows requests from the browser (CORS)**.
-- pipaya opened over **HTTPS** (browsers only allow the microphone in a secure context). A plain `http://<ip>:<port>` page will not work; serve it over HTTPS (for example with a reverse proxy or `tailscale serve`).
-- When pipaya is on HTTPS, its **server address must be HTTPS too** (mixed content is blocked). See [Server address](#server-address-https).
+- pipaya opened over **HTTPS** (or `http://localhost`) so the microphone can start. On an https page the transcription server must be `https://` too. See [HTTPS](#https).
+- When pipaya is on HTTPS, its own **server address must be HTTPS too** (mixed content is blocked). See [Server address](#server-address-https).
 
 ## Install
 
@@ -22,7 +22,7 @@ A microphone button in the [pipaya](https://github.com/dohwi/pipaya) composer. P
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `apiBase` | *(required, none)* | Origin of the server, for example `https://api.openai.com`. No path or credentials. Nothing is built in: empty or malformed, the button asks for it and sends no request. |
+| `apiBase` | *(required, none)* | Origin of the server, for example `https://api.openai.com`. On an **https page it must be https** (see [HTTPS](#https)). No path or credentials. Nothing is built in: empty or malformed, the button asks for it and sends no request. A value typed without a scheme (`api.example.com`) is read as `https://`; the stored text is not changed. |
 | `transcribePath` | `/v1/audio/transcriptions` | Request path, starting with `/`. Only a plain path is accepted (no scheme, host, query, `..`). The URL is `apiBase` + this path. |
 | `apiKey` | *(required, none)* | Sent only as `Authorization: Bearer`. Secret field. |
 | `model` | *(empty)* | Model name. Most hosted services require one (see the table). Empty: the field is not sent and the server default is used. There is no default because any value would suit only one service. |
@@ -53,16 +53,28 @@ Only the last two rows were exercised with real requests. For the others the req
 
 | Message | Meaning |
 | --- | --- |
+| Use https | pipaya is open over https and `apiBase` starts with `http://` (not localhost). The browser would block it, so no request is sent; change it to `https://`. |
+| HTTPS page needed | pipaya itself is open over plain `http://` (not localhost), so the browser will not start the microphone. The button is dimmed and explains this when pressed. |
 | Address needed | `apiBase` is empty or not a bare http(s) origin (opens the settings). |
 | Bad path | `transcribePath` is not a plain path starting with `/`. |
 | Key needed | No key in the settings (opens the settings). |
 | Key rejected | 401/403. No request is made again until the key changes, to avoid being blocked after repeated failures. |
 | Not found | 404/405: wrong address or path. |
 | Mic denied / No mic / Mic unavailable | Allow the microphone in the browser's site settings, check the device, close other apps using it. |
-| HTTPS needed | pipaya is not in a secure context. |
 | Unreachable / Timed out | Cannot reach `apiBase` (60 s limit), or the server blocks browser requests (CORS). |
 | Server error | Other non-2xx answers; also check the model name. |
 | Nothing heard / Too short | Empty transcript or recording under 0.4 s. |
+
+## HTTPS
+
+The extension talks only to the transcription server you configure (`apiBase`); it never talks to the pipaya server. HTTPS matters for exactly two reasons:
+
+1. **The microphone.** Browsers start it (`getUserMedia`) only when the page is a secure context: an `https://` page, or `http://localhost` / `http://127.0.0.1`. If pipaya is opened at `http://<host>:<port>` the mic button is dimmed and, when pressed, says so; no recording starts. Open pipaya over HTTPS (for example behind a reverse proxy, or with `tailscale serve`).
+2. **Mixed content.** An `https://` page cannot call an `http://` server; the browser blocks it. So **on an https page, `apiBase` must be `https://`**, and a plain `http://` address is refused with "Use https" and no request is made. A value typed without a scheme is read as `https://`.
+
+Everything else is allowed. On a page that is *not* https (for example `http://localhost` with a local Whisper server at `http://localhost:8000`, or an http page with a private-network server), a plain-http `apiBase` is used as written.
+
+**Loopback exception on https pages**: `http://localhost`, `http://127.0.0.1` and `http://[::1]` are accepted even from an https page, for a Whisper server on your own machine. Checked in headless Chromium 158 (an https page `fetch` to each of the three over plain `http` succeeded, while the same call to a public host was blocked as mixed content). Other private addresses (`192.168.x.x`, `10.x.x.x`, `*.local`, a LAN or tailnet IP) were also reachable in that Chromium, but that is not guaranteed in other browsers or versions, so on an https page this extension does not treat them as an exception: give such a server an `https://` address (reverse proxy, `tailscale serve`).
 
 ## Recording format
 

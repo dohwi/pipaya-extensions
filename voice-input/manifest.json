@@ -1,7 +1,7 @@
 {
   "id": "voice-input",
   "name": "Voice Input",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "sdkVersion": 1,
   "description": "입력창에 마이크 버튼을 추가합니다. 말한 내용을 OpenAI 호환 음성 인식 API(OpenAI, Groq, Mistral, 로컬 Whisper 등)로 받아써서 입력창에 넣습니다. / Adds a microphone button to the composer and dictates through any OpenAI-compatible transcription API.",
   "permissions": [
@@ -12,10 +12,9 @@
       "key": "apiBase",
       "type": "string",
       "label": "서버 주소 (API base)",
-      "description": "음성 인식 API 서버의 origin입니다(예: https://api.openai.com). 경로나 계정 정보는 넣지 마세요. 마이크는 HTTPS 화면에서만 켜지므로 https 주소를 권장합니다. / Origin of the transcription API server.",
+      "description": "음성 인식 서버의 origin입니다(예: https://api.openai.com). https 화면에서는 https 주소(또는 localhost)만 쓸 수 있고, 스킴을 생략하면 https입니다. / On an https page use https (or localhost).",
       "placeholder": "https://your-server.example.com",
-      "required": true,
-      "format": "origin"
+      "required": true
     },
     {
       "key": "transcribePath",

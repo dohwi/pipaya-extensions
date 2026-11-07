@@ -22,10 +22,12 @@ test('package is a single ui-components extension with no worker code', () => {
 test('settings: no built-in address, required origin and secret key, standard default path, device-local scope', () => {
   const byKey = Object.fromEntries(pkg.manifest.settings.map((f) => [f.key, f]));
   assert.deepEqual(Object.keys(byKey), ['apiBase', 'transcribePath', 'apiKey', 'model', 'language']);
-  assert.equal(byKey.apiBase.format, 'origin');
+  assert.ok(!('format' in byKey.apiBase), 'no origin format: a scheme-less address must still be savable (it is read as https at run time)');
   assert.equal(byKey.apiBase.required, true);
   assert.ok(!('default' in byKey.apiBase), 'the user enters their own address');
-  assert.match(byKey.apiBase.placeholder, /example\.com/);
+  assert.match(byKey.apiBase.placeholder, /^https:\/\/.*example\.com/);
+  assert.match(byKey.apiBase.description, /https/i);
+  assert.ok(!/https만 가능|HTTPS only|https only/i.test(byKey.apiBase.description), 'the rule is about https pages, not about every address');
   assert.equal(byKey.transcribePath.default, '/v1/audio/transcriptions');
   assert.ok(!byKey.transcribePath.required);
   assert.equal(byKey.apiKey.secret, true);
@@ -34,7 +36,7 @@ test('settings: no built-in address, required origin and secret key, standard de
   assert.ok(!('default' in byKey.model) && !byKey.model.required, 'no service-specific model is assumed');
   assert.equal(byKey.language.default, 'ko');
   assert.equal(pkg.manifest.settingsScope, 'local');
-  assert.equal(pkg.manifest.version, '0.2.1');
+  assert.equal(pkg.manifest.version, '0.2.2');
 });
 
 test('component hard-codes no service route', () => {
@@ -68,13 +70,15 @@ test('component closes the microphone and never auto-sends', () => {
 
 test('no personal address or key is baked into the package', () => {
   const text = JSON.stringify(pkg);
-  assert.ok(!/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b|localhost/.test(text), 'no IP address or localhost');
+  // the loopback names are part of the https-only rule (the one http exception), not a personal address
+  const withoutLoopbackRule = text.replace(/localhost|127\.0\.0\.1|127\\\.\\d\{1,3\}|\[::1\]/g, '');
+  assert.ok(!/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/.test(withoutLoopbackRule.replace(/127\.1\.2\.3/g, '')), 'no IP address is written into the package');
   assert.ok(!/https?:\/\/[a-z0-9.-]+\.[a-z]{2,}/i.test(pkg.components.VoiceButton.replace(/<style[\s\S]*<\/style>/, '').replace(/example\.com/g, '')), 'component hard-codes no URL');
 });
 
 test('component asks for the address before the key and before any request', () => {
   const begin = source.slice(source.indexOf('async function begin'), source.indexOf('async function begin') + 1200);
-  assert.ok(begin.indexOf('needBase') > 0 && begin.indexOf('needBase') < begin.indexOf('badPath') && begin.indexOf('badPath') < begin.indexOf('needKey'));
+  assert.ok(begin.indexOf('base.problem') > 0 && begin.indexOf('base.problem') < begin.indexOf('badPath') && begin.indexOf('badPath') < begin.indexOf('needKey'));
 });
 
 test('the send part keeps the original control and only adds the microphone before it', () => {
@@ -92,4 +96,20 @@ test('the send part keeps the original control and only adds the microphone befo
 test('the microphone is blocked offline but never while it can still be stopped', () => {
   assert.match(source, /blocked = \$derived\(busy \|\| \(offline && phase === "idle"\)\)/);
   assert.match(source, /disabled=\{blocked\}/);
+});
+
+test('an insecure page never reaches getUserMedia, and the button says why', () => {
+  const begin = source.slice(source.indexOf('async function begin'), source.indexOf('const mine = ++token'));
+  assert.match(begin, /if \(!window\.isSecureContext\) return say\("insecure"\)/);
+  assert.ok(!/getUserMedia\(/.test(begin), 'begin() only checks; the stream is opened after all checks pass');
+  assert.ok(source.indexOf('getUserMedia({') > source.indexOf('const mine = ++token'), 'the stream is opened only after every check');
+  assert.ok(begin.indexOf('isSecureContext') < begin.indexOf('checkBase'), 'checked before the settings');
+  assert.match(source, /aria-disabled=\{insecure \|\| undefined\}/);
+  assert.match(source, /class:unavailable=\{insecure\}/);
+  assert.match(source, /insecure && phase === "idle" \? tr\("insecure"\)/);
+});
+
+test('the component passes the page protocol, so http providers work from an http page', () => {
+  assert.match(source, /checkBase\(settings\.apiBase, location\.protocol\)/);
+  assert.match(source, /pageProtocol: location\.protocol/);
 });
