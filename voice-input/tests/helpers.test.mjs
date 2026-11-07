@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   pickMimeType, extensionFor, formatTime, joinDraft, endpoint, originOf, checkBase, withScheme, isLoopbackHost, pathOf, DEFAULT_TRANSCRIBE_PATH, buildForm, usesLanguagesList, micErrorKind, httpErrorKind,
   parseShortcut, conflictsWithApp, holdVerdict, shortcutLabel, shortcutHint, shortcutReason, SHORTCUT_MIN_HOLD_MS,
+  TAP_MS, SHORTCUT_MODES, shortcutMode, modeLabel, releaseAction, waveLevels, smoothLevels, shortcutCombo,
   transcribe, VoiceError, message, STRINGS
 } from '../src/helpers.mjs';
 
@@ -237,6 +238,70 @@ test('shortcut parsing gives the canonical combo the app wants, and refuses what
   for (const [text, combo] of Object.entries(ok)) assert.deepEqual(parseShortcut(text), { ok: true, combo }, text);
   const bad = { 'M': 'needMod', 'Shift+M': 'needMod', 'F9': 'needMod', 'Alt+Shift': 'format', 'Alt+M+K': 'oneKey', 'Alt++': 'format', '+': 'format', 'mod+mod+k': 'format', 'Alt+Ö': 'badKey', 'Alt+F25': 'badKey', 'Alt+Escape': 'reserved', 'Mod+Enter': 'reserved', 'Alt+Tab': 'reserved', 'Alt+Backspace': 'reserved' };
   for (const [text, reason] of Object.entries(bad)) assert.deepEqual(parseShortcut(text), { ok: false, reason }, text);
+});
+
+test('three modes, `both` by default, each with its own label', () => {
+  assert.deepEqual(SHORTCUT_MODES, ['both', 'toggle', 'hold']);
+  assert.equal(shortcutMode(undefined), 'both');
+  assert.equal(shortcutMode(''), 'both');
+  assert.equal(shortcutMode('nonsense'), 'both');
+  for (const m of SHORTCUT_MODES) assert.equal(shortcutMode(m), m);
+  const labels = SHORTCUT_MODES.map((m) => modeLabel(m, 'ko'));
+  assert.equal(new Set(labels).size, 3, 'each mode reads differently');
+  assert.match(modeLabel('both', 'ko'), /짧게/);
+  assert.match(modeLabel('both', 'en'), /tap/i);
+});
+
+test('`both`: a tap keeps recording, a longer press is push to talk, any other reason ends it', () => {
+  assert.equal(TAP_MS, 300);
+  // a short press, released: keep recording (the next tap stops it)
+  assert.equal(releaseAction('both', 1000, 1299), 'keep');
+  // exactly at the threshold it is a hold, not a tap
+  assert.equal(releaseAction('both', 1000, 1300), 'send');
+  assert.equal(releaseAction('both', 1000, 5000), 'send');
+  // a blur, a hidden tab, a shortcut recording or the shortcut going away always stops, however short
+  for (const reason of ['blur', 'hidden', 'recording', 'removed']) assert.equal(releaseAction('both', 1000, 1001, reason), 'send', reason);
+  // toggle ignores the release, hold throws a too-short press away
+  assert.equal(releaseAction('toggle', 1000, 1001), 'send');
+  assert.equal(releaseAction('hold', 1000, 1299), 'cancel');
+  assert.equal(releaseAction('hold', 1000, 1300), 'send');
+  for (const reason of ['blur', 'hidden', 'recording', 'removed']) assert.equal(releaseAction('hold', 1000, 1001, reason), 'send', reason);
+  // the threshold is a parameter, so the boundary can be pinned
+  assert.equal(releaseAction('both', 0, 299, 'release', 300), 'keep');
+  assert.equal(releaseAction('both', 0, 300, 'release', 300), 'send');
+});
+
+test('hold: a press shorter than the minimum is discarded, a real one is kept', () => {
+  assert.equal(SHORTCUT_MIN_HOLD_MS, 300);
+  assert.equal(holdVerdict(1000, 1120), 'discard');
+  assert.equal(holdVerdict(1000, 1299), 'discard');
+  assert.equal(holdVerdict(1000, 1300), 'send');
+  assert.equal(holdVerdict(1000, 5000), 'send');
+});
+
+test('the waveform turns frequency data into bars, low frequencies first, smoothed', () => {
+  const flat = waveLevels(new Uint8Array(128).fill(0), 8);
+  assert.deepEqual(flat, new Array(8).fill(0));
+  const loud = waveLevels(new Uint8Array(128).fill(255), 8);
+  assert.deepEqual(loud, new Array(8).fill(1));
+  // only the lower part of the spectrum is used (the top bins are mostly silence)
+  const data = new Uint8Array(128).fill(255); for (let i = 71; i < 128; i++) data[i] = 0; // the top bins silent
+  assert.deepEqual(waveLevels(data, 4), [1, 1, 1, 1], 'the low half is read');
+  const onlyHigh = new Uint8Array(128); onlyHigh[127] = 255;
+  assert.deepEqual(waveLevels(onlyHigh, 4), [0, 0, 0, 0], 'the top of the spectrum is ignored');
+  assert.equal(waveLevels(null, 3).length, 3, 'no data: zero bars, not a crash');
+  assert.equal(waveLevels(new Uint8Array(0), 3).length, 3);
+  // smoothing moves towards the new value without jumping
+  assert.deepEqual(smoothLevels([0, 1], [1, 0], 0.5), [0.5, 0.5]);
+  assert.deepEqual(smoothLevels(undefined, [1, 0], 0.5), [0.5, 0]);
+  assert.deepEqual(smoothLevels([1, 1], [1, 1], 0.5), [1, 1]);
+});
+
+test('the shortcut combination comes from one place', () => {
+  assert.equal(shortcutCombo({ shortcut: '  Alt+M ' }), 'Alt+M');
+  assert.equal(shortcutCombo({ shortcut: '' }), '');
+  assert.equal(shortcutCombo({}), '');
+  assert.equal(shortcutCombo(null), '');
 });
 
 test('hold: a press shorter than the minimum is discarded, a real one is kept', () => {

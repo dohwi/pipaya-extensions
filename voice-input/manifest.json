@@ -1,7 +1,7 @@
 {
   "id": "voice-input",
   "name": "Voice Input",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "sdkVersion": 1,
   "description": "입력창에 마이크 버튼을 추가합니다. 말한 내용을 OpenAI 호환 음성 인식 API(OpenAI, Groq, Mistral, 로컬 Whisper 등)로 받아써서 입력창에 넣습니다. / Adds a microphone button to the composer and dictates through any OpenAI-compatible transcription API.",
   "permissions": [
@@ -59,9 +59,13 @@
       "key": "shortcutMode",
       "type": "select",
       "label": "단축키 동작 (Shortcut mode)",
-      "description": "toggle: 누르면 녹음 시작, 다시 누르면 정지. hold: 누르고 있는 동안만 녹음. / toggle or hold-to-talk.",
-      "default": "toggle",
+      "description": "both: 짧게 누르면 시작/정지, 길게 누르면 누르는 동안 녹음(0.3초 기준). toggle: 누를 때마다 시작/정지. hold: 누르고 있는 동안만. / Tap toggles, hold to talk (0.3 s), or either alone.",
+      "default": "both",
       "options": [
+        {
+          "value": "both",
+          "label": "짧게/길게 (탭=토글, 길게=푸시투토크) / Tap or hold"
+        },
         {
           "value": "toggle",
           "label": "토글 (누르면 시작/정지) / Toggle"

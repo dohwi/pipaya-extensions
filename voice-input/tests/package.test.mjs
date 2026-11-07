@@ -36,7 +36,7 @@ test('settings: no built-in address, required origin and secret key, standard de
   assert.ok(!('default' in byKey.model) && !byKey.model.required, 'no service-specific model is assumed');
   assert.equal(byKey.language.default, 'ko');
   assert.equal(pkg.manifest.settingsScope, 'local');
-  assert.equal(pkg.manifest.version, '0.4.0');
+  assert.equal(pkg.manifest.version, '0.5.0');
 });
 
 test('component hard-codes no service route', () => {
@@ -116,14 +116,14 @@ test('the component passes the page protocol, so http providers work from an htt
   assert.match(source, /pageProtocol: location\.protocol/);
 });
 
-test('shortcut settings: no default combination, toggle is the default mode, both modes offered', () => {
+test('shortcut settings: no default combination, `both` is the default mode, three modes offered', () => {
   const byKey = Object.fromEntries(pkg.manifest.settings.map((f) => [f.key, f]));
   assert.equal(byKey.shortcut.type, 'string');
   assert.ok(!('default' in byKey.shortcut) && !byKey.shortcut.required, 'unassigned until the user sets it');
   assert.match(byKey.shortcut.placeholder, /^Alt\+M$/);
   assert.equal(byKey.shortcutMode.type, 'select');
-  assert.equal(byKey.shortcutMode.default, 'toggle');
-  assert.deepEqual(byKey.shortcutMode.options.map((o) => o.value), ['toggle', 'hold']);
+  assert.equal(byKey.shortcutMode.default, 'both', 'tap toggles, a longer press is push to talk');
+  assert.deepEqual(byKey.shortcutMode.options.map((o) => o.value), ['both', 'toggle', 'hold']);
   assert.ok(pkg.manifest.settings.length <= 20);
 });
 
@@ -133,8 +133,8 @@ test('shortcut wiring: the app\'s shortcut API only, registered for a set combin
   const effect = code.slice(code.indexOf('$effect(() => {\n\t\tconst parsed'), code.indexOf('onDestroy(() => {'));
   assert.match(effect, /if \(!parsed\.combo && parsed\.ok\) return;/, 'empty = nothing registered');
   assert.match(effect, /typeof kit\.shortcuts\?\.register !== "function"\) return void tell\("shortcutUnsupported"\)/, 'an app without the API: say so, keep the button');
-  assert.match(effect, /mode === "hold" \? \{ down: onShortcut, up: onShortcut \} : \{ down: onShortcut \}/, 'toggle registers down only, hold registers down and up');
-  assert.match(effect, /return \(\) => untrack\(\(\) => \{ off\?\.\(\); endHold\(\); \}\)/, 'the cleanup removes the shortcut and ends a held recording, untracked');
+  assert.match(effect, /mode === "toggle" \? \{ down: onShortcut \} : \{ down: onShortcut, up: onShortcut \}/, 'toggle registers down only; both and hold need the release too');
+  assert.match(effect, /return \(\) => untrack\(\(\) => \{ off\?\.\(\); endPress\("removed"\); \}\)/, 'the cleanup removes the shortcut and ends a held recording, untracked');
   assert.match(effect, /off = untrack\(\(\) => kit\.shortcuts\.register\(/, 'register reads and writes the app\'s shortcut list: untracked, or the effect would trigger itself');
   assert.match(effect, /catch \(error\) \{\s*return void tell\("shortcutRefused"/, 'the app\'s refusal is shown');
   assert.match(effect, /conflictsWithApp\(parsed, app\.prefs\?\.bindings\)/);
@@ -142,19 +142,20 @@ test('shortcut wiring: the app\'s shortcut API only, registered for a set combin
   assert.match(code, /const tell = \(key, params\) => untrack\(\(\) => \{[\s\S]*?toldFor === id\) return;[\s\S]*?say\(key, params\);/, 'each notice is told once per value');
   const handler = code.slice(code.indexOf('function onShortcut'), code.indexOf('$effect(() => {\n\t\tconst parsed'));
   assert.match(handler, /if \(!pane_\.focused\) return;/, 'only the focused pane answers');
-  assert.match(handler, /event\?\.phase === "up"\) return endHold\(\)/);
-  assert.match(handler, /else onclick\(\); \/\/ exactly what clicking the button does/, 'toggle is the button\'s own handler');
+  assert.match(handler, /event\?\.phase === "up"\) return endPress\(event\.reason \?\? "release"\)/);
+  assert.match(handler, /if \(mode === "toggle"\) return onclick\(\);/, 'toggle is the button\'s own handler');
+  assert.match(handler, /if \(phase === "recording"\) return void onclick\(\);/, 'in both/hold a press while recording stops it');
   assert.ok(!/requestSubmit|submit\(/.test(handler), 'a shortcut only records, it never sends');
 });
 
-test('hold ends on every kind of `up`: short taps are cancelled and a microphone still opening is closed', () => {
-  const code = source.replace(/<style[\s\S]*<\/style>/, '');
-  const end = code.slice(code.indexOf('function endHold()'), code.indexOf('function onShortcut'));
-  assert.match(end, /holdVerdict\(heldDownAt, performance\.now\(\)\)/);
-  assert.match(end, /stop\(verdict === "send" \? "send" : "cancel"\)/);
+test('a release ends the recording in every mode, and a microphone still opening is closed', () => {
+  const code = source.replace(/<style>[\s\S]*<\/style>/, '');
+  const end = code.slice(code.indexOf('function endPress('), code.indexOf('function onShortcut'));
+  assert.match(end, /releaseAction\(mode, pressedAt, performance\.now\(\), reason\)/);
+  assert.match(end, /if \(action === "keep"\) \{ pressedAt = 0; return; \}/, '`both`: a tap keeps recording');
+  assert.match(end, /stop\(action === "send" \? "send" : "cancel"\)/);
   assert.match(end, /phase === "starting"\) \{ token\+\+; phase = "idle"; \}/);
-  assert.ok(!/reason/.test(end), 'every reason (release, blur, hidden, recording, removed) ends it the same way');
-  assert.match(code, /if \(holdingStart && !heldDownAt\) \{ for \(const track of media\.getTracks\(\)\) track\.stop\(\); reset\(\); return; \}/, 'the stream is closed when the key already came up');
+  assert.match(code, /if \(startedByPress && !pressedAt\) \{ for \(const track of media\.getTracks\(\)\) track\.stop\(\); reset\(\); return; \}/, 'the stream is closed when the press already ended');
 });
 
 test('the tooltip shows the shortcut, the accessible name stays the plain action', () => {
@@ -170,8 +171,12 @@ const rule = (selector) => css.match(new RegExp(`(?:^|\\n)\\s*${selector.replace
 test('design: no hard-coded colours, every colour is one of the app\'s tokens', () => {
   assert.ok(!/#[0-9a-f]{3,8}\b/i.test(css), 'no hex colours');
   assert.ok(!/\b(rgba?|hsla?)\(/i.test(css), 'no rgb()/hsl() colours');
-  const used = new Set([...css.matchAll(/var\((--[\w-]+)\)/g)].map((m) => m[1]));
-  const allowed = new Set(['--bg-active', '--border-strong', '--text', '--text-dim', '--text-faint', '--danger', '--danger-soft', '--motion-fast', '--ease-std', '--ease', '--fs-sm', '--fs-xs', '--bg']);
+  // Only the app's tokens may be read; a custom property this component defines itself (`--l`, the bar height) is not a token.
+  const defined = new Set([...css.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
+  // set on the element by the component itself (the bar height), not an app token
+  for (const own of ['--l']) defined.add(own);
+  const used = new Set([...css.matchAll(/var\((--[\w-]+)\)/g)].map((m) => m[1]).filter((t) => !defined.has(t)));
+  const allowed = new Set(['--bg-active', '--border-strong', '--text', '--text-dim', '--text-faint', '--danger', '--danger-soft', '--motion-fast', '--ease-std', '--ease', '--fs-sm', '--fs-xs', '--bg', '--bg-elev', '--fs-md']);
   for (const token of used) assert.ok(allowed.has(token), `unexpected token ${token}`);
 });
 
@@ -202,7 +207,7 @@ test('design: status chips are padded pills no taller than the buttons, and give
 });
 
 test('design: the cancel button sits inside the recording chip, and the timer is not announced every second', () => {
-  const markup = source.replace(/<script>[\s\S]*?<\/script>/, '').replace(/<style>[\s\S]*<\/style>/, '');
+  const markup = source.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style>[\s\S]*<\/style>/g, '');
   assert.match(markup, /<span class="chip live">[\s\S]*<button type="button" class="x"[\s\S]*<\/button>\s*<\/span>/);
   assert.match(markup, /<span class="sr" role="status" aria-live="polite">/);
   assert.ok(!/class="status"[^>]*aria-live/.test(markup), 'the visible chips are not a live region (the timer would be read out every second)');
@@ -237,4 +242,68 @@ test('docs: gpt-transcribe language handling and the Mistral format claim are st
     assert.ok(!/OpenAI, Groq and Mistral list webm|OpenAI, Groq, Mistral은 webm/.test(text), `${file}: no unverified Mistral format claim`);
     assert.ok(!/(clear the `language`|`language` 설정을 비우세요)/.test(text), `${file}: the old workaround note is gone`);
   }
+});
+
+// ── the recording overlay ────────────────────────────────────────────────────────────────────────────────────────────
+test('overlay: covers the input box only, shows recording / transcribing / error, never blocks the bar', () => {
+  const markup = source.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style>[\s\S]*<\/style>/g, '');
+  assert.match(markup, /phase === "recording" \? "recording" : phase === "transcribing" \? "transcribing" : notice \? "error" : ""/, 'shown for recording, transcribing and an error only');
+  assert.match(markup, /\{#if state\}\s*<!--[\s\S]*?<div\s+class="overlay"/);
+  assert.match(markup, /class:rec=\{state === "recording"\}\s+class:busy=\{state === "transcribing"\}\s+class:err=\{state === "error"\}/);
+  assert.match(markup, /aria-hidden="true"/, 'visual only: the .sr line announces the state once');
+  assert.match(css, /\.overlay \{[^}]*position: absolute;\s*top: 0;\s*left: 0;\s*right: 0;\s*bottom: var\(--bar, 48px\);/, 'ends strictly above the bar');
+  assert.match(css, /\.overlay \{[^}]*pointer-events: none/, 'overlay background passes clicks to draft');
+  assert.match(css, /\.overlay \.btn-cancel,\s*\.overlay \.btn-stop \{[^}]*pointer-events: auto/, 'overlay buttons are directly clickable');
+  assert.match(css, /\.overlay \{[^}]*background: color-mix\(in srgb, var\(--bg-elev\) 80%, transparent\)/, 'the draft stays faintly visible');
+  // the box is found from the DOM and marked active so the bar chip is hidden
+  assert.match(source, /root\?\.closest\('\[data-part="composer\.box"\]'\)/);
+  assert.match(source, /box\.dataset\.voiceOverlay = "active"/);
+  assert.match(source, /delete box\.dataset\.voiceOverlay/);
+  assert.match(css, /:global\(\[data-part="composer\.box"\]\[data-voice-overlay="active"\]\) \.status \{[^}]*display: none;/);
+});
+
+test('overlay: the timer is not a live region, the state is announced once', () => {
+  const markup = source.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style>[\s\S]*<\/style>/g, '');
+  assert.match(markup, /<span class="sr" role="status" aria-live="polite">/);
+  assert.ok(!/class="overlay"[^>]*aria-live/.test(markup));
+  assert.match(markup, /aria-hidden="true">\{formatTime\(elapsed\)\}/, 'the ticking time stays out of the accessibility tree');
+  const meter = source.slice(source.indexOf('function startMeter'), source.indexOf('function stop('));
+  assert.ok(!/\.focus\(/.test(meter), 'the level meter never takes focus');
+  assert.ok(!/\.focus\(/.test(source.slice(source.indexOf('function stopMeter'), source.indexOf('async function begin'))), 'nor does the overlay or its cleanup');
+});
+
+test('overlay: the level meter is closed on every way out of a recording', () => {
+  const meter = source.slice(source.indexOf('function stopMeter'), source.indexOf('function startMeter'));
+  assert.match(meter, /if \(frame\) cancelAnimationFrame\(frame\)/, 'the drawing frame is cancelled');
+  assert.match(meter, /source\.disconnect\(\)/);
+  assert.match(meter, /ctx\.close\?\.\(\)/, 'the AudioContext is closed');
+  assert.match(meter, /levels = \[\]/);
+  const release = source.slice(source.indexOf('function release'), source.indexOf('async function begin'));
+  assert.ok(release.includes('stopMeter()'), 'release() closes the meter');
+  assert.match(release, /track\.stop\(\)/, 'and the microphone');
+  // release() is the single exit: stop/cancel/error/shortcut/removal all go through reset()
+  assert.match(source, /function reset\(\) \{\s*release\(\);/);
+  assert.match(source, /onDestroy\(\(\) => \{[\s\S]*release\(\);/);
+  assert.match(source, /function startMeter\(media\) \{\s*stopMeter\(\)/, 'starting twice does not leak the first');
+  assert.match(source, /window\.AudioContext \|\| window\.webkitAudioContext/);
+  assert.match(source, /prefers-reduced-motion: reduce/, 'reduced motion: a still level instead of a moving waveform');
+  assert.match(source, /if \(still\) return;/, 'no animation frame is scheduled then');
+});
+
+test('overlay: the recording icon is not the app\'s stop square', () => {
+  const markup = source.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style>[\s\S]*<\/style>/g, '');
+  const rec = markup.slice(markup.indexOf('{#if phase === "recording"}'), markup.indexOf('{:else if busy}'));
+  assert.ok(!/<rect/.test(rec), 'no stop square: the app\'s own stop button is a square');
+  assert.match(rec, /<circle class="solid"/, 'a recording dot beside the microphone');
+  assert.match(source, /tr\("stopRecording"\)/, 'the label and tooltip say "stop recording"');
+});
+
+test('both mode is wired: press starts, release decides, toggle keeps its single handler', () => {
+  const code = source.replace(/<style>[\s\S]*<\/style>/, '');
+  const handler = code.slice(code.indexOf('function onShortcut'), code.indexOf('$effect(() => {\n\t\tconst parsed'));
+  assert.match(handler, /if \(mode === "toggle"\) return onclick\(\);/);
+  assert.match(handler, /if \(phase === "recording"\) return void onclick\(\);/, 'a second press stops');
+  assert.match(handler, /pressedAt = performance\.now\(\);\s*startedByPress = true;\s*void begin\(\);/, 'both and hold start on the press');
+  assert.match(code, /const mode = \$derived\(shortcutMode\(ext\.settings\?\.shortcutMode\)\)/, 'three modes, both by default');
+  assert.match(code, /const COMBO = \$derived\(shortcutCombo\(ext\.settings\)\)/, 'the combination comes from one helper');
 });

@@ -220,6 +220,14 @@ export const STRINGS = {
     shortcutConflictShort: '단축키 충돌',
     modeToggle: '누르면 시작/다시 누르면 정지',
     modeHold: '누르고 있는 동안 녹음',
+    modeBoth: '짧게 누르면 시작/정지, 길게 누르면 누르는 동안',
+    overlayRecording: '녹음 중',
+    overlayHint: '다시 누르면 변환',
+    overlayHintHold: '키를 떼면 변환',
+    overlayTranscribing: '변환 중…',
+    stopRecording: '녹음 정지',
+    stopRecordingShort: '정지',
+    modeBothShort: '짧게/길게',
     needHttps: 'https 화면에서는 http 주소를 쓸 수 없습니다(브라우저가 차단). https 주소를 쓰세요. 같은 컴퓨터의 localhost는 http도 됩니다.',
     needHttpsShort: 'https 주소 필요',
     badPath: '전사 경로가 올바르지 않습니다. /로 시작하는 경로만 쓸 수 있습니다(예: /v1/audio/transcriptions).',
@@ -281,6 +289,14 @@ export const STRINGS = {
     shortcutConflictShort: 'Shortcut taken',
     modeToggle: 'press to start, press again to stop',
     modeHold: 'hold to record',
+    modeBoth: 'tap to start or hold to talk',
+    overlayRecording: 'Recording',
+    overlayHint: 'press to stop',
+    overlayHintHold: 'release to stop',
+    overlayTranscribing: 'Transcribing…',
+    stopRecording: 'Stop recording',
+    stopRecordingShort: 'Stop',
+    modeBothShort: 'tap or hold',
     needHttps: 'An http address cannot be used from an https page (the browser blocks it). Use an https address. localhost on this same computer may use http.',
     needHttpsShort: 'Use https',
     badPath: 'The transcription path is not valid. Use a path starting with / (for example /v1/audio/transcriptions).',
@@ -388,7 +404,7 @@ export function shortcutLabel(parsed, mode, lang) {
   if (!parsed?.ok || !parsed.combo) return '';
   const names = { Mod: /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? '') ? '⌘' : 'Ctrl' };
   const text = parsed.combo.split('+').map((p) => names[p] ?? p).join('+');
-  return `${text} · ${message(lang, mode === 'hold' ? 'modeHold' : 'modeToggle')}`;
+  return `${text} · ${modeLabel(mode, lang)}`;
 }
 
 // The tooltip text for what the user typed (nothing for an empty or invalid combination).
@@ -400,8 +416,58 @@ export function shortcutReason(error) {
   return text.length > 120 ? `${text.slice(0, 117)}...` : text;
 }
 
-// ── hold-to-talk bookkeeping ───────────────────────────────────────────────────────────────────────────────────────
-// Pure: given when the key went down and when it came up, was it a real press?
-export function holdVerdict(downAt, upAt, minMs = SHORTCUT_MIN_HOLD_MS) {
+// ── shortcut mode and the press it saw ─────────────────────────────────────────────────────────────────────────────
+// `toggle`: a press starts, the next press stops. `hold`: record while the keys are down, a press under `TAP_MS` is thrown
+// away. `both` (the default): the press starts at once and a release under `TAP_MS` keeps recording (that was a tap, so the
+// next tap stops), while a longer press stops on release (push to talk).
+export const TAP_MS = 300;
+export const SHORTCUT_MODES = ['both', 'toggle', 'hold'];
+export const shortcutMode = (value) => (SHORTCUT_MODES.includes(value) ? value : 'both');
+export const modeLabel = (mode, lang) => message(lang, mode === 'hold' ? 'modeHold' : mode === 'toggle' ? 'modeToggle' : 'modeBoth');
+
+// What a release means, given how long the keys were down and why they came up.
+//   'keep'   : `both`, a tap: keep recording, the next press stops it
+//   'send'   : stop and transcribe
+//   'cancel' : stop and throw the recording away (a press too short to be meant, in `hold`)
+// Any reason other than a plain release (blur, hidden tab, shortcut recording, shortcut removed) always ends the recording.
+export function releaseAction(mode, downAt, upAt, reason = 'release', tapMs = TAP_MS) {
+  if (reason !== 'release') return 'send';
+  const held = upAt - downAt;
+  if (mode === 'both') return held < tapMs ? 'keep' : 'send';
+  if (mode === 'hold') return held < tapMs ? 'cancel' : 'send';
+  return 'send'; // toggle: the keys coming up mean nothing
+}
+
+// Kept for the hold mode's own tests and callers: a press shorter than the minimum is discarded.
+export function holdVerdict(downAt, upAt, minMs = TAP_MS) {
   return upAt - downAt >= minMs ? 'send' : 'discard';
 }
+
+// ── waveform ─────────────────────────────────────────────────────────────────────────────────────────────────────
+// The frequency data of an AnalyserNode (0-255 per bin) as `bars` levels between 0 and 1, low frequencies first: the
+// low half of the bins carries the voice, the top is mostly silence. A little smoothing keeps the bars from flickering.
+export function waveLevels(data, bars = 28) {
+  const out = new Array(bars).fill(0);
+  if (!data || !data.length) return out;
+  const usable = Math.max(1, Math.floor(data.length * 0.55));
+  const per = Math.max(1, Math.floor(usable / bars));
+  for (let i = 0; i < bars; i++) {
+    let sum = 0;
+    for (let j = 0; j < per; j++) sum += data[Math.min(usable - 1, i * per + j)] ?? 0;
+    out[i] = Math.min(1, sum / per / 255);
+  }
+  return out;
+}
+
+export function smoothLevels(previous, next, factor = 0.5) {
+  return next.map((v, i) => {
+    const p = previous?.[i] ?? 0;
+    return p + (v - p) * factor;
+  });
+}
+
+// ── where the shortcut combination comes from ───────────────────────────────────────────────────────────────────────
+// One place to change when the app can hold extension shortcuts itself (Settings > Shortcuts). Today it is the extension's
+// own `shortcut` setting, used verbatim.
+export const shortcutCombo = (settings) => String(settings?.shortcut ?? '').trim();
+

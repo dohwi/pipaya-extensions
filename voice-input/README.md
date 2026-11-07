@@ -28,7 +28,7 @@ A microphone button in the [pipaya](https://github.com/dohwi/pipaya) composer. P
 | `model` | *(empty)* | Model name. Most hosted services require one (see the table). Empty: the field is not sent and the server default is used. There is no default because any value would suit only one service. |
 | `language` | `ko` | ISO 639-1 code. Empty lets the server detect it. Sent as `languages[]` when the model is `gpt-transcribe`. |
 | `shortcut` | *(empty = none)* | Keyboard shortcut for dictation, for example `Alt+M` or `Mod+Shift+K`. See [Keyboard shortcut](#keyboard-shortcut). |
-| `shortcutMode` | `toggle` | `toggle` or `hold` (hold to talk). Only used when `shortcut` is set. |
+| `shortcutMode` | `both` | `both` (tap toggles, hold to talk), `toggle`, or `hold`. Only used when `shortcut` is set. |
 
 `settingsScope` is **`local`**: the key is a credential, and `server` scope would store it in plain text on the pipaya server and share it with every connected device. With `local` it stays on this browser/app only (and is never exported). Enter it once per device.
 
@@ -51,7 +51,9 @@ Notes:
 
 ## Usage
 
-- The microphone is just left of the send button. Click it: recording starts (red button, elapsed time). Click again (or the stop square) to transcribe. **✕** cancels without uploading.
+- The microphone sits just left of the send button. Click it: a frosted recording overlay covers the input box, showing a live audio waveform, large elapsed time, and cancel (✕) / stop buttons. The draft underneath stays faintly visible through the blur.
+- The bottom bar (attachments, model picker, send button) is never covered by the overlay and remains directly clickable at all times. During an agent run, the app's own stop square is distinct from the microphone's stop button (a microphone with a red recording dot).
+- Click the stop button again (or press the shortcut) to stop and transcribe. **✕** cancels without uploading.
 - The text is appended after the current draft, separated by a space. Review it, then send yourself.
 - Recording stops by itself after 5 minutes. The microphone is released as soon as recording ends (and when the button is removed).
 
@@ -85,7 +87,8 @@ Everything else is allowed. On a page that is *not* https (for example `http://l
 **There is no default shortcut.** While `shortcut` is empty nothing is registered. Type your own combination in the extension settings; it applies at once, no restart. **Needs pipaya 0.7.1 or newer** (see [Permissions](#permissions)).
 
 - **Format**: the same notation as pipaya's own shortcuts. `Mod` is Ctrl (⌘ on macOS), then optionally `Alt` and `Shift`, then **one** key: `Alt+M`, `Mod+Shift+K`, `Alt+Space`. Case does not matter (`ctrl+shift+k` works). pipaya requires `Mod` or `Alt` (so it never types a letter into the input box), so a lone F-key is not accepted. `Esc`, `Enter`, `Tab` and `Backspace` are not allowed.
-- **`toggle`** (default): press once to start recording, press again to stop, transcribe and append. It does exactly what clicking the microphone does.
+- **`both`** (default): tap briefly (< 0.3 s) to start and keep recording (tap again to stop), or hold down (≥ 0.3 s) for push to talk — releasing stops and transcribes. If the window loses focus, the tab is hidden, or you record a shortcut in Settings, it stops and transcribes at once.
+- **`toggle`**: press once to start recording, press again to stop, transcribe and append. It does exactly what clicking the microphone does.
 - **`hold`**: record while the keys are held; releasing them stops, transcribes and appends. A press shorter than 0.3 s is thrown away silently (nothing is uploaded), so an accidental tap does nothing. If the window loses focus, the tab is hidden, or you start recording a shortcut in Settings while the key is down, recording ends the same way (and the microphone is always closed).
 - The shortcut works while the input box has focus. pipaya ignores it during Korean (or other IME) composition and ignores key auto-repeat.
 - It is listed in **Settings → Shortcuts** (group "Extensions") with the extension's name. If pipaya's own shortcut uses the same keys, pipaya wins and that screen says so.
@@ -100,6 +103,8 @@ Everything else is allowed. On a page that is *not* https (for example `http://l
 The browser's own `MediaRecorder` format is uploaded as is (Chrome/Firefox: `audio/webm` opus, Safari: `audio/mp4`), named `voice.webm` / `voice.m4a`. The documentation of [OpenAI](https://developers.openai.com/api/docs/guides/speech-to-text) and [Groq](https://console.groq.com/docs/speech-to-text) lists webm and m4a among the accepted formats. For any other service, including Mistral (its pages did not list the accepted file formats when this was written), check that service's documentation. No WAV conversion is done.
 
 ## Upgrading
+
+0.5.0 adds a full-box frosted recording overlay with a live audio level waveform, prominent elapsed time, and dedicated cancel / stop buttons while keeping the bottom bar directly clickable. The recording stop button uses a distinct mic-with-dot icon so it is never confused with pipaya's agent stop square. The shortcut mode now defaults to `both` (tap toggles, hold to talk).
 
 0.4.0 moves the keyboard shortcut to pipaya's own shortcut API (**pipaya 0.7.1 or newer**) and adds the `shortcuts` permission. pipaya does not switch an extension back on by itself when the new version asks for a permission the installed one lacked: after you import it, review the consent screen and turn the extension on again. Your settings are kept. The shortcut now also shows in Settings → Shortcuts, and spellings such as `Shift+Mod+k` are normalised. A lone F-key (accepted before) is no longer valid because pipaya requires `Mod` or `Alt`.
 
