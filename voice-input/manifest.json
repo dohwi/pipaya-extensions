@@ -1,0 +1,46 @@
+{
+  "id": "voice-input",
+  "name": "Voice Input",
+  "version": "0.1.0",
+  "sdkVersion": 1,
+  "description": "입력창에 마이크 버튼을 추가합니다. 말한 내용을 CLIProxyAPI의 Mistral Voxtral로 받아써서 입력창에 넣습니다. / Adds a microphone button to the composer and transcribes speech with Mistral Voxtral.",
+  "permissions": [
+    "ui-components"
+  ],
+  "settings": [
+    {
+      "key": "apiBase",
+      "type": "string",
+      "label": "CLIProxyAPI 주소 (API base)",
+      "description": "mistral-support 플러그인이 있는 CLIProxyAPI의 origin입니다. 경로나 계정 정보는 넣지 마세요. 마이크는 HTTPS 화면에서만 켜지므로 https 주소를 권장합니다. / Origin of your CLIProxyAPI that has the mistral-support plugin.",
+      "placeholder": "https://your-cliproxyapi.example.com",
+      "required": true,
+      "format": "origin"
+    },
+    {
+      "key": "apiKey",
+      "type": "string",
+      "label": "관리 키 (Management Key)",
+      "description": "CLIProxyAPI 관리 키입니다. 이 기기에만 평문으로 저장되고 내보내기에서는 제외됩니다. 비어 있으면 마이크 버튼이 설정을 안내합니다. / Stored in plain text on this device only.",
+      "secret": true,
+      "required": true
+    },
+    {
+      "key": "model",
+      "type": "string",
+      "label": "모델 (Model)",
+      "description": "받아쓰기 모델입니다. 비우면 서버 기본값을 씁니다.",
+      "default": "voxtral-mini-transcribe-3-0",
+      "placeholder": "voxtral-mini-transcribe-3-0"
+    },
+    {
+      "key": "language",
+      "type": "string",
+      "label": "말하는 언어 (Language)",
+      "description": "ISO 639-1 코드입니다(예: ko, en, ja). 비우면 자동으로 감지합니다.",
+      "default": "ko",
+      "placeholder": "ko"
+    }
+  ],
+  "settingsScope": "local"
+}
