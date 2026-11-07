@@ -26,7 +26,7 @@
 | `transcribePath` | `/v1/audio/transcriptions` | `/`로 시작하는 요청 경로. 단순한 경로만 받습니다(스킴, 호스트, 쿼리, `..` 불가). 요청 주소는 `apiBase` + 이 경로입니다. |
 | `apiKey` | *(필수, 없음)* | `Authorization: Bearer` 헤더로만 보냅니다. 비밀 필드. |
 | `model` | *(빈 값)* | 모델 이름. 대부분의 호스팅 서비스는 필수입니다(아래 표). 비우면 보내지 않고 서버 기본값을 씁니다. 기본값이 없는 이유는 어떤 값을 넣어도 한 서비스에만 맞기 때문입니다. |
-| `language` | `ko` | ISO 639-1 코드. 비우면 서버가 자동 감지. |
+| `language` | `ko` | ISO 639-1 코드. 비우면 서버가 자동 감지. 모델이 `gpt-transcribe`면 `languages[]`로 보냅니다. |
 | `shortcut` | *(빈 값 = 없음)* | 음성 입력 단축키. 예: `Alt+M`, `Mod+Shift+K`. [단축키](#단축키) 참고. |
 | `shortcutMode` | `toggle` | `toggle` 또는 `hold`(누르는 동안 녹음). `shortcut`을 정했을 때만 쓰입니다. |
 
@@ -45,7 +45,7 @@
 
 참고:
 
-- **OpenAI 모델.** OpenAI 문서는 `whisper-1`, `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`를 지원 중단 예정(**2027년 2월 26일 종료**)으로 표시하고 `gpt-transcribe`를 권장합니다. 이 모델은 `language` 대신 `languages`를 받고, 둘을 함께 보내지 말라고 안내합니다. 이 확장은 `language` 하나(기본 `ko`)를 보내므로, `gpt-transcribe`에서 OpenAI가 요청을 거절하면 `language` 설정을 비우세요.
+- **OpenAI 모델.** OpenAI 문서는 `whisper-1`, `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`를 지원 중단 예정(**2027년 2월 26일 종료**)으로 표시하고 `gpt-transcribe`를 권장합니다. 이 모델은 `language` 대신 `languages`를 받고 둘을 함께 보내지 말라고 안내하므로, `model` 설정이 정확히 `gpt-transcribe`일 때는 `language` 값을 `languages[]`로(`language`는 보내지 않고) 보냅니다. 다른 모델은 그대로 `language`를 보냅니다. 공식 문서 기준이며 OpenAI를 직접 호출해 검증하지는 않았습니다.
 - **직접 운영하는 서버.** OpenAI 전사 요청 형식(multipart `file`, `model`, `language`, 응답은 JSON `{ "text": ... }`)을 구현한 서버면 됩니다. 경로가 다르면 `transcribePath`를 바꾸세요. 모든 서버가 이 형식을 쓰는 것은 아닙니다. 예를 들어 `whisper.cpp` 예제 서버는 `/inference`에서 자기 고유 형식으로 받으므로 OpenAI 호환 앞단이 필요합니다. 서버가 브라우저(CORS) 요청을 허용해야 하는 것도 같습니다.
 - **확인한 범위.** 개발 중 OpenAI 호환 서버 한 곳에서 전체 흐름(녹음, 업로드, 입력창에 글)을 끝까지 확인했습니다. 위 상용 서비스는 공개된 요청 형식을 따르지만, 이 저장소의 작성자가 직접 호출해 보지는 않았습니다.
 
@@ -97,7 +97,7 @@ SDK의 `shortcuts` 권한은 쓰지 않습니다. 키를 뗀 신호가 없어 `h
 
 ## 녹음 포맷
 
-브라우저 `MediaRecorder`의 기본 포맷을 그대로 올립니다(Chrome/Firefox는 `audio/webm` opus, Safari는 `audio/mp4`). 파일 이름은 `voice.webm` / `voice.m4a`입니다. OpenAI, Groq, Mistral은 webm과 m4a를 지원 포맷으로 안내합니다. WAV 변환은 하지 않습니다.
+브라우저 `MediaRecorder`의 기본 포맷을 그대로 올립니다(Chrome/Firefox는 `audio/webm` opus, Safari는 `audio/mp4`). 파일 이름은 `voice.webm` / `voice.m4a`입니다. [OpenAI](https://developers.openai.com/api/docs/guides/speech-to-text)와 [Groq](https://console.groq.com/docs/speech-to-text)의 공식 문서는 webm과 m4a를 지원 포맷으로 명시합니다. Mistral을 포함한 다른 서비스는 문서에 지원 파일 형식 목록이 확인되지 않았으니(작성 시점) 해당 서비스 문서를 확인하세요. WAV 변환은 하지 않습니다.
 
 ## 업그레이드
 

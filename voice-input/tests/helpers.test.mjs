@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  pickMimeType, extensionFor, formatTime, joinDraft, endpoint, originOf, checkBase, withScheme, isLoopbackHost, pathOf, DEFAULT_TRANSCRIBE_PATH, buildForm, micErrorKind, httpErrorKind,
+  pickMimeType, extensionFor, formatTime, joinDraft, endpoint, originOf, checkBase, withScheme, isLoopbackHost, pathOf, DEFAULT_TRANSCRIBE_PATH, buildForm, usesLanguagesList, micErrorKind, httpErrorKind,
   parseShortcut, matchesShortcut, releasesShortcut, releasesModifier, conflictsWithApp, shouldHandleKey, holdVerdict, keyNameOf, shortcutLabel, SHORTCUT_MIN_HOLD_MS,
   transcribe, VoiceError, message, STRINGS
 } from '../src/helpers.mjs';
@@ -300,4 +300,40 @@ test('the tooltip names the combination and the mode, in both languages', () => 
   assert.notEqual(shortcutLabel(p, 'toggle', 'ko'), shortcutLabel(p, 'hold', 'ko'));
   assert.notEqual(shortcutLabel(p, 'hold', 'en'), shortcutLabel(p, 'hold', 'ko'));
   assert.match(shortcutLabel(parseShortcut('Mod+K'), 'toggle', 'en'), /^(Ctrl|⌘)\+K · /);
+});
+
+test('gpt-transcribe gets `languages[]` instead of `language`, every other model keeps `language`', () => {
+  const gpt = buildForm(blob('audio/webm'), { model: 'gpt-transcribe', language: 'ko' });
+  assert.deepEqual([...gpt.keys()].sort(), ['file', 'languages[]', 'model']);
+  assert.deepEqual(gpt.getAll('languages[]'), ['ko']);
+  assert.ok(!gpt.has('language'), 'both fields must never be sent together');
+  for (const model of [' GPT-Transcribe ', 'gpt-transcribe\n']) {
+    const f = buildForm(blob(), { model, language: 'en' });
+    assert.deepEqual(f.getAll('languages[]'), ['en'], JSON.stringify(model));
+    assert.ok(!f.has('language'));
+  }
+  for (const model of ['whisper-1', 'whisper-large-v3-turbo', 'voxtral-mini-transcribe-3', 'gpt-4o-transcribe', 'gpt-4o-mini-transcribe', 'gpt-transcribe-diarize', 'gpt-transcribe-2', 'my-gpt-transcribe', '']) {
+    const f = buildForm(blob(), { model, language: 'ko' });
+    assert.deepEqual(f.getAll('language'), ['ko'], `${model || '(empty)'} keeps language`);
+    assert.ok(!f.has('languages[]'), `${model || '(empty)'} sends no languages[]`);
+  }
+  for (const language of ['', '   ', undefined]) {
+    const f = buildForm(blob(), { model: 'gpt-transcribe', language });
+    assert.ok(!f.has('language') && !f.has('languages[]'), 'an empty language sends neither field');
+    const g = buildForm(blob(), { model: 'whisper-1', language });
+    assert.ok(!g.has('language') && !g.has('languages[]'));
+  }
+  assert.equal(usesLanguagesList('gpt-transcribe'), true);
+  assert.equal(usesLanguagesList('gpt-transcribe-x'), false);
+});
+
+test('a gpt-transcribe upload sends languages[] on the wire and keeps the key out of the URL', async () => {
+  let seen;
+  const fetchImpl = async (url, init) => { seen = { url, init }; return reply(200, { text: 'ok', languages: [{ code: 'ko' }] }); };
+  const text = await transcribe({ fetchImpl, apiBase: 'https://ai.example/', transcribePath: '', apiKey: 'k-secret', model: 'gpt-transcribe', language: 'ko', blob: blob('audio/webm') });
+  assert.equal(text, 'ok');
+  assert.deepEqual([...seen.init.body.keys()].sort(), ['file', 'languages[]', 'model']);
+  assert.equal(seen.init.body.get('languages[]'), 'ko');
+  assert.ok(!seen.url.includes('k-secret') && !seen.url.includes('?'));
+  assert.equal(seen.init.headers.Authorization, 'Bearer k-secret');
 });

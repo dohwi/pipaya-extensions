@@ -26,7 +26,7 @@ A microphone button in the [pipaya](https://github.com/dohwi/pipaya) composer. P
 | `transcribePath` | `/v1/audio/transcriptions` | Request path, starting with `/`. Only a plain path is accepted (no scheme, host, query, `..`). The URL is `apiBase` + this path. |
 | `apiKey` | *(required, none)* | Sent only as `Authorization: Bearer`. Secret field. |
 | `model` | *(empty)* | Model name. Most hosted services require one (see the table). Empty: the field is not sent and the server default is used. There is no default because any value would suit only one service. |
-| `language` | `ko` | ISO 639-1 code. Empty lets the server detect it. |
+| `language` | `ko` | ISO 639-1 code. Empty lets the server detect it. Sent as `languages[]` when the model is `gpt-transcribe`. |
 | `shortcut` | *(empty = none)* | Keyboard shortcut for dictation, for example `Alt+M` or `Mod+Shift+K`. See [Keyboard shortcut](#keyboard-shortcut). |
 | `shortcutMode` | `toggle` | `toggle` or `hold` (hold to talk). Only used when `shortcut` is set. |
 
@@ -45,7 +45,7 @@ Set `apiBase`, `transcribePath` and `model` as below. The values come from each 
 
 Notes:
 
-- **OpenAI models.** OpenAI's documentation lists `whisper-1`, `gpt-4o-transcribe` and `gpt-4o-mini-transcribe` as deprecated, shutting down on **26 February 2027**, and recommends `gpt-transcribe`. That model takes `languages` instead of `language` and says not to send both. This extension sends a single `language` (default `ko`), so with `gpt-transcribe` clear the `language` setting if OpenAI rejects the request.
+- **OpenAI models.** OpenAI's documentation lists `whisper-1`, `gpt-4o-transcribe` and `gpt-4o-mini-transcribe` as deprecated, shutting down on **26 February 2027**, and recommends `gpt-transcribe`. That model takes `languages` instead of `language` and says not to send both, so when the `model` setting is exactly `gpt-transcribe` this extension sends your `language` as `languages[]` (and no `language`); every other model keeps `language`. This follows OpenAI's documentation; it has not been checked with a real call to OpenAI.
 - **Self-hosted servers.** Any server that implements the OpenAI transcription request (multipart `file`, `model`, `language`; JSON `{ "text": ... }` back) works; if it serves the route under another path, set `transcribePath`. Not every server speaks this format: for example the `whisper.cpp` example server answers on `/inference` with its own request format, so it needs an OpenAI-compatible front end. The server must also allow browser (CORS) requests.
 - **What was tested.** During development the full flow (record, upload, text in the input box) was run end to end against one OpenAI-compatible server. The hosted services above follow their published request format, but the author of this repository has not called them.
 
@@ -97,7 +97,7 @@ The SDK's own `shortcuts` permission is not used: it has no key-release signal, 
 
 ## Recording format
 
-The browser's own `MediaRecorder` format is uploaded as is (Chrome/Firefox: `audio/webm` opus, Safari: `audio/mp4`), named `voice.webm` / `voice.m4a`. OpenAI, Groq and Mistral list webm and m4a among the accepted formats. No WAV conversion is done.
+The browser's own `MediaRecorder` format is uploaded as is (Chrome/Firefox: `audio/webm` opus, Safari: `audio/mp4`), named `voice.webm` / `voice.m4a`. The documentation of [OpenAI](https://developers.openai.com/api/docs/guides/speech-to-text) and [Groq](https://console.groq.com/docs/speech-to-text) lists webm and m4a among the accepted formats. For any other service, including Mistral (its pages did not list the accepted file formats when this was written), check that service's documentation. No WAV conversion is done.
 
 ## Upgrading
 

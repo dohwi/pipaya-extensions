@@ -117,7 +117,13 @@ export function hostOf(apiBase) {
   try { return new URL(String(apiBase)).host; } catch { return String(apiBase ?? ''); }
 }
 
-// Only file, model and language are sent. Optional extras some services support (prompt, context or keyword hints) are left to the server.
+// OpenAI's documentation says the model `gpt-transcribe` takes `languages` (a list) instead of the single `language`, and
+// that both must not be sent together. Only that exact model name is treated this way (compared without case or
+// surrounding spaces): its reference lists no other `gpt-transcribe-...` model, and every other model or service keeps `language`.
+export const usesLanguagesList = (model) => String(model ?? '').trim().toLowerCase() === 'gpt-transcribe';
+
+// Only file, model and the language hint are sent. Optional extras some services support (prompt, context or keyword hints)
+// are left to the server. An empty language sends neither field.
 export function buildForm(blob, { model, language }) {
   const form = new FormData();
   const type = baseMime(blob.type) || 'audio/webm';
@@ -125,7 +131,7 @@ export function buildForm(blob, { model, language }) {
   const m = String(model ?? '').trim();
   if (m) form.append('model', m);
   const l = String(language ?? '').trim();
-  if (l) form.append('language', l);
+  if (l) form.append(usesLanguagesList(m) ? 'languages[]' : 'language', l);
   return form;
 }
 

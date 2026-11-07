@@ -229,3 +229,12 @@ test('docs: the Services table lists only public services with documentation lin
     assert.ok(!/### From 0\.1\.0|### 0\.1\.0에서/.test(text), `${file}: no 0.1.0 migration section`);
   }
 });
+
+test('docs: gpt-transcribe language handling and the Mistral format claim are stated honestly', async () => {
+  for (const file of ['README.md', 'README.ko.md']) {
+    const text = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');
+    assert.ok(text.includes('languages[]'), `${file}: explains languages[]`);
+    assert.ok(!/OpenAI, Groq and Mistral list webm|OpenAI, Groq, Mistral은 webm/.test(text), `${file}: no unverified Mistral format claim`);
+    assert.ok(!/(clear the `language`|`language` 설정을 비우세요)/.test(text), `${file}: the old workaround note is gone`);
+  }
+});

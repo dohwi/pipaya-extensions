@@ -43,7 +43,7 @@
       "key": "language",
       "type": "string",
       "label": "말하는 언어 (Language)",
-      "description": "ISO 639-1 코드입니다(예: ko, en, ja). 비우면 보내지 않아 서버가 자동 감지합니다. / Empty lets the server detect it.",
+      "description": "ISO 639-1 코드입니다(예: ko, en, ja). 비우면 보내지 않아 서버가 자동 감지합니다. gpt-transcribe는 자동으로 languages로 보냅니다. / Empty lets the server detect it.",
       "default": "ko",
       "placeholder": "ko"
     },
