@@ -15,7 +15,8 @@
 </div>
 
 <style>
-	/* The send control keeps its own size and never shrinks; the microphone area is the part that gives way. */
-	.vs { display: flex; align-items: center; justify-content: flex-end; gap: 2px; flex: 0 1 auto; min-width: 0; max-width: 100%; }
+	/* The send control keeps its own size and never shrinks; the microphone area is the part that gives way. The gap is the
+	   app's own gap between the buttons of the send control (4px). */
+	.vs { display: flex; align-items: center; justify-content: flex-end; gap: 4px; flex: 0 1 auto; min-width: 0; max-width: 100%; }
 	.orig { display: contents; }
 </style>

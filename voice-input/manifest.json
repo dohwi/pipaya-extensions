@@ -1,7 +1,7 @@
 {
   "id": "voice-input",
   "name": "Voice Input",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "sdkVersion": 1,
   "description": "입력창에 마이크 버튼을 추가합니다. 말한 내용을 OpenAI 호환 음성 인식 API(OpenAI, Groq, Mistral, 로컬 Whisper 등)로 받아써서 입력창에 넣습니다. / Adds a microphone button to the composer and dictates through any OpenAI-compatible transcription API.",
   "permissions": [

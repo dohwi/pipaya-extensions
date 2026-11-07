@@ -99,6 +99,8 @@ The browser's own `MediaRecorder` format is uploaded as is (Chrome/Firefox: `aud
 
 ## Upgrading
 
+0.3.1 is a visual clean-up only (no behaviour change): the microphone now has the send button's shape, size and feel (38px round, grey at rest, danger tint while recording, no transparency tricks when unavailable), the status chips are padded pills, and the cancel button moved inside the recording chip. The timer is no longer read out by screen readers every second.
+
 0.3.0 adds the optional keyboard shortcut (`shortcut`, `shortcutMode`). Nothing changes until you set one.
 
 0.2.1 moves the button from the toolbar (beside the model picker) to the left of the send button. Re-import `dist/voice-input.json`; settings are kept.

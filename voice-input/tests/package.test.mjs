@@ -36,7 +36,7 @@ test('settings: no built-in address, required origin and secret key, standard de
   assert.ok(!('default' in byKey.model) && !byKey.model.required, 'no service-specific model is assumed');
   assert.equal(byKey.language.default, 'ko');
   assert.equal(pkg.manifest.settingsScope, 'local');
-  assert.equal(pkg.manifest.version, '0.3.0');
+  assert.equal(pkg.manifest.version, '0.3.1');
 });
 
 test('component hard-codes no service route', () => {
@@ -160,4 +160,57 @@ test('the tooltip shows the shortcut, the accessible name stays the plain action
   assert.match(source, /title=\{tip\}/);
   assert.match(source, /aria-label=\{label\}/);
   assert.match(source, /hint \? `\$\{baseLabel\} \(\$\{hint\}\)` : baseLabel/);
+});
+
+// ── design: the same family as the app's send control, only the app's tokens ────────────────────────────────────────
+const css = source.match(/<style>([\s\S]*)<\/style>/)[1].replace(/\/\*[\s\S]*?\*\//g, ''); // comments out
+const rule = (selector) => css.match(new RegExp(`(?:^|\\n)\\s*${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
+
+test('design: no hard-coded colours, every colour is one of the app\'s tokens', () => {
+  assert.ok(!/#[0-9a-f]{3,8}\b/i.test(css), 'no hex colours');
+  assert.ok(!/\b(rgba?|hsla?)\(/i.test(css), 'no rgb()/hsl() colours');
+  const used = new Set([...css.matchAll(/var\((--[\w-]+)\)/g)].map((m) => m[1]));
+  const allowed = new Set(['--bg-active', '--border-strong', '--text', '--text-dim', '--text-faint', '--danger', '--danger-soft', '--motion-fast', '--ease-std', '--ease', '--fs-sm', '--fs-xs', '--bg']);
+  for (const token of used) assert.ok(allowed.has(token), `unexpected token ${token}`);
+});
+
+test('design: the microphone is a 38px round button like the send control, danger tint while recording', () => {
+  const mic = rule('.mic');
+  assert.match(mic, /width: 38px; height: 38px/);
+  assert.match(mic, /border-radius: 50%/);
+  assert.match(mic, /background: var\(--bg-active\); color: var\(--text-faint\)/, 'grey at rest, like the disabled send control');
+  assert.match(css, /\.mic\.rec[^{]*\{[^}]*var\(--danger-soft\)[^}]*var\(--danger\)/, 'the app\'s stop button look');
+  assert.match(css, /\.mic svg \{[^}]*width: 19px; height: 19px;[^}]*stroke-width: 2\.1/, 'the send icon size and stroke');
+  assert.match(css, /\.mic:active:not\(:disabled\) \{ transform: scale\(0\.9\)/);
+  const micRules = css.split('\n').filter((l) => /^\s*\.mic/.test(l)).join('\n');
+  assert.ok(micRules && !/opacity/.test(micRules), 'unavailable states use pre-mixed colours, not opacity (only the recording dot pulses)');
+  assert.ok(!/outline/.test(mic), 'the keyboard focus ring is the app\'s own');
+});
+
+test('design: status chips are padded pills no taller than the buttons, and give way before the send control does', () => {
+  const chip = rule('.chip');
+  assert.match(chip, /padding: 0 12px/);
+  assert.match(chip, /border-radius: 999px/);
+  assert.match(chip, /height: 28px/);
+  assert.match(chip, /min-width: 0/);
+  assert.match(css, /\.chip \.txt \{[^}]*text-overflow: ellipsis/, 'a long text is cut inside the chip');
+  assert.match(css, /@media \(max-width: 480px\) \{ \.chip \{ max-width: 8em/);
+  assert.match(css, /\.vi \{[^}]*gap: 6px/);
+  const send = pkg.components.VoiceSend.match(/<style>([\s\S]*)<\/style>/)[1];
+  assert.match(send, /\.vs \{[^}]*gap: 4px/, 'the app\'s own gap between its round buttons');
+});
+
+test('design: the cancel button sits inside the recording chip, and the timer is not announced every second', () => {
+  const markup = source.replace(/<script>[\s\S]*?<\/script>/, '').replace(/<style>[\s\S]*<\/style>/, '');
+  assert.match(markup, /<span class="chip live">[\s\S]*<button type="button" class="x"[\s\S]*<\/button>\s*<\/span>/);
+  assert.match(markup, /<span class="sr" role="status" aria-live="polite">/);
+  assert.ok(!/class="status"[^>]*aria-live/.test(markup), 'the visible chips are not a live region (the timer would be read out every second)');
+  assert.match(markup, /class="txt" aria-hidden="true">\{formatTime\(elapsed\)\}/);
+});
+
+test('design: reduced motion stops the spinner, the pulse and the press animation', () => {
+  const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
+  assert.match(reduced, /\.spin, \.dot \{ animation: none; \}/);
+  assert.match(reduced, /\.mic, \.x \{ transition: none; \}/);
+  assert.match(reduced, /\.mic:active:not\(:disabled\) \{ transform: none; \}/);
 });
