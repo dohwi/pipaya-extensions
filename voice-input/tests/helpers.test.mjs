@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   pickMimeType, extensionFor, formatTime, joinDraft, endpoint, originOf, checkBase, withScheme, isLoopbackHost, pathOf, DEFAULT_TRANSCRIBE_PATH, buildForm, usesLanguagesList, micErrorKind, httpErrorKind,
   parseShortcut, conflictsWithApp, holdVerdict, shortcutLabel, shortcutHint, shortcutReason, SHORTCUT_MIN_HOLD_MS,
-  TAP_MS, SHORTCUT_MODES, shortcutMode, modeLabel, releaseAction, waveLevels, smoothLevels, shortcutCombo,
+  TAP_MS, SHORTCUT_MODES, shortcutMode, modeLabel, releaseAction, waveLevels, smoothLevels, shortcutCombo, SHORTCUT_ID,
   transcribe, VoiceError, message, STRINGS
 } from '../src/helpers.mjs';
 
@@ -224,12 +224,13 @@ test('a scheme-less address reaches the network over https, and loopback http as
 // Listening, key matching, IME, repeat, blur and release are the app's job now (`shortcuts.register`) and are tested there.
 // What is left here: turning the typed text into the combo the app accepts, the clash notice, the hold rule and the texts.
 
-test('an empty shortcut means none: it parses to nothing and shows nothing', () => {
+test('an empty shortcut means none: it parses to nothing, shows instructions in tooltip', () => {
   for (const empty of ['', '   ', undefined, null]) {
     assert.deepEqual(parseShortcut(empty), { ok: true, combo: '' });
     assert.equal(conflictsWithApp(parseShortcut(empty), { x: 'Alt+M' }), '');
-    assert.equal(shortcutLabel(parseShortcut(empty), 'toggle', 'ko'), '', 'nothing to show in the tooltip');
-    assert.equal(shortcutHint(empty, 'hold', 'en'), '');
+    assert.equal(shortcutLabel(parseShortcut(empty), 'toggle', 'ko'), '', 'label alone is empty');
+    assert.equal(shortcutHint(empty, 'hold', 'en'), 'No shortcut · set in Settings');
+    assert.equal(shortcutHint(empty, 'hold', 'ko'), '단축키 없음 · 설정에서 지정');
   }
 });
 
@@ -298,6 +299,19 @@ test('the waveform turns frequency data into bars, low frequencies first, smooth
 });
 
 test('the shortcut combination comes from one place', () => {
+  assert.equal(SHORTCUT_ID, 'dictate');
+  // reads from a kit with currentShortcut
+  const kitWithMethod = { currentShortcut: (id) => (id === 'dictate' ? 'Alt+M' : '') };
+  assert.equal(shortcutCombo(kitWithMethod), 'Alt+M');
+  // reads from a kit with shortcuts.currentShortcut
+  const kitNested = { shortcuts: { currentShortcut: (id) => (id === 'dictate' ? 'Mod+Shift+K' : '') } };
+  assert.equal(shortcutCombo(kitNested), 'Mod+Shift+K');
+  // reads from a direct getter function
+  assert.equal(shortcutCombo((id) => (id === 'dictate' ? 'Alt+Space' : '')), 'Alt+Space');
+  // empty or unbound
+  assert.equal(shortcutCombo({ currentShortcut: () => '' }), '');
+  assert.equal(shortcutCombo({ currentShortcut: () => null }), '');
+  // backwards compatible with settings object
   assert.equal(shortcutCombo({ shortcut: '  Alt+M ' }), 'Alt+M');
   assert.equal(shortcutCombo({ shortcut: '' }), '');
   assert.equal(shortcutCombo({}), '');
@@ -330,6 +344,11 @@ test('the tooltip names the combination and the mode, in both languages', () => 
   assert.notEqual(shortcutLabel(p, 'hold', 'en'), shortcutLabel(p, 'hold', 'ko'));
   assert.match(shortcutHint('mod+k', 'toggle', 'en'), /^(Ctrl|⌘)\+K · /);
   assert.equal(shortcutHint('Alt+Q+W', 'toggle', 'en'), '', 'an invalid combination shows nothing');
+  // empty or no shortcut shows instructions to configure in Settings
+  assert.equal(shortcutHint('', 'both', 'ko'), '단축키 없음 · 설정에서 지정');
+  assert.equal(shortcutHint('', 'both', 'en'), 'No shortcut · set in Settings');
+  assert.equal(shortcutHint(null, 'both', 'ko'), '단축키 없음 · 설정에서 지정');
+  assert.equal(shortcutHint(undefined, 'both', 'en'), 'No shortcut · set in Settings');
 });
 
 test('the app\'s refusal is passed on short and on one line', () => {

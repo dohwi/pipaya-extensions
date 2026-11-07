@@ -84,25 +84,24 @@ Everything else is allowed. On a page that is *not* https (for example `http://l
 
 ## Keyboard shortcut
 
-**There is no default shortcut.** While `shortcut` is empty nothing is registered. Type your own combination in the extension settings; it applies at once, no restart. **Needs pipaya 0.7.1 or newer** (see [Permissions](#permissions)).
+**There is no default shortcut.** The shortcut starts unbound ("None"). You can assign your own combination directly in Pipaya's **Settings → Shortcuts** (under "Extensions"); it applies at once with no restart. **Needs pipaya 0.7.2 or newer** (see [Permissions](#permissions)).
 
-- **Format**: the same notation as pipaya's own shortcuts. `Mod` is Ctrl (⌘ on macOS), then optionally `Alt` and `Shift`, then **one** key: `Alt+M`, `Mod+Shift+K`, `Alt+Space`. Case does not matter (`ctrl+shift+k` works). pipaya requires `Mod` or `Alt` (so it never types a letter into the input box), so a lone F-key is not accepted. `Esc`, `Enter`, `Tab` and `Backspace` are not allowed.
-- **`both`** (default): tap briefly (< 0.3 s) to start and keep recording (tap again to stop), or hold down (≥ 0.3 s) for push to talk — releasing stops and transcribes. If the window loses focus, the tab is hidden, or you record a shortcut in Settings, it stops and transcribes at once.
+- **Format & Assignment**: Managed through Pipaya's central shortcut settings. Press the combination in the key recorder. pipaya requires `Mod` (Ctrl, or ⌘ on macOS) or `Alt` plus **one** key: `Alt+M`, `Mod+Shift+K`, `Alt+Space`. Reserved keys (`Esc`, `Enter`, `Tab`, `Backspace`) or clashes with built-in app shortcuts are rejected directly in the settings UI.
+- **Unbound hint**: When no shortcut is assigned, the microphone button's tooltip displays `(No shortcut · set in Settings)`. Once assigned, it shows the active combination and mode.
+- **`both`** (default mode, in extension settings): tap briefly (< 0.3 s) to start and keep recording (tap again to stop), or hold down (≥ 0.3 s) for push to talk — releasing stops and transcribes. If the window loses focus, the tab is hidden, or you record a shortcut in Settings, it stops and transcribes at once.
 - **`toggle`**: press once to start recording, press again to stop, transcribe and append. It does exactly what clicking the microphone does.
-- **`hold`**: record while the keys are held; releasing them stops, transcribes and appends. A press shorter than 0.3 s is thrown away silently (nothing is uploaded), so an accidental tap does nothing. If the window loses focus, the tab is hidden, or you start recording a shortcut in Settings while the key is down, recording ends the same way (and the microphone is always closed).
+- **`hold`**: record while the keys are held; releasing them stops, transcribes and appends. A press shorter than 0.3 s is thrown away silently (nothing is uploaded), so an accidental tap does nothing.
 - The shortcut works while the input box has focus. pipaya ignores it during Korean (or other IME) composition and ignores key auto-repeat.
-- It is listed in **Settings → Shortcuts** (group "Extensions") with the extension's name. If pipaya's own shortcut uses the same keys, pipaya wins and that screen says so.
-- The microphone tooltip shows the combination and the mode when one is set.
-- Like the button, it explains why it cannot start (no address, no key, offline, page not https) instead of failing silently.
 - With several panes open, only the pane that has focus answers the shortcut.
-
-**If pipaya already uses the combination** (for example `Mod+M`, the model picker, or `Mod+N`), pipaya handles the key first and wins; the extension tells you once, when you save the setting ("shortcut taken"). If another extension already holds the same combination, or pipaya refuses it, the reason pipaya gives is shown instead. Pick another combination. A combination the browser or your OS reserves (for example `Ctrl+W`, `Alt+Tab`) may never reach the page at all.
+- Clearing the shortcut (✕ in Settings → Shortcuts) immediately unbinds it and returns the tooltip to the "No shortcut" hint.
 
 ## Recording format
 
 The browser's own `MediaRecorder` format is uploaded as is (Chrome/Firefox: `audio/webm` opus, Safari: `audio/mp4`), named `voice.webm` / `voice.m4a`. The documentation of [OpenAI](https://developers.openai.com/api/docs/guides/speech-to-text) and [Groq](https://console.groq.com/docs/speech-to-text) lists webm and m4a among the accepted formats. For any other service, including Mistral (its pages did not list the accepted file formats when this was written), check that service's documentation. No WAV conversion is done.
 
 ## Upgrading
+
+0.6.0 migrates shortcut combination management from the extension settings to Pipaya's central **Settings → Shortcuts** screen (**pipaya 0.7.2 or newer**). The extension settings no longer contain a `shortcut` text field, preventing duplicate configuration and conflicting shortcuts. Any `shortcut` value previously entered in the extension settings (0.5.0 and older) is ignored upon upgrade; simply set your preferred combination once in **Settings → Shortcuts**. The `shortcutMode` setting (`both`, `toggle`, `hold`) remains in the extension settings. When unbound, the tooltip hints "No shortcut · set in Settings".
 
 0.5.0 adds a full-box frosted recording overlay with a live audio level waveform, prominent elapsed time, and dedicated cancel / stop buttons while keeping the bottom bar directly clickable. The recording stop button uses a distinct mic-with-dot icon so it is never confused with pipaya's agent stop square. The shortcut mode now defaults to `both` (tap toggles, hold to talk).
 
@@ -123,9 +122,9 @@ No core change is needed. In pipaya: **Settings → (your server tab) → edit**
 | Permission | Why |
 | --- | --- |
 | `ui-components` | Replaces the app's `composer.send` part so the microphone sits right beside the send button. The original send control is still drawn by the app (`fallback`), untouched. The microphone and upload are done by the component itself (`getUserMedia`, `fetch`), so no `http`, `composer`, `storage` or `context` permission is requested. |
-| `shortcuts` | Registers the optional keyboard shortcut through pipaya's own shortcut API. The consent screen shows it as "Register shortcuts". Nothing is registered until you type a combination in the settings. |
+| `shortcuts` | Registers the voice input shortcut through pipaya's own shortcut API. The consent screen shows it as "Register shortcuts". The shortcut combination is assigned and customized in Settings → Shortcuts. |
 
-**pipaya 0.7.1 or newer is needed for the keyboard shortcut.** Older versions have no shortcut API for components: the extension still installs and the microphone button works as before, only the shortcut is unavailable (a notice says "Update pipaya" if you type one).
+**pipaya 0.7.2 or newer is needed for the keyboard shortcut.** Older versions lack the user-configurable extension shortcut and reactive getter API: the extension still installs and the microphone button works, but shortcut customization in Settings is unavailable.
 
 ### Replacing `composer.send`
 

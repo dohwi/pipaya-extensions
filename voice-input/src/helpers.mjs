@@ -211,13 +211,14 @@ export const STRINGS = {
     needBaseShort: '주소 필요',
     shortcutBad: '단축키 형식이 올바르지 않습니다. Alt+M, Mod+Shift+K처럼 Ctrl(Mod)/Alt와 키 하나로 쓰세요.',
     shortcutBadShort: '단축키 오류',
-    shortcutUnsupported: '이 pipaya 버전에서는 단축키를 쓸 수 없습니다. pipaya 0.7.1 이상으로 올리세요. 마이크 버튼은 그대로 동작합니다.',
+    shortcutUnsupported: '이 pipaya 버전에서는 단축키를 쓸 수 없습니다. pipaya 0.7.2 이상으로 올리세요. 마이크 버튼은 그대로 동작합니다.',
     shortcutUnsupportedShort: '앱 업데이트 필요',
     shortcutRefused: '단축키를 등록하지 못했습니다: {reason}',
     shortcutRefusedShort: '단축키 거부됨',
     shortcutLabel: '음성 입력',
     shortcutConflict: '이 단축키는 pipaya의 다른 기능이 이미 씁니다. 앱 단축키가 먼저 동작하니 다른 조합을 고르세요.',
     shortcutConflictShort: '단축키 충돌',
+    noShortcut: '단축키 없음 · 설정에서 지정',
     modeToggle: '누르면 시작/다시 누르면 정지',
     modeHold: '누르고 있는 동안 녹음',
     modeBoth: '짧게 누르면 시작/정지, 길게 누르면 누르는 동안',
@@ -280,13 +281,14 @@ export const STRINGS = {
     needBaseShort: 'Address needed',
     shortcutBad: 'The shortcut is not valid. Use Ctrl (Mod) or Alt plus one key, for example Alt+M or Mod+Shift+K.',
     shortcutBadShort: 'Bad shortcut',
-    shortcutUnsupported: 'This version of pipaya has no extension shortcuts. Update pipaya to 0.7.1 or newer. The microphone button still works.',
+    shortcutUnsupported: 'This version of pipaya has no extension shortcuts. Update pipaya to 0.7.2 or newer. The microphone button still works.',
     shortcutUnsupportedShort: 'Update pipaya',
     shortcutRefused: 'The shortcut could not be registered: {reason}',
     shortcutRefusedShort: 'Shortcut refused',
     shortcutLabel: 'Dictate',
     shortcutConflict: 'pipaya already uses this shortcut for something else, and the app wins. Choose another combination.',
     shortcutConflictShort: 'Shortcut taken',
+    noShortcut: 'No shortcut · set in Settings',
     modeToggle: 'press to start, press again to stop',
     modeHold: 'hold to record',
     modeBoth: 'tap to start or hold to talk',
@@ -407,8 +409,12 @@ export function shortcutLabel(parsed, mode, lang) {
   return `${text} · ${modeLabel(mode, lang)}`;
 }
 
-// The tooltip text for what the user typed (nothing for an empty or invalid combination).
-export const shortcutHint = (text, mode, lang) => shortcutLabel(parseShortcut(text), mode, lang);
+// The tooltip text for what the user typed (nothing for an invalid combination, "no shortcut" when empty).
+export function shortcutHint(combo, mode, lang) {
+  const raw = String(combo ?? '').trim();
+  if (!raw) return message(lang, 'noShortcut');
+  return shortcutLabel(parseShortcut(raw), mode, lang);
+}
 
 // The app's own refusal text (for example "another extension already uses this shortcut"), short enough for a notice.
 export function shortcutReason(error) {
@@ -467,7 +473,18 @@ export function smoothLevels(previous, next, factor = 0.5) {
 }
 
 // ── where the shortcut combination comes from ───────────────────────────────────────────────────────────────────────
-// One place to change when the app can hold extension shortcuts itself (Settings > Shortcuts). Today it is the extension's
-// own `shortcut` setting, used verbatim.
-export const shortcutCombo = (settings) => String(settings?.shortcut ?? '').trim();
+export const SHORTCUT_ID = 'dictate';
+
+// One place to read the shortcut combination from: Pipaya Core's reactive `shortcuts.currentShortcut(id)`
+// (or `kit.currentShortcut(id)`). Returns "" when unset or cleared in Settings > Shortcuts.
+// Also supports passing a getter function or legacy settings object with .shortcut for backwards compatibility.
+export function shortcutCombo(source, id = SHORTCUT_ID) {
+  if (typeof source === 'function') return String(source(id) ?? '').trim();
+  if (source && typeof source === 'object') {
+    const fn = source.currentShortcut ?? source.shortcuts?.currentShortcut;
+    if (typeof fn === 'function') return String(fn(id) ?? '').trim();
+    if ('shortcut' in source) return String(source.shortcut ?? '').trim();
+  }
+  return '';
+}
 

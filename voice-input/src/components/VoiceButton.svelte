@@ -274,14 +274,12 @@
 	}
 
 	// ── keyboard shortcut ───────────────────────────────────────────────────────────────────────────────────────────
-	// Registered through the app's own `shortcuts` API (needs the `shortcuts` permission, app 0.7.1 or newer): the app checks the
-	// combination against its own shortcuts (they win), ignores IME composition and key repeat, tells a release from a blur or a
-	// hidden tab, and lists the shortcut in Settings > Shortcuts. No default: while the setting is empty nothing is registered.
-	// The combination comes from one place (`shortcutCombo` in the helpers), so moving it to the app's own settings later
-	// touches only that function.
-	const COMBO = $derived(shortcutCombo(ext.settings));
+	// Registered through Pipaya Core's shortcut API (needs pipaya 0.7.2+, permissions: ["ui-components", "shortcuts"]).
+	// Registered without an initial combo (defaultCombo: null / "none"): the user sets, customizes or clears the combo
+	// in Settings > Shortcuts. The current combo is read through the reactive getter `kit.currentShortcut("dictate")`.
+	const currentCombo = $derived(shortcutCombo(kit, SHORTCUT_ID));
 	const mode = $derived(shortcutMode(ext.settings?.shortcutMode)); // both (default) | toggle | hold
-	const hint = $derived(shortcutHint(COMBO, mode, lang));
+	const hint = $derived(shortcutHint(currentCombo, mode, lang));
 	const pane_ = pane; // the component is mounted once per pane: only the focused pane's microphone answers the keys
 	let pressedAt = 0; // when the shortcut keys went down; 0 = not pressed
 	let startedByPress = false; // the recording was started by that press
@@ -313,35 +311,18 @@
 		void begin();
 	}
 
-	// A notice writes the app's toast list (it reads it too): told from inside an effect it must not become a dependency of it.
-	// A bad or taken combination is told once per value, not again every time the effect runs.
-	let toldFor = "";
-	const tell = (key, params) => untrack(() => {
-		const id = `${key}:${COMBO}`;
-		if (toldFor === id) return;
-		toldFor = id;
-		say(key, params);
-	});
-
 	$effect(() => {
-		const parsed = parseShortcut(COMBO);
-		if (!parsed.combo && parsed.ok) return; // empty: no shortcut
-		if (!parsed.ok) return void tell("shortcutBad");
-		const combo = parsed.combo;
-		if (typeof kit.shortcuts?.register !== "function") return void tell("shortcutUnsupported"); // an app older than 0.7.1: the button still works
+		if (typeof kit.shortcuts?.register !== "function") return; // an app older than 0.7.1: the button still works
 		let off;
 		try {
 			// `toggle` only needs the press; `both` and `hold` need the release as well (that is what makes it a hold).
 			const handlers = mode === "toggle" ? { down: onShortcut } : { down: onShortcut, up: onShortcut };
 			// `register` reads and writes the app's list of shortcuts. Read inside this effect, that list would become one of its
 			// own dependencies and the effect would trigger itself without end, so the call is made untracked.
-			off = untrack(() => kit.shortcuts.register({ id: "dictate", label: tr("shortcutLabel"), combo }, handlers));
-		} catch (error) {
-			return void tell("shortcutRefused", { reason: shortcutReason(error) });
+			off = untrack(() => kit.shortcuts.register({ id: SHORTCUT_ID, label: tr("shortcutLabel") }, handlers));
+		} catch {
+			/* registration failed: Pipaya version or invalid state */
 		}
-		// An app shortcut on the same keys wins and this one would never fire: tell the user once.
-		const taken = conflictsWithApp(parsed, app.prefs?.bindings);
-		if (taken) tell("shortcutConflict");
 		return () => untrack(() => { off?.(); endPress("removed"); }); // a held recording must not outlive its shortcut (and removing it writes the list too)
 	});
 

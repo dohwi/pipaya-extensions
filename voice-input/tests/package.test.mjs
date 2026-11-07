@@ -21,7 +21,7 @@ test('package is a single ui-components extension with no worker code', () => {
 
 test('settings: no built-in address, required origin and secret key, standard default path, device-local scope', () => {
   const byKey = Object.fromEntries(pkg.manifest.settings.map((f) => [f.key, f]));
-  assert.deepEqual(Object.keys(byKey), ['apiBase', 'transcribePath', 'apiKey', 'model', 'language', 'shortcut', 'shortcutMode']);
+  assert.deepEqual(Object.keys(byKey), ['apiBase', 'transcribePath', 'apiKey', 'model', 'language', 'shortcutMode']);
   assert.ok(!('format' in byKey.apiBase), 'no origin format: a scheme-less address must still be savable (it is read as https at run time)');
   assert.equal(byKey.apiBase.required, true);
   assert.ok(!('default' in byKey.apiBase), 'the user enters their own address');
@@ -36,7 +36,7 @@ test('settings: no built-in address, required origin and secret key, standard de
   assert.ok(!('default' in byKey.model) && !byKey.model.required, 'no service-specific model is assumed');
   assert.equal(byKey.language.default, 'ko');
   assert.equal(pkg.manifest.settingsScope, 'local');
-  assert.equal(pkg.manifest.version, '0.5.0');
+  assert.equal(pkg.manifest.version, '0.6.0');
 });
 
 test('component hard-codes no service route', () => {
@@ -116,31 +116,24 @@ test('the component passes the page protocol, so http providers work from an htt
   assert.match(source, /pageProtocol: location\.protocol/);
 });
 
-test('shortcut settings: no default combination, `both` is the default mode, three modes offered', () => {
+test('shortcut settings: shortcut key managed in app settings, `both` is the default mode, three modes offered', () => {
   const byKey = Object.fromEntries(pkg.manifest.settings.map((f) => [f.key, f]));
-  assert.equal(byKey.shortcut.type, 'string');
-  assert.ok(!('default' in byKey.shortcut) && !byKey.shortcut.required, 'unassigned until the user sets it');
-  assert.match(byKey.shortcut.placeholder, /^Alt\+M$/);
+  assert.ok(!('shortcut' in byKey), 'the combo setting was moved to the app\'s own Settings > Shortcuts');
   assert.equal(byKey.shortcutMode.type, 'select');
   assert.equal(byKey.shortcutMode.default, 'both', 'tap toggles, a longer press is push to talk');
   assert.deepEqual(byKey.shortcutMode.options.map((o) => o.value), ['both', 'toggle', 'hold']);
   assert.ok(pkg.manifest.settings.length <= 20);
 });
 
-test('shortcut wiring: the app\'s shortcut API only, registered for a set combination, removed on teardown', () => {
+test('shortcut wiring: the app\'s shortcut API only, registered without default combo, removed on teardown', () => {
   const code = source.replace(/<style[\s\S]*<\/style>/, '').replace(/<script module>[\s\S]*?<\/script>/, '');
   assert.ok(!/addEventListener|removeEventListener|onkeydown|onkeyup|visibilitychange|isComposing|defaultPrevented/.test(code.replace(/\/\/.*$/gm, '')), 'no key listeners of its own: the app does that');
-  const effect = code.slice(code.indexOf('$effect(() => {\n\t\tconst parsed'), code.indexOf('onDestroy(() => {'));
-  assert.match(effect, /if \(!parsed\.combo && parsed\.ok\) return;/, 'empty = nothing registered');
-  assert.match(effect, /typeof kit\.shortcuts\?\.register !== "function"\) return void tell\("shortcutUnsupported"\)/, 'an app without the API: say so, keep the button');
+  const effect = code.slice(code.indexOf('$effect(() => {\n\t\tif (typeof kit.shortcuts?.register'), code.indexOf('onDestroy(() => {'));
+  assert.match(effect, /typeof kit\.shortcuts\?\.register !== "function"\) return/, 'an app without the API: keep the button');
   assert.match(effect, /mode === "toggle" \? \{ down: onShortcut \} : \{ down: onShortcut, up: onShortcut \}/, 'toggle registers down only; both and hold need the release too');
   assert.match(effect, /return \(\) => untrack\(\(\) => \{ off\?\.\(\); endPress\("removed"\); \}\)/, 'the cleanup removes the shortcut and ends a held recording, untracked');
-  assert.match(effect, /off = untrack\(\(\) => kit\.shortcuts\.register\(/, 'register reads and writes the app\'s shortcut list: untracked, or the effect would trigger itself');
-  assert.match(effect, /catch \(error\) \{\s*return void tell\("shortcutRefused"/, 'the app\'s refusal is shown');
-  assert.match(effect, /conflictsWithApp\(parsed, app\.prefs\?\.bindings\)/);
-  assert.ok(!/\bsay\(/.test(effect), 'notices go through `tell` (untracked): `say` writes the app\'s toast list, and inside an effect that would loop forever');
-  assert.match(code, /const tell = \(key, params\) => untrack\(\(\) => \{[\s\S]*?toldFor === id\) return;[\s\S]*?say\(key, params\);/, 'each notice is told once per value');
-  const handler = code.slice(code.indexOf('function onShortcut'), code.indexOf('$effect(() => {\n\t\tconst parsed'));
+  assert.match(effect, /off = untrack\(\(\) => kit\.shortcuts\.register\(\{ id: SHORTCUT_ID, label: tr\("shortcutLabel"\) \}, handlers\)\)/, 'register without combo: starts as "none", customized in Settings > Shortcuts');
+  const handler = code.slice(code.indexOf('function onShortcut'), code.indexOf('$effect(() => {\n\t\tif (typeof kit.shortcuts?.register'));
   assert.match(handler, /if \(!pane_\.focused\) return;/, 'only the focused pane answers');
   assert.match(handler, /event\?\.phase === "up"\) return endPress\(event\.reason \?\? "release"\)/);
   assert.match(handler, /if \(mode === "toggle"\) return onclick\(\);/, 'toggle is the button\'s own handler');
@@ -300,10 +293,10 @@ test('overlay: the recording icon is not the app\'s stop square', () => {
 
 test('both mode is wired: press starts, release decides, toggle keeps its single handler', () => {
   const code = source.replace(/<style>[\s\S]*<\/style>/, '');
-  const handler = code.slice(code.indexOf('function onShortcut'), code.indexOf('$effect(() => {\n\t\tconst parsed'));
+  const handler = code.slice(code.indexOf('function onShortcut'), code.indexOf('$effect(() => {\n\t\tif (typeof kit.shortcuts?.register'));
   assert.match(handler, /if \(mode === "toggle"\) return onclick\(\);/);
   assert.match(handler, /if \(phase === "recording"\) return void onclick\(\);/, 'a second press stops');
   assert.match(handler, /pressedAt = performance\.now\(\);\s*startedByPress = true;\s*void begin\(\);/, 'both and hold start on the press');
   assert.match(code, /const mode = \$derived\(shortcutMode\(ext\.settings\?\.shortcutMode\)\)/, 'three modes, both by default');
-  assert.match(code, /const COMBO = \$derived\(shortcutCombo\(ext\.settings\)\)/, 'the combination comes from one helper');
+  assert.match(code, /const currentCombo = \$derived\(shortcutCombo\(kit, SHORTCUT_ID\)\)/, 'the combination comes from one helper');
 });
