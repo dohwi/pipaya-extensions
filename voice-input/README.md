@@ -2,6 +2,18 @@
 
 # voice-input
 
+> [!IMPORTANT]
+> **Superseded by pipaya's built-in voice input (pipaya 0.8.0+)**
+> Voice input is built directly into pipaya starting with **v0.8.0** (Settings → Voice input, server-relayed transcription, and a composer microphone button).
+> This extension is **superseded**. If both are enabled, two microphone buttons appear and settings exist in two places.
+>
+> **How to migrate:**
+> 1. In pipaya, go to **Settings → Voice input**.
+> 2. Re-enter your server address, transcription path, model name, and API key, then click **Check connection**.
+> 3. Turn off (or remove) this extension in **Settings → Client extensions**.
+>
+> The setup instructions below are **only needed on pipaya < 0.8**.
+
 A microphone button in the [pipaya](https://github.com/dohwi/pipaya) composer. Press it, speak, press again: the audio is sent to **any OpenAI-compatible transcription API** and the text is appended to the input box. It never sends the message for you.
 
 | Recording | Settings | Done (390 px, dark) |
@@ -14,7 +26,7 @@ A microphone button in the [pipaya](https://github.com/dohwi/pipaya) composer. P
 - pipaya opened over **HTTPS** (or `http://localhost`) so the microphone can start. On an https page the transcription server must be `https://` too. See [HTTPS](#https).
 - When pipaya is on HTTPS, its own **server address must be HTTPS too** (mixed content is blocked). See [Server address](#server-address-https).
 
-## Install
+## Install (pipaya < 0.8 only)
 
 1. `npm run build` (or take `dist/voice-input.json`).
 2. pipaya **Settings → Client extensions → Add extension**, choose `dist/voice-input.json`, import (starts disabled).
@@ -100,6 +112,8 @@ Everything else is allowed. On a page that is *not* https (for example `http://l
 The browser's own `MediaRecorder` format is uploaded as is (Chrome/Firefox: `audio/webm` opus, Safari: `audio/mp4`), named `voice.webm` / `voice.m4a`. The documentation of [OpenAI](https://developers.openai.com/api/docs/guides/speech-to-text) and [Groq](https://console.groq.com/docs/speech-to-text) lists webm and m4a among the accepted formats. For any other service, including Mistral (its pages did not list the accepted file formats when this was written), check that service's documentation. No WAV conversion is done.
 
 ## Upgrading
+
+0.6.1 marks this extension as superseded by pipaya 0.8.0's built-in voice input. No functional changes; use Settings → Voice input instead.
 
 0.6.0 migrates shortcut combination management from the extension settings to Pipaya's central **Settings → Shortcuts** screen (**pipaya 0.7.2 or newer**). The extension settings no longer contain a `shortcut` text field, preventing duplicate configuration and conflicting shortcuts. Any `shortcut` value previously entered in the extension settings (0.5.0 and older) is ignored upon upgrade; simply set your preferred combination once in **Settings → Shortcuts**. The `shortcutMode` setting (`both`, `toggle`, `hold`) remains in the extension settings. When unbound, the tooltip hints "No shortcut · set in Settings".
 

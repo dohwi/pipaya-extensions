@@ -2,6 +2,18 @@
 
 # voice-input
 
+> [!IMPORTANT]
+> **pipaya 앱 내장 음성 입력으로 대체됨 (pipaya 0.8.0 이상)**
+> pipaya **v0.8.0**부터 음성 입력 기능이 **앱에 공식 내장**되었습니다(설정 → 음성 입력, 서버 중계 전사, 연결 확인 통과 시 입력창 마이크).
+> 따라서 이 확장은 **대체(superseded)**되었습니다. 둘 다 켜져 있으면 마이크 버튼이 두 개 뜨고 설정도 두 군데로 나뉘어 혼란스럽습니다.
+>
+> **이전 방법:**
+> 1. pipaya **설정 → 음성 입력** 탭으로 이동합니다.
+> 2. 서버 주소(API base), 전사 경로, 모델 이름, API 키를 다시 입력하고 **연결 확인**을 누릅니다.
+> 3. **설정 → 클라이언트 확장**에서 이 `Voice Input` 확장을 끕니다(또는 삭제).
+>
+> 아래 설치 및 설정 문서는 **pipaya 0.8 미만에서만 필요**합니다.
+
 [pipaya](https://github.com/dohwi/pipaya) 입력창의 마이크 버튼입니다. 누르고 말하고 다시 누르면 음성을 **OpenAI 호환 음성 인식 API**로 보내 받아쓴 글을 입력창에 붙여 넣습니다. 메시지를 대신 보내지는 않습니다.
 
 | 녹음 중 | 설정 | 완료 (390px, 다크) |
@@ -14,7 +26,7 @@
 - 마이크가 켜지도록 **HTTPS**(또는 `http://localhost`)로 연 pipaya. https 페이지에서는 음성 인식 서버도 `https://`여야 합니다. [HTTPS](#https) 참고.
 - pipaya가 HTTPS이면 pipaya의 **서버 주소도 HTTPS**여야 합니다(혼합 콘텐츠 차단). [서버 주소](#서버-주소-https) 참고.
 
-## 설치
+## 설치 (pipaya 0.8 미만에서만 필요)
 
 1. `npm run build` (또는 `dist/voice-input.json` 사용).
 2. pipaya **설정 → 클라이언트 확장 → 확장 추가**에서 `dist/voice-input.json`을 가져옵니다(비활성으로 시작).
@@ -100,6 +112,8 @@
 브라우저 `MediaRecorder`의 기본 포맷을 그대로 올립니다(Chrome/Firefox는 `audio/webm` opus, Safari는 `audio/mp4`). 파일 이름은 `voice.webm` / `voice.m4a`입니다. [OpenAI](https://developers.openai.com/api/docs/guides/speech-to-text)와 [Groq](https://console.groq.com/docs/speech-to-text)의 공식 문서는 webm과 m4a를 지원 포맷으로 명시합니다. Mistral을 포함한 다른 서비스는 문서에 지원 파일 형식 목록이 확인되지 않았으니(작성 시점) 해당 서비스 문서를 확인하세요. WAV 변환은 하지 않습니다.
 
 ## 업그레이드
+
+0.6.1은 pipaya 0.8.0의 앱 내장 음성 입력으로 대체됨(superseded)을 안내합니다. 기능 변경은 없으며, 설정 → 음성 입력을 사용하세요.
 
 0.6.0은 단축키 조합 지정을 확장 설정에서 Pipaya 앱의 중앙 **설정 → 단축키** 화면으로 이전했습니다(**pipaya 0.7.2 이상**). 확장 설정에서 `shortcut` 필드가 제거되어 이중 관리 및 불일치가 해소되었습니다. 이전 0.5.0 이하의 확장 설정에 입력해 두었던 단축키 값은 업그레이드 시 무시되므로, **설정 → 단축키**에서 원하는 조합을 1회 새로 지정해 주세요. `shortcutMode`(`both`, `toggle`, `hold`)는 확장 설정에서 계속 관리할 수 있습니다. 단축키가 미지정된 상태에서는 툴팁에 "단축키 없음 · 설정에서 지정" 안내가 표시됩니다.
 

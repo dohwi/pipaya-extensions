@@ -1,9 +1,9 @@
 {
   "id": "voice-input",
   "name": "Voice Input",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "sdkVersion": 1,
-  "description": "입력창에 마이크 버튼을 추가합니다. 말한 내용을 OpenAI 호환 음성 인식 API(OpenAI, Groq, Mistral, 로컬 Whisper 등)로 받아써서 입력창에 넣습니다. / Adds a microphone button to the composer and dictates through any OpenAI-compatible transcription API.",
+  "description": "[대체됨] pipaya 0.8.0부터 음성 입력이 앱에 내장되었습니다. 설정 > 음성 입력을 쓰고 이 확장은 끄세요. 입력창에 마이크 버튼을 추가합니다. 말한 내용을 OpenAI 호환 음성 인식 API(OpenAI, Groq, Mistral, 로컬 Whisper 등)로 받아써서 입력창에 넣습니다. / [Superseded] Built into pipaya 0.8.0+; use Settings > Voice input and turn this extension off. Adds a microphone button to the composer and dictates through any OpenAI-compatible transcription API.",
   "permissions": [
     "ui-components",
     "shortcuts"

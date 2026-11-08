@@ -1,7 +1,7 @@
 {
   "name": "pipaya-extension-voice-input",
-  "version": "0.6.0",
-  "description": "Speak into pipaya: a microphone button in the composer sends your voice to an OpenAI-compatible transcription API (OpenAI, Groq, Mistral, a local Whisper server, ...) and puts the transcript in the input box.",
+  "version": "0.6.1",
+  "description": "[Superseded] Built into pipaya 0.8.0+; use Settings > Voice input and turn this extension off. Adds a microphone button in the composer to dictate through an OpenAI-compatible transcription API.",
   "private": true,
   "type": "module",
   "scripts": {
@@ -19,8 +19,8 @@
   "pipaya": {
     "title": "Voice Input",
     "descriptions": {
-      "en": "Adds a microphone button to the composer. Your voice is transcribed by any OpenAI-compatible speech-to-text API and the text lands in the input box.",
-      "ko": "입력창에 마이크 버튼을 추가합니다. 음성은 OpenAI 호환 음성 인식 API로 변환되어 입력창에 들어갑니다."
+      "en": "[Superseded] Built into pipaya 0.8.0+; use Settings > Voice input and turn this extension off. Adds a microphone button to the composer.",
+      "ko": "[대체됨] pipaya 0.8.0부터 음성 입력이 앱에 내장되었습니다. 설정 > 음성 입력을 쓰고 이 확장은 끄세요. 입력창에 마이크 버튼을 추가합니다."
     }
   }
 }

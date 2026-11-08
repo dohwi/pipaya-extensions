@@ -36,7 +36,7 @@ test('settings: no built-in address, required origin and secret key, standard de
   assert.ok(!('default' in byKey.model) && !byKey.model.required, 'no service-specific model is assumed');
   assert.equal(byKey.language.default, 'ko');
   assert.equal(pkg.manifest.settingsScope, 'local');
-  assert.equal(pkg.manifest.version, '0.6.0');
+  assert.equal(pkg.manifest.version, '0.6.1');
 });
 
 test('component hard-codes no service route', () => {
@@ -300,3 +300,39 @@ test('both mode is wired: press starts, release decides, toggle keeps its single
   assert.match(code, /const mode = \$derived\(shortcutMode\(ext\.settings\?\.shortcutMode\)\)/, 'three modes, both by default');
   assert.match(code, /const currentCombo = \$derived\(shortcutCombo\(kit, SHORTCUT_ID\)\)/, 'the combination comes from one helper');
 });
+
+test('0.6.1 supersession notices and length bounds', async () => {
+  const rootPkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+
+  // Version alignment
+  assert.equal(pkg.manifest.version, '0.6.1');
+  assert.equal(rootPkg.version, '0.6.1');
+
+  // Manifest description: contains notice for both languages, within limits
+  assert.match(pkg.manifest.description, /0\.8\.0/);
+  assert.match(pkg.manifest.description, /대체/);
+  assert.match(pkg.manifest.description, /Superseded/i);
+  assert.ok(pkg.manifest.description.length <= 2000, 'manifest description within schema limit (2000)');
+
+  // package.json description
+  assert.match(rootPkg.description, /0\.8\.0/);
+  assert.match(rootPkg.description, /Superseded/i);
+
+  // package.json pipaya.descriptions: within 500 characters
+  assert.match(rootPkg.pipaya.descriptions.en, /0\.8\.0/);
+  assert.match(rootPkg.pipaya.descriptions.en, /Superseded/i);
+  assert.ok(rootPkg.pipaya.descriptions.en.length <= 500, 'en description within marketplace limit (500)');
+
+  assert.match(rootPkg.pipaya.descriptions.ko, /0\.8\.0/);
+  assert.match(rootPkg.pipaya.descriptions.ko, /대체/);
+  assert.ok(rootPkg.pipaya.descriptions.ko.length <= 500, 'ko description within marketplace limit (500)');
+
+  // READMEs mention supersession and migration to Settings > Voice input
+  for (const file of ['README.md', 'README.ko.md']) {
+    const text = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');
+    assert.match(text, /0\.8\.0|0\.8/, `${file}: mentions pipaya 0.8 / 0.8.0`);
+    assert.match(text, /superseded|대체/i, `${file}: marks extension as superseded`);
+    assert.match(text, /Voice input|음성 입력/, `${file}: points to Settings > Voice input`);
+  }
+});
+
