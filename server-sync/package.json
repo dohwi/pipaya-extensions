@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Mirrors the settings of a primary pipaya server onto this one (model connections, defaults, MCP servers, skills, tools).",
   "license": "MIT",
   "author": "dohwi",
@@ -11,9 +11,9 @@
       "ko": "기준(pimary) 서버의 설정을 이 서버로 그대로 가져옵니다(모델 연결, 기본값, MCP 서버, 스킬, 도구)."
     },
     "settings": [
-      { "key": "role", "type": "select", "label": "Role", "description": "primary keeps its own settings and serves them; follower pulls and applies", "default": "primary", "options": ["primary", "follower"] },
+      { "key": "role", "type": "select", "label": "Role", "description": "primary keeps its own settings and serves them; follower pulls and applies", "default": "primary", "options": [{ "value": "primary", "label": "Primary" }, { "value": "follower", "label": "Follower" }] },
       { "key": "remoteUrl", "type": "string", "label": "Peer server URL", "description": "Base URL of the other server, e.g. http://100.85.51.107:8787", "default": "" },
-      { "key": "remoteToken", "type": "string", "label": "Peer admin token", "description": "The other server's admin token (dataDir/token). Sent only to the URL above.", "default": "", "secret": true },
+      { "key": "remoteToken", "type": "string", "label": "Peer admin token", "description": "The other server's admin token (dataDir/token). Sent only to the URL above.", "secret": true },
       { "key": "intervalSeconds", "type": "number", "label": "Poll interval (seconds)", "description": "How often the follower pulls (minimum 15)", "default": 60 },
       { "key": "keys", "type": "string", "label": "Extra settings keys", "description": "Comma-separated extra settings-table keys to mirror, beyond the built-in list", "default": "" }
     ]
