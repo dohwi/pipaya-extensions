@@ -40,6 +40,26 @@ export function checkExtension(id: string, dir = join(DIR, id)): Problem[] {
 			if (JSON.parse(readFileSync(join(dir, meta.client), "utf8"))?.manifest?.id !== meta.companion) errs.push(`${meta.client}: manifest.id is not "${meta.companion}"`);
 		}
 	}
+	// `pipaya.settings` is drawn by the client's settings form, which validates it like a client manifest's `settings`
+	// (app: client/src/lib/extensions/schema.ts). One bad field hides the whole form behind a single warning, so the
+	// mistakes that do that are caught here.
+	if (meta.settings !== undefined) {
+		if (!Array.isArray(meta.settings)) errs.push("package.json: pipaya.settings must be an array");
+		else meta.settings.forEach((f: any, i: number) => {
+			const at = `pipaya.settings[${i}]`;
+			if (!f || typeof f !== "object" || Array.isArray(f)) { errs.push(`${at}: expected an object`); return; }
+			if (typeof f.key !== "string" || !/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/.test(f.key)) errs.push(`${at}.key: expected a letter followed by letters, digits or underscores`);
+			if (!["string", "number", "boolean", "select"].includes(f.type)) errs.push(`${at}.type: expected string, number, boolean or select`);
+			if (typeof f.label !== "string" || !f.label.trim()) errs.push(`${at}.label: expected a non-empty string`);
+			if (f.secret === true && "default" in f) errs.push(`${at}.default: a secret field must not have a default`);
+			if (f.type !== "select") { if ("options" in f) errs.push(`${at}.options: only select fields take options`); return; }
+			if (!Array.isArray(f.options)) { errs.push(`${at}.options: a select field needs options`); return; }
+			f.options.forEach((o: any, j: number) => {
+				if (!o || typeof o !== "object" || Array.isArray(o) || typeof o.value !== "string" || typeof o.label !== "string") errs.push(`${at}.options[${j}]: expected { "value": ..., "label": ... }`);
+			});
+			if (f.options.length < 2) errs.push(`${at}.options: a select field needs at least 2 options`);
+		});
+	}
 	return errs;
 }
 
