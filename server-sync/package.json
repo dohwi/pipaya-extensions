@@ -1,21 +1,63 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.1.1",
-  "description": "Mirrors the settings of a primary pipaya server onto this one (model connections, defaults, MCP servers, skills, tools).",
+  "version": "0.2.0",
+  "description": "Mirrors a primary pipaya server's settings onto this one: model connections, defaults, MCP servers, skills, tools.",
   "license": "MIT",
   "author": "dohwi",
   "pipaya": {
     "title": "Server Sync",
     "descriptions": {
-      "en": "Mirrors the settings of a primary pipaya server onto this one (model connections, defaults, MCP servers, skills, tools).",
-      "ko": "기준(pimary) 서버의 설정을 이 서버로 그대로 가져옵니다(모델 연결, 기본값, MCP 서버, 스킬, 도구)."
+      "en": "Mirrors a primary pipaya server's settings onto this one: model connections, defaults, MCP servers, skills, tools.",
+      "ko": "기준 서버의 설정(모델 연결, 기본값, MCP 서버, 스킬, 도구)을 이 서버로 그대로 복제합니다."
     },
     "settings": [
-      { "key": "role", "type": "select", "label": "Role", "description": "primary keeps its own settings and serves them; follower pulls and applies", "default": "primary", "options": [{ "value": "primary", "label": "Primary" }, { "value": "follower", "label": "Follower" }] },
-      { "key": "remoteUrl", "type": "string", "label": "Peer server URL", "description": "Base URL of the other server, e.g. http://100.85.51.107:8787", "default": "" },
-      { "key": "remoteToken", "type": "string", "label": "Peer admin token", "description": "The other server's admin token (dataDir/token). Sent only to the URL above.", "secret": true },
-      { "key": "intervalSeconds", "type": "number", "label": "Poll interval (seconds)", "description": "How often the follower pulls (minimum 15)", "default": 60 },
-      { "key": "keys", "type": "string", "label": "Extra settings keys", "description": "Comma-separated extra settings-table keys to mirror, beyond the built-in list", "default": "" }
+      {
+        "key": "role",
+        "type": "select",
+        "label": "역할",
+        "description": "기준 서버는 자기 설정을 그대로 두고 건네주기만 하고, 팔로워는 받아서 적용합니다.",
+        "default": "primary",
+        "options": [
+          {
+            "value": "primary",
+            "label": "기준(primary)"
+          },
+          {
+            "value": "follower",
+            "label": "팔로워(follower)"
+          }
+        ]
+      },
+      {
+        "key": "remoteUrl",
+        "type": "string",
+        "label": "상대 서버 주소",
+        "description": "기준 서버의 기본 URL입니다. 예: http://100.85.51.107:8790",
+        "default": ""
+      },
+      {
+        "key": "remoteToken",
+        "type": "string",
+        "label": "상대 서버 관리자 토큰",
+        "description": "기준 서버의 관리자 토큰(데이터 폴더의 token 파일). 위 주소로만 전송되며 로그에는 남지 않습니다.",
+        "secret": true
+      },
+      {
+        "key": "intervalSeconds",
+        "type": "number",
+        "label": "가져오기 주기(초)",
+        "description": "팔로워가 기준 서버를 확인하는 간격입니다. 최소 15초.",
+        "default": 60,
+        "min": 15,
+        "max": 86400
+      },
+      {
+        "key": "keys",
+        "type": "string",
+        "label": "추가 설정 키",
+        "description": "기본 목록 외에 함께 복제할 settings 테이블 키를 쉼표로 구분해 적습니다.",
+        "default": ""
+      }
     ]
   },
   "type": "module",

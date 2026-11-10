@@ -1,12 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { applySnapshot, effectiveKeys, hashOf, NEVER_SYNCED, readRev, readSettings, type DatabaseLike } from "./store.ts";
+import { applySnapshot, effectiveKeys, hashOf, MAX_KEYS, mirrorKeys, NEVER_SYNCED, readSettings, type DatabaseLike } from "./store.ts";
 
 /** A tiny in-memory stand-in for the sqlite handle: just enough of query().get/all/run over a Map. */
-const memDb = (rows: Record<string, unknown> = {}, seq = 7): DatabaseLike & { data: Map<string, string> } => {
+const memDb = (rows: Record<string, unknown> = {}): DatabaseLike & { data: Map<string, string> } => {
 	const data = new Map(Object.entries(rows).map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]));
 	const q = (sql: string) => ({
 		get: (...p: unknown[]) => {
-			if (sql.includes("sqlite_sequence")) return { seq };
 			if (sql.startsWith("SELECT data FROM settings")) return data.has(String(p[0])) ? { data: data.get(String(p[0])) } : undefined;
 			return undefined;
 		},
@@ -38,16 +37,30 @@ describe("effectiveKeys", () => {
 	});
 });
 
+describe("mirrorKeys", () => {
+	const fallback = ["default_model", "skills"];
+	test("the primary's list wins, so both sides agree on what a missing row means", () => {
+		expect(mirrorKeys(["skills", "mcp_servers"], fallback)).toEqual(["skills", "mcp_servers"]);
+	});
+	test("the follower's own list is the fallback for an old or damaged primary", () => {
+		expect(mirrorKeys(undefined, fallback)).toEqual(fallback);
+		expect(mirrorKeys("skills", fallback)).toEqual(fallback);
+		expect(mirrorKeys([42, "skills", ""], fallback)).toEqual(["skills"]);
+	});
+	test("never-synced keys are dropped and duplicates collapse", () => {
+		expect(mirrorKeys(["device_id", "skills", "skills", "voice_input"], fallback)).toEqual(["skills"]);
+	});
+	test("the list is capped", () => {
+		const many = Array.from({ length: MAX_KEYS + 20 }, (_, i) => `key${i}`);
+		expect(mirrorKeys(many, fallback).length).toBe(MAX_KEYS);
+	});
+});
+
 describe("readSettings", () => {
 	test("parses present rows and skips damaged ones", () => {
 		const db = memDb({ default_model: { provider: "a", model: "b" }, broken: "{not json" });
 		const out = readSettings(db, ["default_model", "broken", "missing"]);
 		expect(out).toEqual({ default_model: { provider: "a", model: "b" } });
-	});
-	test("readRev falls back to 0 without a sequence row", () => {
-		const empty: DatabaseLike = { query: () => ({ get: () => undefined, all: () => [], run: () => undefined }) };
-		expect(readRev(empty)).toBe(0);
-		expect(readRev(memDb({}, 42))).toBe(42);
 	});
 });
 
