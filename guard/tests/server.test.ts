@@ -64,4 +64,10 @@ run("guard (needs PIPAYA_APP=<pipaya>/server)", () => {
 		expect((await save({ wipe: true, disk: true, fork: true, permissions: true })).status).toBe(200);
 		expect((await runCommand("rm -rf /")).blocked).toBe(true);
 	});
+
+	test("the recursive flag counts on either side, and a plain chmod still passes", async () => {
+		expect((await runCommand("chmod 777 -R /")).blocked).toBe(true);
+		expect((await runCommand("chown root:root --recursive /")).blocked).toBe(true);
+		expect((await runCommand("chmod 644 /etc/hostname")).blocked).toBe(false);
+	});
 });

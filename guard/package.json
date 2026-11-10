@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-guard",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Blocks destructive shell commands (wiping / or ~, formatting or overwriting a disk, fork bombs) before they run.",
   "license": "MIT",
   "author": "dohwi",
