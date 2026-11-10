@@ -158,15 +158,14 @@ export default (pi: any) => {
 		return `${Math.round(h / 24)}일 전`;
 	};
 
-	/** The one line the page shows: what happened last, or what went wrong. */
+	/** The one line the page shows: a dot for the state, then what happened last. */
 	const statusText = (): string => {
-		if (role() === "primary") return "기준 서버입니다. 이 서버 설정을 다른 서버에 건네줍니다.";
-		const { url } = cfg();
-		if (!url) return "상대 서버 주소가 비어 있습니다.";
-		if (lastError) return `연결 실패: ${lastError}`;
-		if (lastSyncAt === null) return `${url} 에 아직 연결하지 못했습니다.`;
-		const what = lastApplied.length ? `${lastApplied.length}개 항목을 가져옴` : "바뀐 것 없음";
-		return `${url} 연결됨 · ${ago(lastSyncAt)} 마지막 확인 · ${what}`;
+		if (role() === "primary") return "● 기준 서버 — 다른 서버가 이 서버의 설정을 가져갑니다";
+		if (!cfg().url) return "○ 상대 서버 주소를 입력하세요";
+		if (lastError) return `✕ 연결 실패 — ${lastError}`;
+		if (lastSyncAt === null) return "○ 아직 연결하지 못했습니다";
+		const what = lastApplied.length ? `${lastApplied.length}개 항목 가져옴` : "바뀐 것 없음";
+		return `● 연결됨 — ${ago(lastSyncAt)} 확인, ${what}`;
 	};
 
 	/**
@@ -385,6 +384,8 @@ export default (pi: any) => {
 
 	const refresh = () => {
 		void fillPeerToken();
+		// The form sends the status field back with every save (an empty one for a fresh page), which would leave the
+		// line blank until the next pull. Writing it again here makes the blank last for one event, not for minutes.
 		showStatus();
 		arm();
 	};
@@ -404,6 +405,11 @@ export default (pi: any) => {
 	void fillPeerToken();
 	showStatus();
 	arm();
+	// "3분 전" goes stale between pulls, and a settings store that was not ready at load would leave the field empty.
+	const tick = setInterval(showStatus, 30_000);
+	(tick as unknown as { unref?: () => void }).unref?.();
+	setTimeout(showStatus, 1500);
+	pi.on("extension_unload", () => clearInterval(tick));
 	pi.settings.onChange(refresh);
 	pi.on("extension_unload", () => {
 		if (timer) clearTimeout(timer);

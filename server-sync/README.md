@@ -45,9 +45,15 @@ Both sides install this same extension; only the role differs. The follower hold
 
 The form is short: **연결 상태**, the role, the peer address and the code.
 
-**연결 상태** says what is happening without opening anything: `기준 서버입니다…` on the primary, and on a follower
-either `<url> 연결됨 · 3분 전 마지막 확인 · 2개 항목을 가져옴` or `연결 실패: <why>`. The extension keeps it up to date
-after every pull; typing over it is harmless because the next pull writes it again.
+**상태** says what is happening without opening anything:
+
+- `● 기준 서버 — 다른 서버가 이 서버의 설정을 가져갑니다` on the primary
+- `● 연결됨 — 3분 전 확인, 2개 항목 가져옴` on a follower that is working
+- `✕ 연결 실패 — <why>` on one that is not, `○ 상대 서버 주소를 입력하세요` before it is set up
+
+The extension rewrites it after every pull and every 30 seconds (so "3분 전" stays true), and straight away after a
+save: the form posts every field back, this one included, so a fresh page would otherwise show an empty box until
+the next pull. Typing over it is harmless.
 
 It is an ordinary string setting on purpose. A `readonly` field would read better, but that field type only exists in
 apps newer than the extension, and an extension must not require an app release to be usable.

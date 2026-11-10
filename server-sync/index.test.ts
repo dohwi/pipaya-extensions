@@ -106,7 +106,7 @@ describe("the status line on the page", () => {
 			log: () => {}, registerMethod: () => {}, emit: () => {}, on: () => {},
 		};
 		factory(pi);
-		expect(String(settings.statusText)).toContain("기준 서버");
+		expect(String(settings.statusText)).toMatch(/^● 기준 서버/);
 	});
 
 	test("a follower with no address says so, and one with an address says it is connected", async () => {
@@ -121,13 +121,34 @@ describe("the status line on the page", () => {
 			log: () => {}, registerMethod: (n: string, f: (p?: unknown) => unknown) => void methods.set(n, f), emit: () => {}, on: () => {},
 		};
 		factory(pi);
-		expect(String(settings.statusText)).toContain("주소가 비어");
+		expect(String(settings.statusText)).toMatch(/주소를 입력하세요/);
 		// Saving an address and a token is what a follower does; the line then reports the connection.
 		settings.remoteUrl = "http://127.0.0.1:9";
 		settings.remoteToken = "t";
 		await expect(Promise.resolve(methods.get("sync")!())).rejects.toThrow();
 		// The pull failed, so the line says that instead of pretending to be connected.
-		expect(String(settings.statusText)).toMatch(/연결 실패/);
+		expect(String(settings.statusText)).toMatch(/^✕ 연결 실패/);
+	});
+});
+
+describe("the status line survives a save from the form", () => {
+	test("a save that blanks it is written back at once", () => {
+		const settings: Record<string, unknown> = { role: "primary" };
+		let onChange: (() => void) | undefined;
+		const pi = {
+			settings: {
+				get: () => settings,
+				set: (next: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, next); return settings; },
+				onChange: (fn: () => void) => { onChange = fn; return () => {}; },
+			},
+			log: () => {}, registerMethod: () => {}, emit: () => {}, on: () => {},
+		};
+		factory(pi);
+		expect(String(settings.statusText)).toMatch(/^● 기준 서버/);
+		// The form posts every field back, the status one included, and a fresh page holds "".
+		settings.statusText = "";
+		onChange!();
+		expect(String(settings.statusText)).toMatch(/^● 기준 서버/);
 	});
 });
 
