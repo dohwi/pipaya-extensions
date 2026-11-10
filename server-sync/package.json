@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Mirrors a primary pipaya server's settings onto this one: model connections, defaults, MCP servers, skills, tools.",
   "license": "MIT",
   "author": "dohwi",
@@ -14,9 +14,9 @@
       {
         "key": "statusText",
         "type": "string",
-        "readonly": true,
         "label": "연결 상태",
-        "description": "이 값은 확장이 자동으로 갱신합니다."
+        "description": "확장이 자동으로 갱신합니다. 직접 고쳐도 다음 동기화 때 되돌아갑니다.",
+        "default": ""
       },
       {
         "key": "role",

@@ -170,8 +170,9 @@ export default (pi: any) => {
 	};
 
 	/**
-	 * Keep the read-only status field on the page in step. Written only when the text changes, so a timer tick that
-	 * changed nothing does not rewrite the settings file.
+	 * Keep the `연결 상태` field on the page in step. It is an ordinary string setting on purpose: a `readonly` field
+	 * would need an app release before an extension could use it, and this has to work on the app people already have.
+	 * Written only when the text changes, so a timer tick that changed nothing does not rewrite the settings file.
 	 */
 	let writing = false;
 	const showStatus = () => {
@@ -190,6 +191,7 @@ export default (pi: any) => {
 		lastSyncAt,
 		lastApplied,
 		lastError,
+		status: statusText(),
 	});
 
 	// ---- what a peer reads: the rows this server mirrors and the keys they cover ----

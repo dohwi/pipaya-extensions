@@ -43,12 +43,14 @@ Both sides install this same extension; only the role differs. The follower hold
 4. The first pull happens within one interval; `POST /server-extensions/server-sync/methods/sync` forces one
    immediately and returns what changed.
 
-The form is short: **연결 상태** (a read-only line the extension keeps up to date), the role, the peer address and the
-code. The interval and the extra keys only matter in the rare case that needs them.
+The form is short: **연결 상태**, the role, the peer address and the code.
 
 **연결 상태** says what is happening without opening anything: `기준 서버입니다…` on the primary, and on a follower
-either `<url> 연결됨 · 3분 전 마지막 확인 · 2개 항목을 가져옴` or `연결 실패: <why>`. It is a `readonly` settings field,
-so the form shows it as text and a save never touches it.
+either `<url> 연결됨 · 3분 전 마지막 확인 · 2개 항목을 가져옴` or `연결 실패: <why>`. The extension keeps it up to date
+after every pull; typing over it is harmless because the next pull writes it again.
+
+It is an ordinary string setting on purpose. A `readonly` field would read better, but that field type only exists in
+apps newer than the extension, and an extension must not require an app release to be usable.
 
 ## Methods
 
