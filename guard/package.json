@@ -1,15 +1,45 @@
 {
   "name": "pipaya-extension-guard",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Blocks destructive shell commands (wiping / or ~, formatting or overwriting a disk, fork bombs) before they run.",
   "license": "MIT",
   "author": "dohwi",
   "pipaya": {
     "title": "Guard",
     "descriptions": {
-      "en": "Blocks destructive shell commands (wiping / or ~, formatting or overwriting a disk, fork bombs) before they run.",
-      "ko": "파괴적인 셸 명령(/·~ 삭제, 디스크 포맷·덮어쓰기, 포크 폭탄)을 실행되기 전에 차단합니다."
-    }
+      "en": "Stops a bash command before it runs when it would wipe / or ~, format or overwrite a disk, fork-bomb the machine or change the permissions of the whole disk. Each family can be switched off below.",
+      "ko": "bash 명령이 /·~ 전체 삭제, 디스크 포맷·덮어쓰기, 포크 폭탄, 디스크 전체 권한 변경을 하려 하면 실행 전에 막습니다. 항목별로 아래에서 끌 수 있습니다."
+    },
+    "settings": [
+      {
+        "key": "wipe",
+        "type": "boolean",
+        "label": "디스크·홈 삭제 차단",
+        "description": "rm -rf /, rm -rf ~ 처럼 디스크나 홈 디렉터리 전체를 지우는 명령을 막습니다.",
+        "default": true
+      },
+      {
+        "key": "disk",
+        "type": "boolean",
+        "label": "디스크 포맷·덮어쓰기 차단",
+        "description": "mkfs, dd of=/dev/sdX, > /dev/nvme0n1 처럼 디스크를 포맷하거나 덮어쓰는 명령을 막습니다.",
+        "default": true
+      },
+      {
+        "key": "fork",
+        "type": "boolean",
+        "label": "포크 폭탄 차단",
+        "description": ":(){ :|:& };: 처럼 프로세스를 무한히 늘리는 명령을 막습니다.",
+        "default": true
+      },
+      {
+        "key": "permissions",
+        "type": "boolean",
+        "label": "디스크·홈 권한 변경 차단",
+        "description": "chmod -R, chown -R 을 / 나 ~ 전체에 적용하는 명령을 막습니다.",
+        "default": true
+      }
+    ]
   },
   "repository": {
     "type": "git",
