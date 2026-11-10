@@ -22,7 +22,7 @@ Extra keys can be added in the settings form (`keys`, comma separated). Keys tha
 ## What it reads, runs and sends
 
 - **Reads** the server's own SQLite database (`PIPAYA_DB`, or `<PIPAYA_DATA_DIR|~/.pipaya>/pipaya.db`) — only the `settings` table and the event counter.
-- **Network**: the follower talks to exactly one URL, the `remoteUrl` you configure, sending `POST /server-extensions/server-sync/methods/snapshot` with the `remoteToken` you configure as the Bearer header. Nothing else is sent anywhere; the primary makes no network calls at all.
+- **Network**: the follower talks to exactly one URL, the `remoteUrl` you configure: `POST /pairing/redeem` once to trade the code for a token, then `POST /server-extensions/server-sync/methods/snapshot` with that token. The primary only answers its own `/pairing` when asked for a code. Nothing else is sent anywhere.
 - The remote token is stored in the extension's own settings file (`extensions/server-sync/settings.json`, mode 0600), is never logged and never appears in the status below.
 
 ## Roles
@@ -30,27 +30,27 @@ Extra keys can be added in the settings form (`keys`, comma separated). Keys tha
 - **primary** — keeps its own settings, serves them to the peer. It never writes anything and never polls.
 - **follower** — polls the primary every `intervalSeconds` (minimum 15) and applies what it sees: rows are overwritten, rows the primary lacks are deleted. Its own conflicting edits do not survive. A failed pull is logged and retried with a growing wait (2× per miss, at most 8 intervals), so a primary that is down is not hammered.
 
-Both sides install this same extension; only the role differs. The token you put in the follower is the **primary server's admin token** (its `dataDir/token`), because the snapshot route needs admin rights.
+Both sides install this same extension; only the role differs. The follower holds a **device token** it redeemed from the primary's pairing code — revocable on the primary, never its admin token.
 
 ## Setup
 
 1. Install the extension on both servers (Settings → Server extensions → `dohwi/pipaya-extensions`, folder `server-sync`).
-2. **Primary** (`기준`): the page fills in `이 서버 주소` and `이 서버 관리자 토큰` by itself — the token read from
-   `dataDir/token`, the address from this machine's Tailscale/LAN interface (edit it if the peer should dial something
-   else). Press **새 연결 코드** to pack both into one `연결 코드` string.
-3. **Follower** (`팔로워`): paste that `연결 코드` and save. The address and token come out of the code, so there is
-   nothing else to type. (An admin token typed by hand still works, for a peer too old to issue codes.)
+2. **Primary** (`기준`): nothing to fill in. `POST .../methods/code` returns this server's address and a one-time
+   **연결 코드** (a pairing code, the app's own `POST /pairing`), valid for two minutes.
+3. **Follower** (`팔로워`): put the primary's address in `상대 서버 주소` and the code in `연결 코드`, then save. The
+   follower redeems the code at `POST /pairing/redeem` and stores the **device token** it gets back — revocable on the
+   primary (`DELETE /devices/tokens/:id`), never the primary's admin token. The code is cleared once used.
 4. The first pull happens within one interval; `POST /server-extensions/server-sync/methods/sync` forces one
    immediately and returns what changed.
 
-The connection code is not a secret of its own: it carries the primary's admin token, so treat it like the token —
-it is shown only on the primary's own settings page, and the follower clears it from its settings once unpacked.
+Three fields is the whole form: the role, the peer address, the code. The interval and the extra keys are in the
+advanced section for the rare case that needs them.
 
 ## Methods
 
 - `snapshot` — the primary's side: `{ keys, settings }`.
-- `code` — the primary's side: packs its address and admin token into one `연결 코드` (also written to the page).
-- `connect` — the follower's side: `{ code }` (or `{ url, token }`) connects and pulls once, returning the status.
+- `code` — the primary's side: `{ url, code }`, a fresh pairing code for this server.
+- `connect` — the follower's side: `{ url, code }` (or `{ url, token }`) connects and pulls once, returning the status.
 - `sync` — one pull now (follower only): `{ applied, ...status }`.
 - `status` — `{ role, url, intervalSeconds, keys, lastSyncAt, lastApplied, lastError }`, so the health of a sync can be checked without reading the log.
 

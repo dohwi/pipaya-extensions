@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Mirrors a primary pipaya server's settings onto this one: model connections, defaults, MCP servers, skills, tools.",
   "license": "MIT",
   "author": "dohwi",
@@ -15,68 +15,31 @@
         "key": "role",
         "type": "select",
         "label": "역할",
-        "description": "기준 서버는 자기 설정을 그대로 두고 건네주기만 하고, 팔로워는 받아서 적용합니다.",
+        "description": "기준 = 이 서버 설정을 건네줌. 팔로워 = 다른 서버 설정을 받아옴.",
         "default": "primary",
         "options": [
           {
             "value": "primary",
-            "label": "기준(primary)"
+            "label": "기준 (설정을 건네줌)"
           },
           {
             "value": "follower",
-            "label": "팔로워(follower)"
+            "label": "팔로워 (설정을 받아옴)"
           }
         ]
       },
       {
-        "key": "shareUrl",
+        "key": "remoteUrl",
         "type": "string",
-        "label": "이 서버 주소 (기준)",
-        "description": "팔로워가 접속할 주소입니다. 비워두면 이 PC의 Tailscale·LAN 주소를 자동으로 채웁니다.",
+        "label": "상대 서버 주소",
+        "description": "팔로워일 때만. 기준 서버 주소를 넣으세요. 예: http://100.85.51.107:8790",
         "default": ""
-      },
-      {
-        "key": "shareToken",
-        "type": "string",
-        "label": "이 서버 관리자 토큰 (기준)",
-        "description": "팔로워에게 건네줄 토큰입니다. 자동으로 채워지며, 이 화면에서 복사해 팔로워에 붙여넣을 수 있습니다.",
-        "secret": true
       },
       {
         "key": "shareCode",
         "type": "string",
         "label": "연결 코드",
-        "description": "위 주소와 토큰이 함께 담긴 값입니다. 이 값을 복사해 팔로워의 같은 칸에 붙여넣으면 주소·토큰이 한 번에 설정됩니다.",
-        "default": ""
-      },
-      {
-        "key": "remoteUrl",
-        "type": "string",
-        "label": "상대 서버 주소 (팔로워)",
-        "description": "연결 코드를 붙여넣으면 자동으로 채워집니다. 직접 넣을 때만 입력하세요. 예: http://100.85.51.107:8790",
-        "default": ""
-      },
-      {
-        "key": "remoteToken",
-        "type": "string",
-        "label": "상대 서버 관리자 토큰 (팔로워)",
-        "description": "연결 코드로 자동 설정됩니다. 직접 넣어도 됩니다.",
-        "secret": true
-      },
-      {
-        "key": "intervalSeconds",
-        "type": "number",
-        "label": "가져오기 주기(초)",
-        "description": "팔로워가 기준 서버를 확인하는 간격입니다. 최소 15초.",
-        "default": 60,
-        "min": 15,
-        "max": 86400
-      },
-      {
-        "key": "keys",
-        "type": "string",
-        "label": "추가 설정 키",
-        "description": "기본 목록 외에 함께 복제할 settings 테이블 키를 쉼표로 구분해 적습니다.",
+        "description": "기준 서버의 [연결 코드 만들기]로 받은 값을 붙여넣으세요. 2분간 유효, 1회용.",
         "default": ""
       }
     ]

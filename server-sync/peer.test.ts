@@ -58,6 +58,13 @@ beforeAll(() => {
 		port: 0,
 		async fetch(req) {
 			const url = new URL(req.url);
+			// The app's own pairing routes: a code in, a device token out.
+			if (url.pathname === "/pairing" && req.method === "POST") return Response.json({ code: "the-code", expiresAt: Date.now() + 120_000 });
+			if (url.pathname === "/pairing/redeem" && req.method === "POST") {
+				const body = (await req.json()) as { code?: string };
+				if (body.code !== "the-code") return new Response("bad code", { status: 403 });
+				return Response.json({ token: "device-token-from-pairing" });
+			}
 			const name = url.pathname.match(/^\/server-extensions\/server-sync\/methods\/(\w+)$/)?.[1];
 			const fn = name ? primary.methods.get(name) : undefined;
 			if (!fn) return new Response("no such method", { status: 404 });
@@ -95,7 +102,7 @@ describe("connecting by address alone", () => {
 		// The primary's own address is not where this test's stand-in listens, so the code is built for the loopback port.
 		const made = { result: { code: Buffer.from(JSON.stringify({ u: `http://127.0.0.1:${server!.port}`, t: "primary-admin-token" }), "utf8").toString("base64url") } };
 		const follower = boot(followerDb, dir, "follower-admin-token", { role: "primary" });
-		const result = (await follower.methods.get("connect")!({ code: made.result.code })) as {
+		const result = (await follower.methods.get("connect")!({ url: `http://127.0.0.1:${server!.port}`, code: "the-code" })) as {
 			applied: string[];
 			role: string;
 			url: string;
@@ -105,8 +112,8 @@ describe("connecting by address alone", () => {
 		expect(result.url).toBe(`http://127.0.0.1:${server!.port}`);
 		expect(result.lastError).toBeNull();
 		expect(result.applied.sort()).toEqual(["default_model", "skills"]);
-		// The token came from the peer, not from the caller.
-		expect(follower.settings.remoteToken).toBe("primary-admin-token");
+		// The token came from redeeming the code: a device token, not the primary's admin token.
+		expect(follower.settings.remoteToken).toBe("device-token-from-pairing");
 
 		// The extension keeps its own handle on the file; read through it rather than a second connection.
 		const snap = follower.methods.get("snapshot")!() as { settings: Record<string, unknown> };
@@ -128,18 +135,16 @@ describe("connecting by address alone", () => {
 		await expect(Promise.resolve(follower.methods.get("connect")!({}))).rejects.toThrow(/address is required/);
 	});
 
-	test("a malformed code is refused before anything is saved", async () => {
+	test("a wrong code is reported as wrong or expired", async () => {
 		seed(followerDb, {});
 		const follower = boot(followerDb, dir, "follower-admin-token", { role: "primary" });
-		await expect(Promise.resolve(follower.methods.get("connect")!({ code: "not-a-code" }))).rejects.toThrow(/not a connection code/);
+		await expect(Promise.resolve(follower.methods.get("connect")!({ url: `http://127.0.0.1:${server!.port}`, code: "wrong" }))).rejects.toThrow(/wrong or has expired/);
 		expect(follower.settings.role).toBe("primary");
 	});
 
-	test("a code without an address or token is refused", async () => {
+	test("an address alone is not enough", async () => {
 		seed(followerDb, {});
 		const follower = boot(followerDb, dir, "follower-admin-token", { role: "primary" });
-		const empty = Buffer.from(JSON.stringify({ u: "", t: "" }), "utf8").toString("base64url");
-		await expect(Promise.resolve(follower.methods.get("connect")!({ code: empty }))).rejects.toThrow(/incomplete/);
-		expect(follower.settings.role).toBe("primary");
+		await expect(Promise.resolve(follower.methods.get("connect")!({ url: `http://127.0.0.1:${server!.port}` }))).rejects.toThrow(/code are required/);
 	});
 });

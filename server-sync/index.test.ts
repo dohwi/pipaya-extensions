@@ -71,88 +71,26 @@ describe("snapshot", () => {
 });
 
 describe("connection code", () => {
-	test("the code carries this server's address and admin token", () => {
-		const h = boot({ role: "primary" });
-		const made = h.methods.get("code")!() as { code: string; url: string };
-		expect(made.url).toMatch(/^http:\/\/.+:8790$/);
-		const packed = JSON.parse(Buffer.from(made.code, "base64url").toString("utf8")) as { u: string; t: string };
-		expect(packed.t).toBe("admin-token-for-tests");
-		expect(packed.u).toBe(made.url);
-		// The code is also put on the page so it can be copied.
-		h.unload();
-	});
-
-	test("an address the user typed wins over the detected one", () => {
-		const h = boot({ role: "primary", shareUrl: "http://peer.example:1234/" });
-		const made = h.methods.get("code")!() as { code: string };
-		const packed = JSON.parse(Buffer.from(made.code, "base64url").toString("utf8")) as { u: string };
-		expect(packed.u).toBe("http://peer.example:1234");
-		h.unload();
-	});
-});
-
-describe("share fields", () => {
-	test("a primary fills its address, token and the code that packs them", () => {
-		const settings: Record<string, unknown> = { role: "primary" };
-		const methods = new Map<string, (p?: unknown) => unknown>();
-		const pi = {
-			settings: {
-				get: () => settings,
-				set: (next: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, next); return settings; },
-				onChange: () => () => {},
-			},
-			log: () => {},
-			registerMethod: (n: string, fn: (p?: unknown) => unknown) => void methods.set(n, fn),
-			emit: () => {},
-			on: () => {},
-		};
-		factory(pi);
-		expect(settings.shareToken).toBe("admin-token-for-tests");
-		expect(String(settings.shareUrl)).toMatch(/^http:\/\/.+:8790$/);
-		// The code is ready to copy without pressing anything.
-		const packed = JSON.parse(Buffer.from(String(settings.shareCode), "base64url").toString("utf8")) as { u: string; t: string };
-		expect(packed.t).toBe("admin-token-for-tests");
-		expect(packed.u).toBe(settings.shareUrl);
-	});
-
-	test("a follower with only a connection code takes the address and token from it", async () => {
-		const packed = Buffer.from(JSON.stringify({ u: "http://127.0.0.1:9", t: "from-the-code" }), "utf8").toString("base64url");
-		const settings: Record<string, unknown> = { role: "follower", shareCode: packed };
-		const pi = {
-			settings: {
-				get: () => settings,
-				set: (next: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, next); return settings; },
-				onChange: () => () => {},
-			},
-			log: () => {},
-			registerMethod: () => {},
-			emit: () => {},
-			on: () => {},
-		};
-		factory(pi);
-		// The unpacking is started at load time; give it a moment to land.
-		for (let i = 0; i < 50 && !settings.remoteToken; i++) await Bun.sleep(20);
-		expect(settings.remoteToken).toBe("from-the-code");
-		expect(settings.remoteUrl).toBe("http://127.0.0.1:9");
-		expect(settings.shareCode).toBe("");
-	});
-
-	test("a primary keeps a value the user typed", () => {
-		const settings: Record<string, unknown> = { role: "primary", shareUrl: "http://typed:1" };
-		const pi = {
-			settings: {
-				get: () => settings,
-				set: (next: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, next); return settings; },
-				onChange: () => () => {},
-			},
-			log: () => {},
-			registerMethod: () => {},
-			emit: () => {},
-			on: () => {},
-		};
-		factory(pi);
-		expect(settings.shareUrl).toBe("http://typed:1");
-		expect(settings.shareToken).toBe("admin-token-for-tests");
+	test("the code is a pairing code the peer mints, and it is not the admin token", async () => {
+		// The extension asks its own server for a pairing code; stand in for that one call.
+		const seen: { url: string; auth: string | null }[] = [];
+		const realFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: any, init?: any) => {
+			seen.push({ url: String(input), auth: init?.headers?.authorization ?? null });
+			return Response.json({ code: "one-time-code", expiresAt: Date.now() + 120_000 });
+		}) as typeof fetch;
+		try {
+			const h = boot({ role: "primary" });
+			const made = (await h.methods.get("code")!()) as { url: string; code: string };
+			expect(made.code).toBe("one-time-code");
+			expect(made.url).toMatch(/^http:\/\/.+:8790$/);
+			expect(seen[0]!.url).toBe(`${made.url}/pairing`);
+			// The code is requested with this server's admin token; the code itself is what the follower gets.
+			expect(seen[0]!.auth).toBe("Bearer admin-token-for-tests");
+			h.unload();
+		} finally {
+			globalThis.fetch = realFetch;
+		}
 	});
 });
 

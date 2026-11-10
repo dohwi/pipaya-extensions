@@ -100,11 +100,6 @@ function applySnapshot(db: DatabaseLike, keys: readonly string[], peer: Record<s
 	return changed;
 }
 
-/** Pack an address and token into the one value a follower pastes: `{ u, t }` as base64url. */
-function packCode(url: string, token: string): string {
-	return Buffer.from(JSON.stringify({ u: url, t: token }), "utf8").toString("base64url");
-}
-
 /** Order-independent hash so a no-op sync is cheap to detect. */
 const hashOf = (settings: Record<string, unknown>) =>
 	createHash("sha256").update(JSON.stringify(Object.keys(settings).sort().map((k) => [k, settings[k]]))).digest("hex");
@@ -171,13 +166,8 @@ export default (pi: any) => {
 
 	pi.registerMethod("status", () => status());
 
-	/**
-	 * This server's address as a peer should reach it. `shareUrl` is the field the user sees and may edit (it is what
-	 * `redeem` hands out); when it is empty the Tailscale/LAN address of this box is offered instead.
-	 */
+	/** This server's address as a peer should reach it: the Tailscale/LAN address of this box. */
 	const publicUrl = (): string => {
-		const typed = String(settings().shareUrl ?? "").trim().replace(/\/+$/, "");
-		if (typed) return typed;
 		const port = process.env.PIPAYA_PORT ?? "8787";
 		const host = firstAddress();
 		return host ? `http://${host}:${port}` : "";
@@ -196,35 +186,43 @@ export default (pi: any) => {
 	};
 
 	/**
-	 * A connection string: the address and admin token, packed so the user copies one value instead of two. It is not a
-	 * secret of its own — whoever holds it holds the token — so it is shown only on the primary's own page (an admin-only
-	 * settings page) and the follower stores it as its `remoteToken`.
+	 * The address a follower should dial, and a one-time pairing code for it. The code is the app's own mechanism
+	 * (`POST /pairing` -> `POST /pairing/redeem`): it is worth nothing after it expires, and redeeming it mints a
+	 * revocable device token instead of handing out the admin token.
 	 */
-	pi.registerMethod("code", () => {
+	pi.registerMethod("code", async () => {
 		const url = publicUrl();
-		const token = adminToken();
-		if (!url || !token) throw new Error("this server has no address or token to share");
-		const value = packCode(url, token);
-		pi.settings.set({ ...settings(), shareCode: value });
-		return { code: value, url, expiresAt: 0 };
+		if (!url) throw new Error("this server has no address to share");
+		const res = await fetch(`${url}/pairing`, {
+			method: "POST",
+			headers: { authorization: `Bearer ${adminToken()}`, "content-type": "application/json" },
+			body: "null",
+			signal: AbortSignal.timeout(5_000),
+		});
+		if (!res.ok) throw new Error(`could not make a code (${res.status})`);
+		const body = (await res.json()) as { code?: unknown };
+		const code = typeof body.code === "string" ? body.code : "";
+		if (!code) throw new Error("the server returned no code");
+		return { url, code };
 	});
 
 	/**
-	 * Unpack a connection string the primary produced: `{ u, t }` in base64url. It needs no call to the peer, so
-	 * connecting works even when the peer's method routes are closed to an unauthenticated caller.
+	 * Redeem a peer's pairing code for a device token. That token is revocable on the primary (`DELETE /devices/tokens/:id`),
+	 * unlike its admin token, so a follower never holds the keys to the primary.
 	 */
-	const unpackCode = (value: string): { url: string; token: string } => {
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
-		} catch {
-			throw new Error("this is not a connection code; copy the whole value from the primary");
-		}
-		const o = parsed as { u?: unknown; t?: unknown };
-		const url = typeof o.u === "string" ? o.u.trim().replace(/\/+$/, "") : "";
-		const token = typeof o.t === "string" ? o.t.trim() : "";
-		if (!url || !token) throw new Error("the connection code is incomplete; make a new one on the primary");
-		return { url, token };
+	const redeemPeerCode = async (url: string, value: string): Promise<string> => {
+		const res = await fetch(`${url}/pairing/redeem`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ code: value, name: "server-sync follower" }),
+			signal: AbortSignal.timeout(5_000),
+		});
+		if (res.status === 403 || res.status === 429) throw new Error("the code is wrong or has expired; make a new one on the primary");
+		if (!res.ok) throw new Error(`the peer refused the code (${res.status})`);
+		const body = (await res.json()) as { token?: unknown };
+		const token = typeof body.token === "string" ? body.token : "";
+		if (!token) throw new Error("the peer returned no token");
+		return token;
 	};
 
 	/**
@@ -233,13 +231,13 @@ export default (pi: any) => {
 	 */
 	pi.registerMethod("connect", async (params: unknown) => {
 		const input = (params ?? {}) as { url?: unknown; token?: unknown; code?: unknown };
-		const givenCode = String(input.code ?? "").trim();
-		const packed = givenCode ? unpackCode(givenCode) : undefined;
-		const url = String(input.url ?? "").trim().replace(/\/+$/, "") || packed?.url || "";
+		const url = String(input.url ?? "").trim().replace(/\/+$/, "");
 		if (!url) throw new Error("a peer address is required");
 		if (!/^https?:\/\/[^\s]+$/.test(url)) throw new Error(`not an http(s) address: ${url}`);
-		const token = String(input.token ?? "").trim() || packed?.token || "";
-		if (!token) throw new Error("set the peer's connection code (or its admin token)");
+		const typed = String(input.token ?? "").trim();
+		const given = String(input.code ?? "").trim();
+		const token = typed || (given ? await redeemPeerCode(url, given) : "");
+		if (!token) throw new Error("a peer address and its code are required");
 		pi.settings.set({ ...settings(), role: "follower", remoteUrl: url, remoteToken: token });
 		const applied = await pull();
 		return { applied, ...status() };
@@ -323,29 +321,8 @@ export default (pi: any) => {
 	};
 
 	/**
-	 * Keep the two "share" fields on the primary filled in, so its address and token are on screen to copy instead of
-	 * hidden in the data folder. Only written when empty or stale, so a value the user typed is never overwritten.
-	 */
-	let filling = false;
-	const fillShareFields = () => {
-		if (filling || role() !== "primary") return;
-		const s = settings();
-		const url = publicUrl();
-		const token = adminToken();
-		const want: Record<string, unknown> = {};
-		if (url && s.shareUrl !== url) want.shareUrl = url;
-		if (token && s.shareToken !== token) want.shareToken = token;
-		// The code is just the two above packed together, so it is kept in step with them: one field to copy.
-		const packed = url && token ? packCode(url, token) : "";
-		if (packed && s.shareCode !== packed) want.shareCode = packed;
-		if (!Object.keys(want).length) return;
-		filling = true;
-		try { pi.settings.set({ ...s, ...want }); } finally { filling = false; }
-	};
-
-	/**
-	 * A follower with an address and the primary's code needs nothing else: redeem the code for the token and save it.
-	 * The code is cleared once used, so it never lingers in the settings file.
+	 * A follower with an address and the primary's code needs nothing else: redeem the code for a device token and save
+	 * it. The code is cleared once used, so it never lingers in the settings file.
 	 */
 	let fetching = false;
 	const fillPeerToken = async () => {
@@ -353,12 +330,12 @@ export default (pi: any) => {
 		const s = settings();
 		const url = String(s.remoteUrl ?? "").trim().replace(/\/+$/, "");
 		const pasted = String(s.shareCode ?? "").trim();
-		if (!pasted || String(s.remoteToken ?? "").trim()) return;
+		if (!url || !pasted || String(s.remoteToken ?? "").trim()) return;
 		fetching = true;
 		try {
-			const packed = unpackCode(pasted);
-			pi.settings.set({ ...settings(), remoteUrl: packed.url, remoteToken: packed.token, shareCode: "" });
-			log(`took the address and token from the connection code (${packed.url})`);
+			const token = await redeemPeerCode(url, pasted);
+			pi.settings.set({ ...settings(), remoteToken: token, shareCode: "" });
+			log(`redeemed the peer's code at ${url}`);
 		} catch (e) {
 			lastError = e instanceof Error ? e.message : String(e);
 			log(lastError);
@@ -368,12 +345,22 @@ export default (pi: any) => {
 	};
 
 	const refresh = () => {
-		fillShareFields();
 		void fillPeerToken();
 		arm();
 	};
 
-	fillShareFields();
+	// 0.3.0 stored a packed {u,t} blob here; it is not a pairing code, so drop it instead of failing on it.
+	const dropStaleCode = () => {
+		const s = settings();
+		const pasted = String(s.shareCode ?? "").trim();
+		if (!pasted) return;
+		try {
+			const parsed = JSON.parse(Buffer.from(pasted, "base64url").toString("utf8"));
+			if (parsed && typeof parsed === "object" && "u" in parsed) pi.settings.set({ ...s, shareCode: "" });
+		} catch { /* a pairing code is not base64 JSON: keep it */ }
+	};
+
+	dropStaleCode();
 	void fillPeerToken();
 	arm();
 	pi.settings.onChange(refresh);
