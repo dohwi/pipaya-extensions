@@ -4,6 +4,9 @@ Server extension. Mirrors the settings of one pipaya server (the **primary**) on
 
 The settings page is in Korean: `pipaya.settings` labels are plain strings with no per-language form, and the author's servers are Korean.
 
+One file on purpose (`index.ts`): a server from before 0.8.4 busts the module cache for the entry file alone, so a
+folder extension kept running its old helper after a reload and failed with "Export named X not found".
+
 ## What it syncs
 
 Rows of the server's `settings` table only:
@@ -32,13 +35,22 @@ Both sides install this same extension; only the role differs. The token you put
 ## Setup
 
 1. Install the extension on both servers (Settings → Server extensions → `dohwi/pipaya-extensions`, folder `server-sync`).
-2. On the primary: leave the role as `primary` (기준). Nothing else needed.
-3. On the follower: set the role to `follower` (팔로워), the peer address to the primary's base URL (e.g. `http://100.85.51.107:8790`), and the peer token to the primary's admin token.
-4. The first pull happens within one interval; `POST /server-extensions/server-sync/methods/sync` forces one immediately and returns what changed.
+2. **Primary** (`기준`): the page fills in `이 서버 주소` and `이 서버 관리자 토큰` by itself — the token read from
+   `dataDir/token`, the address from this machine's Tailscale/LAN interface (edit it if the peer should dial something
+   else). Press **새 연결 코드** to pack both into one `연결 코드` string.
+3. **Follower** (`팔로워`): paste that `연결 코드` and save. The address and token come out of the code, so there is
+   nothing else to type. (An admin token typed by hand still works, for a peer too old to issue codes.)
+4. The first pull happens within one interval; `POST /server-extensions/server-sync/methods/sync` forces one
+   immediately and returns what changed.
+
+The connection code is not a secret of its own: it carries the primary's admin token, so treat it like the token —
+it is shown only on the primary's own settings page, and the follower clears it from its settings once unpacked.
 
 ## Methods
 
 - `snapshot` — the primary's side: `{ keys, settings }`.
+- `code` — the primary's side: packs its address and admin token into one `연결 코드` (also written to the page).
+- `connect` — the follower's side: `{ code }` (or `{ url, token }`) connects and pulls once, returning the status.
 - `sync` — one pull now (follower only): `{ applied, ...status }`.
 - `status` — `{ role, url, intervalSeconds, keys, lastSyncAt, lastApplied, lastError }`, so the health of a sync can be checked without reading the log.
 
