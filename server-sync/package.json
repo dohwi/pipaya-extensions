@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Mirrors a primary pipaya server's settings onto this one: model connections, defaults, MCP servers, skills, tools.",
   "license": "MIT",
   "author": "dohwi",
@@ -17,7 +17,7 @@
         "label": "상태",
         "description": "자동으로 갱신됩니다.",
         "default": "",
-        "placeholder": "저장하면 여기에 연결 상태가 표시됩니다"
+        "readonly": true
       },
       {
         "key": "role",
