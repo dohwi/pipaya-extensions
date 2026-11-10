@@ -147,6 +147,41 @@ export default (pi: any) => {
 	// `pi.log` already prefixes the extension name.
 	const log = (msg: string) => pi.log(msg);
 
+	/** "3분 전" and the like, in Korean: the page shows this instead of a timestamp the reader has to decode. */
+	const ago = (at: number): string => {
+		const s = Math.max(0, Math.round((Date.now() - at) / 1000));
+		if (s < 60) return `${s}초 전`;
+		const m = Math.round(s / 60);
+		if (m < 60) return `${m}분 전`;
+		const h = Math.round(m / 60);
+		if (h < 24) return `${h}시간 전`;
+		return `${Math.round(h / 24)}일 전`;
+	};
+
+	/** The one line the page shows: what happened last, or what went wrong. */
+	const statusText = (): string => {
+		if (role() === "primary") return "기준 서버입니다. 이 서버 설정을 다른 서버에 건네줍니다.";
+		const { url } = cfg();
+		if (!url) return "상대 서버 주소가 비어 있습니다.";
+		if (lastError) return `연결 실패: ${lastError}`;
+		if (lastSyncAt === null) return `${url} 에 아직 연결하지 못했습니다.`;
+		const what = lastApplied.length ? `${lastApplied.length}개 항목을 가져옴` : "바뀐 것 없음";
+		return `${url} 연결됨 · ${ago(lastSyncAt)} 마지막 확인 · ${what}`;
+	};
+
+	/**
+	 * Keep the read-only status field on the page in step. Written only when the text changes, so a timer tick that
+	 * changed nothing does not rewrite the settings file.
+	 */
+	let writing = false;
+	const showStatus = () => {
+		if (writing) return;
+		const text = statusText();
+		if (String(settings().statusText ?? "") === text) return;
+		writing = true;
+		try { pi.settings.set({ ...settings(), statusText: text }); } finally { writing = false; }
+	};
+
 	const status = (): Status => ({
 		role: role(),
 		url: cfg().url,
@@ -286,6 +321,8 @@ export default (pi: any) => {
 			lastError = e instanceof Error ? e.message : String(e);
 			log(`sync failed: ${lastError}`);
 			throw e;
+		} finally {
+			showStatus();
 		}
 	};
 
@@ -346,6 +383,7 @@ export default (pi: any) => {
 
 	const refresh = () => {
 		void fillPeerToken();
+		showStatus();
 		arm();
 	};
 
@@ -362,6 +400,7 @@ export default (pi: any) => {
 
 	dropStaleCode();
 	void fillPeerToken();
+	showStatus();
 	arm();
 	pi.settings.onChange(refresh);
 	pi.on("extension_unload", () => {
