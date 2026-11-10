@@ -51,6 +51,8 @@ export function checkExtension(id: string, dir = join(DIR, id)): Problem[] {
 			if (typeof f.key !== "string" || !/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/.test(f.key)) errs.push(`${at}.key: expected a letter followed by letters, digits or underscores`);
 			if (!["string", "number", "boolean", "select"].includes(f.type)) errs.push(`${at}.type: expected string, number, boolean or select`);
 			if (typeof f.label !== "string" || !f.label.trim()) errs.push(`${at}.label: expected a non-empty string`);
+			if ("readonly" in f && typeof f.readonly !== "boolean") errs.push(`${at}.readonly: expected a boolean`);
+			if (f.readonly === true && f.secret === true) errs.push(`${at}.readonly: a secret field cannot be read-only`);
 			if (f.secret === true && "default" in f) errs.push(`${at}.default: a secret field must not have a default`);
 			if (f.type !== "select") { if ("options" in f) errs.push(`${at}.options: only select fields take options`); return; }
 			if (!Array.isArray(f.options)) { errs.push(`${at}.options: a select field needs options`); return; }
