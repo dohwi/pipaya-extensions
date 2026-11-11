@@ -94,63 +94,37 @@ describe("connection code", () => {
 	});
 });
 
-describe("the status line on the page", () => {
-	test("a primary says what it is", () => {
-		const settings: Record<string, unknown> = { role: "primary" };
+describe("the status line (status method; older apps have no page)", () => {
+	const line = (methods: Map<string, (p?: unknown) => unknown>) => (methods.get("status")!() as { status: { ko: string; en: string } }).status;
+	const bootPlain = (settings: Record<string, unknown>) => {
 		const methods = new Map<string, (p?: unknown) => unknown>();
-		const pi = {
+		factory({
 			settings: {
 				get: () => settings,
 				set: (next: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, next); return settings; },
 				onChange: () => () => {},
 			},
 			log: () => {}, registerMethod: (n: string, f: (p?: unknown) => unknown) => void methods.set(n, f), emit: () => {}, on: () => {},
-		};
-		factory(pi);
-		expect(String(settings.statusText)).toMatch(/^● 기준 서버/);
-		expect(((methods.get("status")!() as { status: { en: string } }).status.en)).toMatch(/^● Primary/);
+		});
+		return methods;
+	};
+
+	test("a primary says what it is, and nothing is written into the settings", () => {
+		const settings: Record<string, unknown> = { role: "primary" };
+		const methods = bootPlain(settings);
+		expect(line(methods).ko).toMatch(/^● 기준 서버/);
+		expect(line(methods).en).toMatch(/^● Primary/);
+		expect("statusText" in settings).toBe(false);
 	});
 
-	test("a follower with no address says so, and one with an address says it is connected", async () => {
+	test("a follower with no address says so, and a failed pull says it failed", async () => {
 		const settings: Record<string, unknown> = { role: "follower" };
-		const methods = new Map<string, (p?: unknown) => unknown>();
-		const pi = {
-			settings: {
-				get: () => settings,
-				set: (next: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, next); return settings; },
-				onChange: () => () => {},
-			},
-			log: () => {}, registerMethod: (n: string, f: (p?: unknown) => unknown) => void methods.set(n, f), emit: () => {}, on: () => {},
-		};
-		factory(pi);
-		expect(String(settings.statusText)).toMatch(/주소를 입력하세요/);
-		// Saving an address and a token is what a follower does; the line then reports the connection.
+		const methods = bootPlain(settings);
+		expect(line(methods).ko).toMatch(/주소를 입력하세요/);
 		settings.remoteUrl = "http://127.0.0.1:9";
 		settings.remoteToken = "t";
 		await expect(Promise.resolve(methods.get("sync")!())).rejects.toThrow();
-		// The pull failed, so the line says that instead of pretending to be connected.
-		expect(String(settings.statusText)).toMatch(/^✕ 연결 실패/);
-	});
-});
-
-describe("the status line survives a save from the form", () => {
-	test("a save that blanks it is written back at once", () => {
-		const settings: Record<string, unknown> = { role: "primary" };
-		let onChange: (() => void) | undefined;
-		const pi = {
-			settings: {
-				get: () => settings,
-				set: (next: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, next); return settings; },
-				onChange: (fn: () => void) => { onChange = fn; return () => {}; },
-			},
-			log: () => {}, registerMethod: () => {}, emit: () => {}, on: () => {},
-		};
-		factory(pi);
-		expect(String(settings.statusText)).toMatch(/^● 기준 서버/);
-		// The form posts every field back, the status one included, and a fresh page holds "".
-		settings.statusText = "";
-		onChange!();
-		expect(String(settings.statusText)).toMatch(/^● 기준 서버/);
+		expect(line(methods).ko).toMatch(/^✕ 연결 실패/);
 	});
 });
 
@@ -272,6 +246,66 @@ describe("this extension's own settings", () => {
 		const h = boot({ role: "primary" });
 		const snap = h.methods.get("snapshot")!({ extensions: true }) as { extensions: Record<string, unknown> };
 		expect(Object.keys(snap.extensions)).toEqual(["guard"]);
+		h.unload();
+	});
+});
+
+describe("the page (pi.ui, app 0.8.8+)", () => {
+	const bootWithUi = (settings: Record<string, unknown>) => {
+		const methods = new Map<string, (p?: unknown) => unknown>();
+		const panels: unknown[] = [];
+		let handler: ((e: { type: string; id: string }) => Promise<void> | void) | undefined;
+		let onChange: (() => void) | undefined;
+		const hooks: (() => void)[] = [];
+		factory({
+			settings: {
+				get: () => settings,
+				set: (next: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, next); onChange?.(); return settings; },
+				onChange: (fn: () => void) => { onChange = fn; return () => {}; },
+			},
+			dataDir: mkdtempSync(join(dir, "ui-")),
+			ui: { setPanel: (node: unknown) => void panels.push(node), onEvent: (fn: typeof handler) => { handler = fn; } },
+			log: () => {}, registerMethod: (n: string, f: (p?: unknown) => unknown) => void methods.set(n, f), emit: () => {},
+			on: (ev: string, fn: () => void) => { if (ev === "extension_unload") hooks.push(fn); },
+		});
+		const last = () => JSON.stringify(panels.at(-1));
+		return { methods, panels, last, click: (id: string) => handler!({ type: "action", id }), unload: () => hooks.forEach((f) => f()) };
+	};
+
+	test("the status goes to the page, not into the settings, and an old status field is dropped", () => {
+		const settings: Record<string, unknown> = { role: "primary", statusText: "● 기준 서버 — old" };
+		const h = bootWithUi(settings);
+		expect("statusText" in settings).toBe(false);
+		expect(h.last()).toContain("기준 서버");
+		expect(h.last()).toContain("연결 링크 복사");
+		h.unload();
+	});
+
+	test("a follower without a link is told where to get one; a failed pull shows as an alert with a retry button", async () => {
+		const settings: Record<string, unknown> = { role: "follower" };
+		const h = bootWithUi(settings);
+		expect(h.last()).toContain("연결 안 됨");
+		expect(h.last()).not.toContain("\"sync\"");
+		h.unload();
+
+		const failing = bootWithUi({ role: "follower", remoteUrl: "http://127.0.0.1:9", remoteToken: "t" });
+		await failing.click("sync");
+		const page = JSON.parse(failing.last());
+		const flat = JSON.stringify(page);
+		expect(flat).toContain("연결 실패");
+		expect(flat).toContain("\"type\":\"alert\"");
+		expect(flat).toContain("\"id\":\"sync\"");
+		expect(flat).not.toContain("동기화 중");
+		failing.unload();
+	});
+
+	test("disconnect forgets the address and the token", async () => {
+		const settings: Record<string, unknown> = { role: "follower", remoteUrl: "http://127.0.0.1:9", remoteToken: "t" };
+		const h = bootWithUi(settings);
+		await h.click("disconnect");
+		expect(settings.remoteUrl).toBe("");
+		expect((h.methods.get("status")!() as { url: string }).url).toBe("");
+		expect(h.last()).toContain("연결 안 됨");
 		h.unload();
 	});
 });

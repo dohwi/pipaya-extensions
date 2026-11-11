@@ -65,27 +65,27 @@ Both sides install this same extension; only the role differs. The follower hold
    follower redeems the code at `POST /pairing/redeem` and stores the **device token** it gets back — revocable on the
    primary (`DELETE /devices/tokens/:id`), never the primary's admin token. The code is cleared once used.
    A code the primary turns down (wrong, expired or already used) is tried
-   once and reported on **상태**; paste a new link to try again.
+   once and reported on the page; paste a new link to try again.
 4. The first pull follows the redeemed code at once; `POST /server-extensions/server-sync/methods/sync` forces one
    any time and returns what changed.
 
-The form follows the role: a **primary** shows only the status and the role (the status line gives its own address
-and where to get a code); a **follower** also shows the address and the code. The app's link (Devices tab → [연결 링크 복사], app 0.8.7+; or Add phone → [링크 복사])
-(`pipaya://connect?u=…&c=…`) can be pasted into the code field alone — it carries the address too. The two fields are
-hidden with the settings field `when` (app 0.8.6+); an older app ignores it and shows every field.
+The form follows the role: a **primary** shows only the role; a **follower** also shows the address, the link field
+and what to pull. The app's link (Devices tab → [연결 링크 복사], app 0.8.7+; or Add phone → [링크 복사])
+(`pipaya://connect?u=…&c=…`) can be pasted into the link field alone — it carries the address too.
 
-**상태** says what is happening without opening anything:
+### The page (app 0.8.8+)
 
-- `● 기준 서버 — 다른 서버가 이 서버의 설정을 가져갑니다` on the primary
-- `● 연결됨 — 3분 전 확인, 2개 항목 가져옴` on a follower that is working
-- `✕ 연결 실패 — <why>` on one that is not, `○ 기준 서버 주소를 입력하세요` / `○ 기준 서버의 연결 코드를 붙여넣으세요` before it is set up
+Above the form, **현재 상태** is drawn by the extension (`pi.ui.setPanel`), not stored in its settings:
 
-The extension rewrites it after every pull and every 30 seconds (so "3분 전" stays true), and straight away after a
-save: the form posts every field back, this one included, so a fresh page would otherwise show an empty box until
-the next pull. Typing over it is harmless.
+- **Primary**: a `기준 서버` badge, this server's address and where to get a link for a follower.
+- **Follower**: `연결됨` / `연결 중` / `연결 실패` / `연결 안 됨` with when it last checked; the primary's address, how many
+  items the last pull changed and when the next one runs; what it pulled; the last error, if any; and two buttons:
+  **지금 동기화** (pull now) and **연결 해제** (forget the address and the token; revoke the token on the primary's
+  Devices tab too).
 
-It is an ordinary string setting on purpose. A `readonly` field would read better, but that field type only exists in
-apps newer than the extension, and an extension must not require an app release to be usable.
+It refreshes after every pull and every 30 seconds. On an app older than 0.8.8 (no `pi.ui`) there is no page: the
+extension still works, and `POST .../methods/status` reports the same state. A `statusText` field left by an older
+version is removed from the settings on load.
 
 ## Methods
 
@@ -93,6 +93,6 @@ apps newer than the extension, and an extension must not require an app release 
 - `code` — the primary's side: `{ url, code }`, a fresh pairing code for this server.
 - `connect` — the follower's side: `{ url, code }` (or `{ url, token }`) connects and pulls once, returning the status.
 - `sync` — one pull now (follower only): `{ applied, ...status }`.
-- `status` — `{ role, url, intervalSeconds, keys, lastSyncAt, lastApplied, lastError }`, so the health of a sync can be checked without reading the log.
+- `status` — `{ role, url, intervalSeconds, keys, syncExtensions, lastSyncAt, lastApplied, lastError, status }`, so the health of a sync can be checked without reading the log.
 
 The follower also emits an ephemeral `synced` event (`{ keys, at }`) to connected clients whenever a pull changed something.

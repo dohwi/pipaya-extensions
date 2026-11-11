@@ -167,6 +167,8 @@ const hashOf = (settings: Record<string, unknown>) =>
 export default (pi: any) => {
 	let db: Database | undefined;
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	/** When the pull timer fires next, for the page. */
+	let nextPullAt = 0;
 	let busy = false;
 	let failures = 0;
 	let lastSyncAt: number | null = null;
@@ -248,6 +250,7 @@ export default (pi: any) => {
 	/** "3분 전" / "3 min ago": the page shows this instead of a timestamp the reader has to decode. */
 	const ago = (at: number): Text => {
 		const s = Math.max(0, Math.round((Date.now() - at) / 1000));
+		if (s < 10) return { ko: "방금", en: "just now" };
 		if (s < 60) return { ko: `${s}초 전`, en: `${s} s ago` };
 		const m = Math.round(s / 60);
 		if (m < 60) return { ko: `${m}분 전`, en: `${m} min ago` };
@@ -282,18 +285,103 @@ export default (pi: any) => {
 	};
 
 	/**
-	 * Keep the status field on the page in step. Written only when the text changes, so a timer tick that changed nothing
-	 * does not rewrite the settings file.
-	 * Korean for now: the app that shows a `{ ko, en }` value in the reader's language is not released yet, and 0.8.5 shows
-	 * an object as "아직 없음". Switch to `statusText()` once that app is out; the `status` method already returns both.
+	 * Keep the page in step (`pi.ui`, app 0.8.8+). An older app has no page: the state is still in the `status` method.
+	 * A `statusText` field an older version kept in the settings is dropped once; status never lives in the settings.
 	 */
 	let writing = false;
+	const hasPanel = typeof pi.ui?.setPanel === "function";
 	const showStatus = () => {
 		if (writing) return;
-		const text = statusText().ko;
-		if (JSON.stringify(settings().statusText ?? "") === JSON.stringify(text)) return;
-		writing = true;
-		try { pi.settings.set({ ...settings(), statusText: text }); } finally { writing = false; }
+		if ("statusText" in settings()) {
+			writing = true;
+			try { const { statusText: _, ...rest } = settings(); pi.settings.set(rest); } finally { writing = false; }
+		}
+		if (!hasPanel) return;
+		try { pi.ui.setPanel(panel()); } catch (e) { log(`panel: ${e instanceof Error ? e.message : String(e)}`); }
+	};
+
+	/** What each mirrored key is, for the "recently pulled" list. */
+	const KEY_LABEL: Record<string, Text> = {
+		default_model: { ko: "기본 모델", en: "Default model" }, system_model: { ko: "시스템 모델", en: "System model" },
+		image_model: { ko: "이미지 모델", en: "Image model" }, default_workdir: { ko: "기본 작업 디렉터리", en: "Default working directory" },
+		mcp_servers: { ko: "MCP 서버", en: "MCP servers" }, skills: { ko: "스킬", en: "Skills" },
+		disabled_tools: { ko: "꺼 둔 도구", en: "Disabled tools" }, disabled_subagents: { ko: "꺼 둔 도우미", en: "Disabled helpers" },
+		delegate_policy: { ko: "위임 정책", en: "Delegation policy" }, compaction: { ko: "대화 압축", en: "Compaction" },
+		retention: { ko: "보관 기간", en: "Retention" },
+	};
+	const keyLabel = (k: string): Text =>
+		k.startsWith("ext:") ? { ko: `확장 설정: ${k.slice(4)}`, en: `Extension settings: ${k.slice(4)}` } : KEY_LABEL[k] ?? { ko: k, en: k };
+	/** "42초 후" / "in 42 s", rounded like `ago`. */
+	const until = (at: number): Text => {
+		const s = Math.max(0, Math.round((at - Date.now()) / 1000));
+		if (s < 60) return { ko: `${s}초 후`, en: `in ${s} s` };
+		const m = Math.round(s / 60);
+		return { ko: `${m}분 후`, en: `in ${m} min` };
+	};
+	const hostOf = (url: string) => url.replace(/^https?:\/\//, "");
+	/** What went wrong, in words, from the raw message (which is shown under it as is). */
+	const errorTitle = (msg: string): Text =>
+		/could not save the settings of/.test(msg) ? { ko: "기준 서버에서 받았지만 이 서버에 저장하지 못했습니다", en: "Pulled from the primary, but could not save it here" }
+		: /refused the token|\b40[13]\b/.test(msg) ? { ko: "기준 서버가 접속을 거부했습니다. 새 연결 링크로 다시 연결하세요", en: "The primary refused this server. Connect again with a new link" }
+		: /wrong, expired or already used|too many wrong codes/.test(msg) ? { ko: "연결 링크를 쓸 수 없습니다", en: "The connection link cannot be used" }
+		: /unable to connect|econnrefused|fetch failed|timed? ?out|timeout|enotfound|network/i.test(msg) ? { ko: "기준 서버에 연결할 수 없습니다. 기준 서버가 켜져 있는지, 주소가 맞는지 확인하세요", en: "Cannot reach the primary. Check that it is running and the address is right" }
+		: { ko: "마지막 시도가 실패했습니다", en: "The last attempt failed" };
+
+	/** A manual pull from the page is running: its button shows that. */
+	let pulling = false;
+
+	/** The extension's page (`pi.ui`): the state, the numbers that matter and what can be done now. */
+	const panel = () => {
+		if (role() === "primary") {
+			const url = publicUrl();
+			return {
+				type: "stack", id: "status", gap: "medium", children: [
+					{ type: "badge", id: "state", tone: "info", text: { ko: "기준 서버", en: "Primary" } },
+					{ type: "text", id: "what", text: { ko: "팔로워 서버가 이 서버의 설정을 가져갑니다.", en: "Follower servers pull this server's settings." } },
+					...(url ? [{ type: "stat", id: "address", label: { ko: "이 서버 주소", en: "This server's address" }, value: hostOf(url) }] : []),
+					{ type: "text", id: "how", size: "small", text: { ko: "팔로워를 연결하려면: 이 서버의 기기 탭 → [연결 링크 복사] → 팔로워의 연결 링크 칸에 붙여넣기", en: "To connect a follower: this server's Devices tab → [Copy connection link] → paste it into the follower's link field" } },
+				],
+			};
+		}
+		const { url, token } = cfg();
+		const pasted = String(settings().shareCode ?? "").trim();
+		const waiting = !token && !!pasted && !lastError;
+		const state: { tone: string; text: Text } = !url && !pairingLink(pasted) && !token
+			? { tone: "neutral", text: { ko: "연결 안 됨", en: "Not connected" } }
+			: lastError ? { tone: "danger", text: { ko: "연결 실패", en: "Failed" } }
+			: waiting || (token && lastSyncAt === null) ? { tone: "neutral", text: { ko: "연결 중", en: "Connecting" } }
+			: token ? { tone: "success", text: { ko: "연결됨", en: "Connected" } }
+			: { tone: "neutral", text: { ko: "연결 안 됨", en: "Not connected" } };
+		const next = timer && nextPullAt ? until(nextPullAt) : null;
+		const children: unknown[] = [
+			{ type: "stack", id: "head", direction: "horizontal", gap: "small", children: [
+				{ type: "badge", id: "state", tone: state.tone, text: state.text },
+				...(lastSyncAt !== null ? [{ type: "text", id: "checked", size: "small", tone: "neutral", text: lastError
+					? { ko: `마지막 성공 ${ago(lastSyncAt).ko}`, en: `last succeeded ${ago(lastSyncAt).en}` }
+					: { ko: `${ago(lastSyncAt).ko} 확인`, en: `checked ${ago(lastSyncAt).en}` } }] : []),
+			] },
+		];
+		if (!token) {
+			children.push({ type: "text", id: "how", text: { ko: "기준 서버의 기기 탭 → [연결 링크 복사]로 받은 링크를 아래 ‘연결 링크’에 붙여넣고 저장하세요.", en: "Paste the link from the primary's Devices tab → [Copy connection link] into ‘Connection link’ below, then save." } });
+		} else {
+			children.push({ type: "grid", id: "numbers", columns: 3, children: [
+				{ type: "stat", id: "peer", label: { ko: "기준 서버", en: "Primary" }, value: hostOf(url) },
+				{ type: "stat", id: "pulled", label: { ko: "지난번 가져온 항목", en: "Pulled last time" }, value: lastSyncAt === null ? "—" : lastApplied.length ? { ko: `${lastApplied.length}개`, en: String(lastApplied.length) } : { ko: "변경 없음", en: "No changes" } },
+				{ type: "stat", id: "next", label: { ko: "다음 동기화", en: "Next sync" }, value: pulling ? { ko: "지금", en: "now" } : next ?? "—" },
+			] });
+		}
+		if (lastError) children.push({ type: "alert", id: "error", tone: "danger", title: errorTitle(lastError), text: lastError });
+		if (token && lastApplied.length) {
+			children.push({ type: "text", id: "changed-title", size: "small", text: { ko: "지난번에 바뀐 항목", en: "Changed last time" } });
+			children.push({ type: "list", id: "changed", items: lastApplied.slice(0, 20).map((k, i) => ({ id: `k${i}`, title: keyLabel(k) })) });
+		}
+		if (token) {
+			children.push({ type: "stack", id: "actions", direction: "horizontal", gap: "small", children: [
+				{ type: "button", id: "sync", variant: "primary", disabled: pulling || busy, label: pulling ? { ko: "동기화 중…", en: "Syncing…" } : { ko: "지금 동기화", en: "Sync now" } },
+				{ type: "button", id: "disconnect", variant: "secondary", disabled: pulling, label: { ko: "연결 해제", en: "Disconnect" } },
+			] });
+		}
+		return { type: "stack", id: "status", gap: "medium", children };
 	};
 
 	const status = (): Status => ({
@@ -526,6 +614,7 @@ export default (pi: any) => {
 			if (timer) return;
 			const wait = Math.min(interval * 2 ** Math.min(failures, 4), interval * MAX_BACKOFF);
 			timer = setTimeout(tick, wait * 1000);
+			nextPullAt = Date.now() + wait * 1000;
 			// A pending pull must not keep the process alive on shutdown.
 			(timer as unknown as { unref?: () => void }).unref?.();
 		};
@@ -586,8 +675,6 @@ export default (pi: any) => {
 
 	const refresh = () => {
 		void fillPeerToken();
-		// The form sends the status field back with every save (an empty one for a fresh page), which would leave the
-		// line blank until the next pull. Writing it again here makes the blank last for one event, not for minutes.
 		showStatus();
 		arm();
 	};
@@ -613,12 +700,35 @@ export default (pi: any) => {
 		} catch { /* a pairing code is not base64 JSON: keep it */ }
 	};
 
+	/** What the page's buttons do. */
+	if (hasPanel && typeof pi.ui.onEvent === "function") {
+		pi.ui.onEvent(async (e: { type: string; id: string }) => {
+			if (e.type !== "action") return;
+			if (e.id === "sync") {
+				if (pulling || busy || role() !== "follower") return;
+				pulling = busy = true;
+				showStatus();
+				// The timer keeps running (and keeps its back-off): a manual pull does not reset it.
+				try { await pull(); } catch { /* shown on the page */ } finally { pulling = busy = false; arm(); showStatus(); }
+			} else if (e.id === "disconnect") {
+				// Forget the token and the address; the primary can revoke the token in its Devices tab.
+				writePeer(null);
+				lastSyncAt = null;
+				lastApplied = [];
+				lastError = null;
+				pi.settings.set({ ...withoutToken(settings()), remoteUrl: "", shareCode: "" });
+				arm(true);
+				showStatus();
+			}
+		});
+	}
+
 	moveOldToken();
 	dropStaleCode();
 	void fillPeerToken();
 	showStatus();
 	arm();
-	// "3분 전" goes stale between pulls, and a settings store that was not ready at load would leave the field empty.
+	// "3분 전" and "42초 후" go stale between pulls.
 	const tick = setInterval(showStatus, 30_000);
 	(tick as unknown as { unref?: () => void }).unref?.();
 	setTimeout(showStatus, 1500);

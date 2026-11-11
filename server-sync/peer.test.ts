@@ -193,18 +193,19 @@ describe("connecting by address alone", () => {
 			},
 			log: () => {}, registerMethod: (n: string, f: (p?: unknown) => unknown) => void methods.set(n, f), emit: () => {}, on: () => {},
 		});
-		for (let i = 0; i < 50 && !String(settings.statusText).startsWith("✕"); i++) await Bun.sleep(10);
+		const line = () => (methods.get("status")!() as { status: { ko: string } }).status.ko;
+		for (let i = 0; i < 50 && !line().startsWith("✕"); i++) await Bun.sleep(10);
 		// The status line is a settings write too, and each write calls back: none of them may send the code again.
 		for (let i = 0; i < 5; i++) { onChange!(); await Bun.sleep(5); }
 		expect(redeemCalls).toBe(1);
-		expect(String(settings.statusText)).toMatch(/^✕ 연결 실패 — the code is wrong, expired or already used/);
+		expect(line()).toMatch(/^✕ 연결 실패 — the code is wrong, expired or already used/);
 		// A new link is tried at once, and the first pull follows without waiting an interval.
 		settings.shareCode = `pipaya://connect?u=${encodeURIComponent(`http://127.0.0.1:${server!.port}`)}&c=the-code`;
 		onChange!();
-		for (let i = 0; i < 100 && !String(settings.statusText).startsWith("● 연결됨"); i++) await Bun.sleep(10);
+		for (let i = 0; i < 100 && !line().startsWith("● 연결됨"); i++) await Bun.sleep(10);
 		expect(redeemCalls).toBe(2);
 		expect(tokenIn(data)).toBe("device-token-from-pairing");
-		expect(String(settings.statusText)).toMatch(/^● 연결됨/);
+		expect(line()).toMatch(/^● 연결됨/);
 		expect((methods.get("status")!() as { lastSyncAt: number | null }).lastSyncAt).not.toBeNull();
 	});
 
@@ -218,13 +219,15 @@ describe("connecting by address alone", () => {
 		process.env.PIPAYA_DB = followerDb;
 		process.env.PIPAYA_DATA_DIR = followerDir;
 		const set = (next: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, next); onChange?.(); return settings; };
+		const methods = new Map<string, (p?: unknown) => unknown>();
 		factory({
 			dataDir: data,
 			settings: { get: () => settings, set, onChange: (fn: () => void) => { onChange = fn; return () => {}; } },
-			log: () => {}, registerMethod: () => {}, emit: () => {}, on: () => {},
+			log: () => {}, registerMethod: (n: string, f: (p?: unknown) => unknown) => void methods.set(n, f), emit: () => {}, on: () => {},
 		});
-		for (let i = 0; i < 100 && !String(settings.statusText).startsWith("● 연결됨"); i++) await Bun.sleep(10);
-		expect(String(settings.statusText)).toMatch(/^● 연결됨/);
+		const line = () => (methods.get("status")!() as { status: { ko: string } }).status.ko;
+		for (let i = 0; i < 100 && !line().startsWith("● 연결됨"); i++) await Bun.sleep(10);
+		expect(line()).toMatch(/^● 연결됨/);
 		// The form posts back only the fields it shows, from a page opened before the connection: the old link included.
 		set({ role: "follower", remoteUrl: "", shareCode: link, syncModels: true, statusText: "" });
 		await Bun.sleep(50);
@@ -232,7 +235,8 @@ describe("connecting by address alone", () => {
 		expect(settings.shareCode).toBe("");
 		expect("remoteToken" in settings).toBe(false);
 		expect(tokenIn(data)).toBe("device-token-from-pairing");
-		expect(String(settings.statusText)).toMatch(/^● 연결됨/);
+		expect(line()).toMatch(/^● 연결됨/);
+		expect("statusText" in settings).toBe(false);
 	});
 
 	test("a token an older version kept in the settings moves out of them", () => {
