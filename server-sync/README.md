@@ -64,8 +64,10 @@ Both sides install this same extension; only the role differs. The follower hold
 3. **Follower** (`팔로워`): put the primary's address in `상대 서버 주소` and the code in `연결 코드`, then save. The
    follower redeems the code at `POST /pairing/redeem` and stores the **device token** it gets back — revocable on the
    primary (`DELETE /devices/tokens/:id`), never the primary's admin token. The code is cleared once used.
-4. The first pull happens within one interval; `POST /server-extensions/server-sync/methods/sync` forces one
-   immediately and returns what changed.
+   A code the primary turns down (wrong, expired, already used, or voided by closing the Add phone panel) is tried
+   once and reported on **상태**; paste a new link to try again.
+4. The first pull follows the redeemed code at once; `POST /server-extensions/server-sync/methods/sync` forces one
+   any time and returns what changed.
 
 The form follows the role: a **primary** shows only the status and the role (the status line gives its own address
 and where to get a code); a **follower** also shows the address and the code. The app's [링크 복사] link

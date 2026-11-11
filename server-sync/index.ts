@@ -339,7 +339,8 @@ export default (pi: any) => {
 			body: JSON.stringify({ code: value, name: "server-sync follower" }),
 			signal: AbortSignal.timeout(5_000),
 		});
-		if (res.status === 403 || res.status === 429) throw new Error("the code is wrong or has expired; make a new one on the primary");
+		if (res.status === 403) throw new CodeRejected("the code is wrong, expired or already used; copy a new link on the primary");
+		if (res.status === 429) throw new CodeRejected("too many wrong codes; wait a minute, then copy a new link on the primary", Date.now() + 60_000);
 		if (!res.ok) throw new Error(`the peer refused the code (${res.status})`);
 		const body = (await res.json()) as { token?: unknown };
 		const token = typeof body.token === "string" ? body.token : "";
@@ -479,6 +480,11 @@ export default (pi: any) => {
 	 * it. The code is cleared once used, so it never lingers in the settings file.
 	 */
 	let fetching = false;
+	/**
+	 * The code the peer last turned down, and when it may be tried again. Every settings write (the status line included)
+	 * calls back here, so without this one dead code was sent again and again until the peer throttled this server.
+	 */
+	let rejected: { key: string; until: number } | null = null;
 	const fillPeerToken = async () => {
 		if (fetching || role() !== "follower") return;
 		const s = settings();
@@ -488,16 +494,28 @@ export default (pi: any) => {
 		const url = String(s.remoteUrl ?? "").trim().replace(/\/+$/, "") || link?.url || "";
 		const pasted = link?.code ?? raw;
 		if (!url || !pasted || String(s.remoteToken ?? "").trim()) return;
+		const key = `${url} ${pasted}`;
+		if (rejected?.key === key && Date.now() < rejected.until) return;
 		fetching = true;
 		try {
 			const token = await redeemPeerCode(url, pasted);
+			rejected = null;
+			lastError = null;
 			pi.settings.set({ ...settings(), remoteUrl: url, remoteToken: token, shareCode: "" });
 			log(`redeemed the peer's code at ${url}`);
+			// Pull now: the page should say "connected" right after the save, not one interval later.
+			if (!busy) {
+				busy = true;
+				void pull().catch(() => { /* recorded in the status */ }).finally(() => { busy = false; });
+			}
 		} catch (e) {
 			lastError = e instanceof Error ? e.message : String(e);
+			if (e instanceof CodeRejected) rejected = { key, until: e.retryAt };
 			log(lastError);
 		} finally {
 			fetching = false;
+			// Say so on the page now, not at the next 30 s tick.
+			showStatus();
 		}
 	};
 
@@ -537,6 +555,13 @@ export default (pi: any) => {
 		db = undefined;
 	});
 };
+
+/** The peer turned the code down: trying the same code again cannot work (until `retryAt`, when it was only throttled). */
+class CodeRejected extends Error {
+	constructor(message: string, readonly retryAt = Number.POSITIVE_INFINITY) {
+		super(message);
+	}
+}
 
 /** `pipaya://connect?u=<address>&c=<code>` (the app's "링크 복사"), split into the address and the code; null for anything else. */
 export function pairingLink(input: string): { url: string; code: string } | null {

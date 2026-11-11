@@ -47,6 +47,7 @@ const boot = (file: string, dataDir: string, token: string, settings: Record<str
 
 /** A tiny stand-in for a pipaya server: only the two methods this extension calls. */
 let server: ReturnType<typeof Bun.serve> | undefined;
+let redeemCalls = 0;
 
 beforeAll(() => {
 	seed(primaryDb, { default_model: { provider: "p", model: "m" }, skills: { global: { guard: true } }, device_id: "no" });
@@ -62,6 +63,7 @@ beforeAll(() => {
 			// The app's own pairing routes: a code in, a device token out.
 			if (url.pathname === "/pairing" && req.method === "POST") return Response.json({ code: "the-code", expiresAt: Date.now() + 120_000 });
 			if (url.pathname === "/pairing/redeem" && req.method === "POST") {
+				redeemCalls++;
 				const body = (await req.json()) as { code?: string };
 				if (body.code !== "the-code") return new Response("bad code", { status: 403 });
 				return Response.json({ token: "device-token-from-pairing" });
@@ -147,7 +149,7 @@ describe("connecting by address alone", () => {
 	test("a wrong code is reported as wrong or expired", async () => {
 		seed(followerDb, {});
 		const follower = boot(followerDb, dir, "follower-admin-token", { role: "primary" });
-		await expect(Promise.resolve(follower.methods.get("connect")!({ url: `http://127.0.0.1:${server!.port}`, code: "wrong" }))).rejects.toThrow(/wrong or has expired/);
+		await expect(Promise.resolve(follower.methods.get("connect")!({ url: `http://127.0.0.1:${server!.port}`, code: "wrong" }))).rejects.toThrow(/wrong, expired or already used/);
 		expect(follower.settings.role).toBe("primary");
 	});
 
@@ -161,6 +163,37 @@ describe("connecting by address alone", () => {
 		expect(follower.settings.shareCode).toBe("");
 		expect(pairingLink("not a link")).toBeNull();
 		expect(pairingLink("pipaya://connect?u=100.1.2.3:8787&c=x")).toEqual({ url: "http://100.1.2.3:8787", code: "x" });
+	});
+
+	test("a dead code is tried once, not on every settings write, and the page says why", async () => {
+		seed(followerDb, {});
+		redeemCalls = 0;
+		let onChange: (() => void) | undefined;
+		const settings: Record<string, unknown> = { role: "follower", shareCode: `pipaya://connect?u=${encodeURIComponent(`http://127.0.0.1:${server!.port}`)}&c=dead-code` };
+		const methods = new Map<string, (p?: unknown) => unknown>();
+		process.env.PIPAYA_DB = followerDb;
+		process.env.PIPAYA_DATA_DIR = followerDir;
+		factory({
+			settings: {
+				get: () => settings,
+				set: (next: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, next); onChange?.(); return settings; },
+				onChange: (fn: () => void) => { onChange = fn; return () => {}; },
+			},
+			log: () => {}, registerMethod: (n: string, f: (p?: unknown) => unknown) => void methods.set(n, f), emit: () => {}, on: () => {},
+		});
+		for (let i = 0; i < 50 && !String(settings.statusText).startsWith("✕"); i++) await Bun.sleep(10);
+		// The status line is a settings write too, and each write calls back: none of them may send the code again.
+		for (let i = 0; i < 5; i++) { onChange!(); await Bun.sleep(5); }
+		expect(redeemCalls).toBe(1);
+		expect(String(settings.statusText)).toMatch(/^✕ 연결 실패 — the code is wrong, expired or already used/);
+		// A new link is tried at once, and the first pull follows without waiting an interval.
+		settings.shareCode = `pipaya://connect?u=${encodeURIComponent(`http://127.0.0.1:${server!.port}`)}&c=the-code`;
+		onChange!();
+		for (let i = 0; i < 100 && !String(settings.statusText).startsWith("● 연결됨"); i++) await Bun.sleep(10);
+		expect(redeemCalls).toBe(2);
+		expect(settings.remoteToken).toBe("device-token-from-pairing");
+		expect(String(settings.statusText)).toMatch(/^● 연결됨/);
+		expect((methods.get("status")!() as { lastSyncAt: number | null }).lastSyncAt).not.toBeNull();
 	});
 
 	test("a follower pulls only the groups it checked", async () => {
