@@ -191,3 +191,46 @@ describe("sync", () => {
 		h.unload();
 	});
 });
+
+describe("the pull timer", () => {
+	test("a settings write that changes nothing that matters does not push the next pull back", () => {
+		const settings: Record<string, unknown> = { role: "follower", remoteUrl: "http://127.0.0.1:9", remoteToken: "t", intervalSeconds: 60 };
+		let onChange: (() => void) | undefined;
+		const pulls: number[] = [];
+		const realSet = globalThis.setTimeout;
+		const realClear = globalThis.clearTimeout;
+		const live = new Set<unknown>();
+		// Record the pull timer (the only one of 15 s or more) and whether it is ever cancelled.
+		globalThis.setTimeout = ((fn: () => void, ms?: number) => {
+			const h = realSet(() => {}, 0);
+			if ((ms ?? 0) >= 15_000) { pulls.push(ms!); live.add(h); }
+			return h;
+		}) as typeof setTimeout;
+		globalThis.clearTimeout = ((h: unknown) => { live.delete(h); realClear(h as never); }) as typeof clearTimeout;
+		try {
+			factory({
+				settings: {
+					get: () => settings,
+					set: (next: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, next); onChange?.(); return settings; },
+					onChange: (fn: () => void) => { onChange = fn; return () => {}; },
+				},
+				log: () => {}, registerMethod: () => {}, emit: () => {}, on: () => {},
+			});
+			expect(pulls.length).toBe(1);
+			// The status line rewriting itself, a checkbox saved: same peer, same interval.
+			for (let i = 0; i < 5; i++) { settings.statusText = `tick ${i}`; onChange!(); }
+			settings.syncModels = false;
+			onChange!();
+			expect(pulls.length).toBe(1);
+			expect(live.size).toBe(1);
+			// A new interval does restart it.
+			settings.intervalSeconds = 120;
+			onChange!();
+			expect(pulls).toEqual([60_000, 120_000]);
+			expect(live.size).toBe(1);
+		} finally {
+			globalThis.setTimeout = realSet;
+			globalThis.clearTimeout = realClear;
+		}
+	});
+});

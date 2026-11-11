@@ -483,11 +483,20 @@ export default (pi: any) => {
 	});
 
 	// Poll the primary. A miss is logged and retried later (backing off up to MAX_BACKOFF intervals); the loop never throws.
-	const arm = () => {
+	/**
+	 * What the timer was set up for. Every settings write calls back here (the status line rewrites itself every 30 s),
+	 * and restarting the timer on each one pushed the next pull back for good: a follower pulled once and then never.
+	 * Only a change that matters (role, address, token, interval) restarts it.
+	 */
+	let armedFor = "";
+	const arm = (force = false) => {
+		const { url, token, interval } = cfg();
+		const key = JSON.stringify([role(), url, token, interval]);
+		if (!force && key === armedFor && (timer || busy)) return;
+		armedFor = key;
 		if (timer) clearTimeout(timer);
 		timer = undefined;
 		failures = 0;
-		const { url, token, interval } = cfg();
 		if (role() !== "follower" || !url || !token) return;
 		const tick = () => {
 			timer = undefined;
