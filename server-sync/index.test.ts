@@ -1,7 +1,7 @@
 // Drives the extension as the server does: a fake `pi`, a throwaway sqlite file, and the methods a client calls.
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import factory from "./index.ts";
@@ -232,5 +232,46 @@ describe("the pull timer", () => {
 			globalThis.setTimeout = realSet;
 			globalThis.clearTimeout = realClear;
 		}
+	});
+});
+
+describe("this extension's own settings", () => {
+	test("are never applied from a primary, even one that sends them", async () => {
+		const puts: string[] = [];
+		const realFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+			const url = String(input instanceof Request ? input.url : input);
+			if (url.endsWith("/methods/snapshot")) {
+				// An old or tampered primary: its own server-sync settings ride along with another extension's.
+				return Response.json({ result: { keys: [], settings: {}, extensions: {
+					"server-sync": { role: "primary", remoteUrl: "http://elsewhere:1" },
+					"quota-monitor": { language: "ko" },
+				} } });
+			}
+			if (init?.method === "PUT") { puts.push(new URL(url).pathname); return Response.json({ applied: true }); }
+			return new Response("unexpected", { status: 500 });
+		}) as typeof fetch;
+		try {
+			const h = boot({ role: "follower", remoteUrl: "http://primary:1", remoteToken: "t", syncExtensions: true });
+			const res = (await h.methods.get("sync")!()) as { applied: string[] };
+			expect(res.applied.filter((k) => k.startsWith("ext:"))).toEqual(["ext:quota-monitor"]);
+			expect(res.applied.some((k) => k.includes("server-sync"))).toBe(false);
+			expect(puts).toEqual(["/extensions/quota-monitor/settings"]);
+			h.unload();
+		} finally {
+			globalThis.fetch = realFetch;
+		}
+	});
+
+	test("are never served to a follower", () => {
+		const root = join(dir, "extensions");
+		mkdirSync(join(root, "server-sync"), { recursive: true });
+		writeFileSync(join(root, "server-sync", "settings.json"), JSON.stringify({ role: "primary" }));
+		mkdirSync(join(root, "guard"), { recursive: true });
+		writeFileSync(join(root, "guard", "settings.json"), JSON.stringify({ mode: "strict" }));
+		const h = boot({ role: "primary" });
+		const snap = h.methods.get("snapshot")!({ extensions: true }) as { extensions: Record<string, unknown> };
+		expect(Object.keys(snap.extensions)).toEqual(["guard"]);
+		h.unload();
 	});
 });

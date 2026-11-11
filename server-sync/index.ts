@@ -581,7 +581,8 @@ export default (pi: any) => {
 		const s = settings();
 		const token = String(s.remoteToken ?? "").trim();
 		const url = String(s.remoteUrl ?? "").trim().replace(/\/+$/, "");
-		if (token && url && !readPeer()) writePeer({ url, token, code: "" });
+		// A peer file left from another address must not swallow it: the address in the settings is the one in use.
+		if (token && url && readPeer()?.url !== url) writePeer({ url, token, code: "" });
 		if ("remoteToken" in s) pi.settings.set(withoutToken(s));
 	};
 
