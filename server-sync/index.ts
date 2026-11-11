@@ -11,7 +11,7 @@ import { Database } from "bun:sqlite";
 import { createHash, randomBytes } from "node:crypto";
 import { homedir, networkInterfaces } from "node:os";
 import { join } from "node:path";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 
 /** How often a failing pull is retried at most (the base interval is multiplied by 2 per miss, up to this). */
 const MAX_BACKOFF = 8;
@@ -176,14 +176,45 @@ export default (pi: any) => {
 	const settings = (): Record<string, unknown> => (pi.settings.get() ?? {}) as Record<string, unknown>;
 	const role = (): "primary" | "follower" => (settings().role === "follower" ? "follower" : "primary");
 
+	/**
+	 * The peer's address and the device token redeemed there, kept in this extension's own data folder and not in its
+	 * settings: the app's form saves only the fields it shows, so a token kept in the settings was wiped by the next save
+	 * (the status line or any checkbox) and the follower went back to redeeming a code already used.
+	 */
+	const peerFile = () => join(typeof pi.dataDir === "string" && pi.dataDir ? pi.dataDir : join(dataDir(), "extension-data", SELF_ID), "peer.json");
+	type Peer = { url: string; token: string; code: string };
+	const readPeer = (): Peer | null => {
+		try {
+			const v: unknown = JSON.parse(readFileSync(peerFile(), "utf8"));
+			if (!plain(v) || typeof v.url !== "string" || typeof v.token !== "string" || !v.token) return null;
+			return { url: v.url, token: v.token, code: typeof v.code === "string" ? v.code : "" };
+		} catch {
+			return null;
+		}
+	};
+	const writePeer = (peer: Peer | null) => {
+		const file = peerFile();
+		if (!peer) return rmSync(file, { force: true });
+		mkdirSync(join(file, ".."), { recursive: true, mode: 0o700 });
+		const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
+		writeFileSync(tmp, JSON.stringify(peer), { mode: 0o600 });
+		chmodSync(tmp, 0o600);
+		renameSync(tmp, file);
+	};
+	/** Only a digest of the redeemed code is kept: enough to tell "the same link pasted again" from a new one. */
+	const codeDigest = (code: string) => createHash("sha256").update(code).digest("hex");
+
+	/** The address typed in the form wins; empty, the one the pasted link carried. */
+	const peerUrl = (): string => String(settings().remoteUrl ?? "").trim().replace(/\/+$/, "") || readPeer()?.url || "";
+
 	const cfg = (): { url: string; token: string; interval: number } => {
 		const s = settings();
 		const interval = Number(s.intervalSeconds ?? 60);
-		return {
-			url: String(s.remoteUrl ?? "").trim().replace(/\/+$/, ""),
-			token: String(s.remoteToken ?? "").trim(),
-			interval: Math.max(15, Number.isFinite(interval) && interval > 0 ? Math.floor(interval) : 60),
-		};
+		const url = peerUrl();
+		const peer = readPeer();
+		// A token belongs to the server that issued it: after the address changes it is not sent anywhere else.
+		const token = peer && peer.url === url ? peer.token : String(s.remoteToken ?? "").trim();
+		return { url, token, interval: Math.max(15, Number.isFinite(interval) && interval > 0 ? Math.floor(interval) : 60) };
 	};
 
 	const keys = (): string[] => effectiveKeys(String(settings().keys ?? ""));
@@ -361,7 +392,8 @@ export default (pi: any) => {
 		const given = String(input.code ?? "").trim();
 		const token = typed || (given ? await redeemPeerCode(url, given) : "");
 		if (!token) throw new Error("a peer address and its code are required");
-		pi.settings.set({ ...settings(), role: "follower", remoteUrl: url, remoteToken: token });
+		writePeer({ url, token, code: given && !typed ? codeDigest(given) : "" });
+		pi.settings.set({ ...withoutToken(settings()), role: "follower", remoteUrl: url });
 		const applied = await pull();
 		return { applied, ...status() };
 	});
@@ -493,7 +525,13 @@ export default (pi: any) => {
 		const link = pairingLink(raw);
 		const url = String(s.remoteUrl ?? "").trim().replace(/\/+$/, "") || link?.url || "";
 		const pasted = link?.code ?? raw;
-		if (!url || !pasted || String(s.remoteToken ?? "").trim()) return;
+		if (!url || !pasted) return;
+		// The link already redeemed, sent back by a form that still shows it: connected already, nothing to redeem.
+		const peer = readPeer();
+		if (peer && peer.url === url && peer.code === codeDigest(pasted)) {
+			if (raw) pi.settings.set({ ...settings(), shareCode: "" });
+			return;
+		}
 		const key = `${url} ${pasted}`;
 		if (rejected?.key === key && Date.now() < rejected.until) return;
 		fetching = true;
@@ -501,7 +539,9 @@ export default (pi: any) => {
 			const token = await redeemPeerCode(url, pasted);
 			rejected = null;
 			lastError = null;
-			pi.settings.set({ ...settings(), remoteUrl: url, remoteToken: token, shareCode: "" });
+			writePeer({ url, token, code: codeDigest(pasted) });
+			pi.settings.set({ ...withoutToken(settings()), remoteUrl: url, shareCode: "" });
+			arm();
 			log(`redeemed the peer's code at ${url}`);
 			// Pull now: the page should say "connected" right after the save, not one interval later.
 			if (!busy) {
@@ -527,6 +567,15 @@ export default (pi: any) => {
 		arm();
 	};
 
+	/** 0.8.4 and older kept the token in the settings: move it to the peer file once, then drop it from there. */
+	const moveOldToken = () => {
+		const s = settings();
+		const token = String(s.remoteToken ?? "").trim();
+		const url = String(s.remoteUrl ?? "").trim().replace(/\/+$/, "");
+		if (token && url && !readPeer()) writePeer({ url, token, code: "" });
+		if ("remoteToken" in s) pi.settings.set(withoutToken(s));
+	};
+
 	// 0.3.0 stored a packed {u,t} blob here; it is not a pairing code, so drop it instead of failing on it.
 	const dropStaleCode = () => {
 		const s = settings();
@@ -538,6 +587,7 @@ export default (pi: any) => {
 		} catch { /* a pairing code is not base64 JSON: keep it */ }
 	};
 
+	moveOldToken();
 	dropStaleCode();
 	void fillPeerToken();
 	showStatus();
@@ -554,6 +604,11 @@ export default (pi: any) => {
 		try { db?.close(); } catch { /* already closed */ }
 		db = undefined;
 	});
+};
+
+const withoutToken = (s: Record<string, unknown>): Record<string, unknown> => {
+	const { remoteToken: _, ...rest } = s;
+	return rest;
 };
 
 /** The peer turned the code down: trying the same code again cannot work (until `retryAt`, when it was only throttled). */

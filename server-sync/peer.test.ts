@@ -22,11 +22,21 @@ const seed = (file: string, rows: Record<string, unknown>) => {
 interface Harness {
 	methods: Map<string, (params?: unknown) => unknown>;
 	settings: Record<string, unknown>;
+	/** The token the follower keeps in its own data folder ("" when none). */
+	token(): string;
 }
+
+/** Each instance gets its own data folder, the way the server gives each extension one. */
+const ownData = () => mkdtempSync(join(dir, "data-"));
+const tokenIn = (data: string) => {
+	try { return String(JSON.parse(readFileSync(join(data, "peer.json"), "utf8")).token ?? ""); } catch { return ""; }
+};
 
 const boot = (file: string, dataDir: string, token: string, settings: Record<string, unknown>): Harness => {
 	const methods = new Map<string, (params?: unknown) => unknown>();
+	const data = ownData();
 	const pi = {
+		dataDir: data,
 		settings: {
 			get: () => settings,
 			set: (next: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, next); return settings; },
@@ -42,7 +52,7 @@ const boot = (file: string, dataDir: string, token: string, settings: Record<str
 	process.env.PIPAYA_DATA_DIR = dataDir;
 	process.env.PIPAYA_TOKEN = token;
 	factory(pi);
-	return { methods, settings };
+	return { methods, settings, token: () => tokenIn(data) };
 };
 
 /** A tiny stand-in for a pipaya server: only the two methods this extension calls. */
@@ -124,7 +134,7 @@ describe("connecting by address alone", () => {
 		expect(result.lastError).toBeNull();
 		expect(result.applied.sort()).toEqual(["default_model", "skills"]);
 		// The token came from redeeming the code: a device token, not the primary's admin token.
-		expect(follower.settings.remoteToken).toBe("device-token-from-pairing");
+		expect(follower.token()).toBe("device-token-from-pairing");
 
 		// The extension keeps its own handle on the file; read through it rather than a second connection.
 		const snap = follower.methods.get("snapshot")!() as { settings: Record<string, unknown> };
@@ -135,7 +145,7 @@ describe("connecting by address alone", () => {
 		seed(followerDb, {});
 		const follower = boot(followerDb, dir, "follower-admin-token", { role: "primary" });
 		const result = (await follower.methods.get("connect")!({ url: `http://127.0.0.1:${server!.port}`, token: "typed-by-hand" })) as { lastError: string | null };
-		expect(follower.settings.remoteToken).toBe("typed-by-hand");
+		expect(follower.token()).toBe("typed-by-hand");
 		// The peer does not check tokens, so the pull still succeeds; what matters is that the typed one was kept.
 		expect(result.lastError).toBeNull();
 	});
@@ -157,8 +167,8 @@ describe("connecting by address alone", () => {
 		seed(followerDb, {});
 		const settings: Record<string, unknown> = { role: "follower", shareCode: `pipaya://connect?u=${encodeURIComponent(`http://127.0.0.1:${server!.port}/`)}&c=the-code&n=ubuntu` };
 		const follower = boot(followerDb, dir, "follower-admin-token", settings);
-		for (let i = 0; i < 50 && !follower.settings.remoteToken; i++) await Bun.sleep(10);
-		expect(follower.settings.remoteToken).toBe("device-token-from-pairing");
+		for (let i = 0; i < 50 && !follower.token(); i++) await Bun.sleep(10);
+		expect(follower.token()).toBe("device-token-from-pairing");
 		expect(follower.settings.remoteUrl).toBe(`http://127.0.0.1:${server!.port}`);
 		expect(follower.settings.shareCode).toBe("");
 		expect(pairingLink("not a link")).toBeNull();
@@ -171,9 +181,11 @@ describe("connecting by address alone", () => {
 		let onChange: (() => void) | undefined;
 		const settings: Record<string, unknown> = { role: "follower", shareCode: `pipaya://connect?u=${encodeURIComponent(`http://127.0.0.1:${server!.port}`)}&c=dead-code` };
 		const methods = new Map<string, (p?: unknown) => unknown>();
+		const data = ownData();
 		process.env.PIPAYA_DB = followerDb;
 		process.env.PIPAYA_DATA_DIR = followerDir;
 		factory({
+			dataDir: data,
 			settings: {
 				get: () => settings,
 				set: (next: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, next); onChange?.(); return settings; },
@@ -191,9 +203,42 @@ describe("connecting by address alone", () => {
 		onChange!();
 		for (let i = 0; i < 100 && !String(settings.statusText).startsWith("● 연결됨"); i++) await Bun.sleep(10);
 		expect(redeemCalls).toBe(2);
-		expect(settings.remoteToken).toBe("device-token-from-pairing");
+		expect(tokenIn(data)).toBe("device-token-from-pairing");
 		expect(String(settings.statusText)).toMatch(/^● 연결됨/);
 		expect((methods.get("status")!() as { lastSyncAt: number | null }).lastSyncAt).not.toBeNull();
+	});
+
+	test("a save from the app's form keeps the connection: the used link is not redeemed again", async () => {
+		seed(followerDb, {});
+		redeemCalls = 0;
+		let onChange: (() => void) | undefined;
+		const link = `pipaya://connect?u=${encodeURIComponent(`http://127.0.0.1:${server!.port}`)}&c=the-code`;
+		const settings: Record<string, unknown> = { role: "follower", shareCode: link };
+		const data = ownData();
+		process.env.PIPAYA_DB = followerDb;
+		process.env.PIPAYA_DATA_DIR = followerDir;
+		const set = (next: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, next); onChange?.(); return settings; };
+		factory({
+			dataDir: data,
+			settings: { get: () => settings, set, onChange: (fn: () => void) => { onChange = fn; return () => {}; } },
+			log: () => {}, registerMethod: () => {}, emit: () => {}, on: () => {},
+		});
+		for (let i = 0; i < 100 && !String(settings.statusText).startsWith("● 연결됨"); i++) await Bun.sleep(10);
+		expect(String(settings.statusText)).toMatch(/^● 연결됨/);
+		// The form posts back only the fields it shows, from a page opened before the connection: the old link included.
+		set({ role: "follower", remoteUrl: "", shareCode: link, syncModels: true, statusText: "" });
+		await Bun.sleep(50);
+		expect(redeemCalls).toBe(1);
+		expect(settings.shareCode).toBe("");
+		expect("remoteToken" in settings).toBe(false);
+		expect(tokenIn(data)).toBe("device-token-from-pairing");
+		expect(String(settings.statusText)).toMatch(/^● 연결됨/);
+	});
+
+	test("a token an older version kept in the settings moves out of them", () => {
+		const h = boot(followerDb, followerDir, "follower-admin-token", { role: "follower", remoteUrl: "http://peer:1", remoteToken: "old-token" });
+		expect("remoteToken" in h.settings).toBe(false);
+		expect(h.token()).toBe("old-token");
 	});
 
 	test("a follower pulls only the groups it checked", async () => {

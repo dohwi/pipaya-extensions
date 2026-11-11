@@ -47,7 +47,7 @@ settings: they are not synced.
 
 - **Reads** the server's own SQLite database (`PIPAYA_DB`, or `<PIPAYA_DATA_DIR|~/.pipaya>/pipaya.db`) — only the `settings` table and the event counter.
 - **Network**: the follower talks to exactly one URL, the `remoteUrl` you configure: `POST /pairing/redeem` once to trade the code for a token, then `POST /server-extensions/server-sync/methods/snapshot` with that token. With 확장 설정 checked it also calls its own server at `127.0.0.1:$PIPAYA_PORT` to save them. The primary only answers its own `/pairing` when asked for a code. Nothing else is sent anywhere.
-- The remote token is stored in the extension's own settings file (`extensions/server-sync/settings.json`, mode 0600), is never logged and never appears in the status below.
+- The device token is stored in the extension's own data folder (`extension-data/server-sync/peer.json`, mode 0600), not in its settings: the app's form saves only the fields it shows, so a token kept there was wiped by the next save. It is never logged and never appears in the status below. A token an older version kept in the settings moves there on load.
 
 ## Roles
 
