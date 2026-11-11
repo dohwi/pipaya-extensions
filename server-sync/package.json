@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "description": "Mirrors a primary pipaya server's settings onto this one. The follower picks what to pull: models, workdir, MCP servers, skills, tools, history, and optionally extension settings (credentials excluded).",
   "license": "MIT",
   "author": "dohwi",
@@ -8,7 +8,7 @@
     "title": "Server Sync",
     "descriptions": {
       "en": "Mirrors a primary pipaya server's settings onto this one. Connect with the primary's address and a one-time code (or the app's copied link), then pick what to pull: models, workdir, MCP servers, skills, tools, history, and optionally extension settings (credentials never leave the primary).",
-      "ko": "기준 서버의 설정을 이 서버로 복제합니다. 기준 서버 주소와 연결 코드(또는 앱의 [링크 복사] 링크)로 연결하고, 모델·작업 디렉터리·MCP 서버·스킬·도구·대화 보관·확장 설정 중 가져올 항목을 고릅니다. 토큰 같은 비밀값은 넘어오지 않습니다."
+      "ko": "기준 서버의 설정을 이 서버로 복제합니다. 기준 서버 주소와 연결 코드(또는 기기 탭의 [연결 링크 복사] 링크)로 연결하고, 모델·작업 디렉터리·MCP 서버·스킬·도구·대화 보관·확장 설정 중 가져올 항목을 고릅니다. 토큰 같은 비밀값은 넘어오지 않습니다."
     },
     "settings": [
       {
@@ -52,7 +52,7 @@
         "key": "shareCode",
         "type": "string",
         "label": "연결 코드 또는 링크",
-        "description": "기준 서버의 기기 탭 → 폰 추가 → [링크 복사]로 받은 값을 붙여넣고 저장하세요. 2분간 유효, 1회용. 저장 전에 폰 추가 창을 닫으면 코드가 무효가 됩니다.",
+        "description": "기준 서버의 기기 탭 → [연결 링크 복사]로 받은 링크를 붙여넣고 저장하세요. 2분간 유효, 1회용.",
         "default": "",
         "when": {
           "key": "role",
@@ -144,7 +144,7 @@
         "상대 서버 주소": "Primary server address",
         "기준 서버 주소. 아래에 연결 링크를 붙여넣으면 비워 둬도 됩니다.": "The primary's address. Leave it empty when you paste a connection link below.",
         "연결 코드 또는 링크": "Connection code or link",
-        "기준 서버의 기기 탭 → 폰 추가 → [링크 복사]로 받은 값을 붙여넣고 저장하세요. 2분간 유효, 1회용. 저장 전에 폰 추가 창을 닫으면 코드가 무효가 됩니다.": "Paste what the primary's Devices tab → Add phone → [Copy link] gives you, then save. Valid for 2 minutes, once. Closing the Add phone panel before saving voids the code.",
+        "기준 서버의 기기 탭 → [연결 링크 복사]로 받은 링크를 붙여넣고 저장하세요. 2분간 유효, 1회용.": "Paste the link from the primary's Devices tab → [Copy connection link], then save. Valid for 2 minutes, once.",
         "모델 (기본·시스템·이미지 모델)": "Models (default, system, image)",
         "기본 작업 디렉터리": "Default working directory",
         "두 서버의 폴더 구조가 다르면 끄세요.": "Turn off when the two servers have different folders.",

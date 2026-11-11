@@ -232,8 +232,8 @@ export default (pi: any) => {
 			const url = publicUrl();
 			return url
 				? {
-					ko: `● 기준 서버 — 팔로워가 이 서버의 설정을 가져갑니다\n주소: ${url}\n연결 코드: 이 서버의 기기 탭 → 폰 추가 → 링크 복사`,
-					en: `● Primary — followers pull this server's settings\nAddress: ${url}\nConnection code: this server's Devices tab → Add phone → Copy link`,
+					ko: `● 기준 서버 — 팔로워가 이 서버의 설정을 가져갑니다\n주소: ${url}\n연결 링크: 이 서버의 기기 탭 → 연결 링크 복사`,
+					en: `● Primary — followers pull this server's settings\nAddress: ${url}\nConnection link: this server's Devices tab → Copy connection link`,
 				}
 				: { ko: "● 기준 서버 — 다른 서버가 이 서버의 설정을 가져갑니다", en: "● Primary — other servers pull this server's settings" };
 		}
@@ -489,7 +489,7 @@ export default (pi: any) => {
 		if (fetching || role() !== "follower") return;
 		const s = settings();
 		const raw = String(s.shareCode ?? "").trim();
-		// The app's "링크 복사" link carries the address and the code together: either is enough to paste.
+		// The app's "연결 링크 복사" / "링크 복사" link carries the address and the code together: either is enough to paste.
 		const link = pairingLink(raw);
 		const url = String(s.remoteUrl ?? "").trim().replace(/\/+$/, "") || link?.url || "";
 		const pasted = link?.code ?? raw;
