@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.8.8",
+  "version": "0.9.0",
   "description": "Mirrors a primary pipaya server's settings onto this one. The follower picks what to pull: models, workdir, MCP servers, skills, tools, history, and optionally extension settings (credentials excluded).",
   "license": "MIT",
   "author": "dohwi",
@@ -11,14 +11,6 @@
       "ko": "기준 서버의 설정을 이 서버로 복제합니다. 기준 서버 주소와 연결 코드(또는 기기 탭의 [연결 링크 복사] 링크)로 연결하고, 모델·작업 디렉터리·MCP 서버·스킬·도구·대화 보관·확장 설정 중 가져올 항목을 고릅니다. 토큰 같은 비밀값은 넘어오지 않습니다."
     },
     "settings": [
-      {
-        "key": "statusText",
-        "type": "string",
-        "label": "상태",
-        "description": "자동으로 갱신됩니다.",
-        "default": "",
-        "readonly": true
-      },
       {
         "key": "role",
         "type": "select",
@@ -135,8 +127,6 @@
     ],
     "translations": {
       "en": {
-        "상태": "Status",
-        "자동으로 갱신됩니다.": "Updated automatically.",
         "역할": "Role",
         "기준: 이 서버의 설정을 다른 서버에 건네줍니다. 팔로워: 기준 서버에서 아래에 체크한 항목만 받아옵니다.": "Primary: hands this server's settings to other servers. Follower: pulls only the items checked below from the primary.",
         "기준 (설정을 건네줌)": "Primary (hands out settings)",
