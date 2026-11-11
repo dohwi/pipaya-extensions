@@ -40,8 +40,10 @@ extensions/                # this repository (dohwi/pipaya-extensions)
 
 1. Add or change `<id>/`. A server extension needs `index.ts` and `package.json`; the README must state what it reads, runs and sends.
 2. Bump `version` in its `package.json` (and `manifest.json` for a client one, then rebuild `dist/`).
-3. Tag the release `<id>-v<version>` (for example `guard-v0.2.0`). One tag per extension, so each folder versions on its own.
-4. In [pipaya-marketplace](https://github.com/dohwi/pipaya-marketplace) run `bun scripts/pin.ts <id> <tag>` and commit the result.
+3. Push to `main`. The `release` workflow runs the checks and tags `<id>-v<version>` (one tag per extension, so each
+   folder versions on its own); the marketplace pins the newest tag by itself, at once when the repo secret
+   `MARKETPLACE_TOKEN` is set, else within the hour.
+4. A new extension is listed once by hand: add its entry to [pipaya-marketplace](https://github.com/dohwi/pipaya-marketplace)'s `marketplace.json`.
 
 ## Development
 

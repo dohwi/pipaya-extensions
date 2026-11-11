@@ -1,0 +1,43 @@
+name: release
+# A version bump in an extension's package.json is its release: tag `<folder>-v<version>` once the checks pass, then
+# tell the marketplace so it pins the new tag right away (it also checks every hour on its own).
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      # A fine-grained token with Contents: write on pipaya-marketplace. Without it the marketplace picks the tag up within the hour.
+      MARKETPLACE_TOKEN: ${{ secrets.MARKETPLACE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun scripts/check.ts
+      - name: tag new versions
+        id: tag
+        run: |
+          made=""
+          for pkg in */package.json; do
+            dir=${pkg%/package.json}
+            version=$(jq -r .version "$pkg")
+            tag="$dir-v$version"
+            git rev-parse -q --verify "refs/tags/$tag" >/dev/null && continue
+            git tag "$tag"
+            git push origin "$tag"
+            made="$made $tag"
+          done
+          echo "made=${made# }" >> "$GITHUB_OUTPUT"
+      - name: tell the marketplace
+        if: steps.tag.outputs.made != '' && env.MARKETPLACE_TOKEN != ''
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer $MARKETPLACE_TOKEN" -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/dohwi/pipaya-marketplace/dispatches \
+            -d "{\"event_type\":\"extension-released\",\"client_payload\":{\"tags\":\"${{ steps.tag.outputs.made }}\"}}"

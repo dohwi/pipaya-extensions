@@ -40,8 +40,10 @@ extensions/                # 이 저장소 (dohwi/pipaya-extensions)
 
 1. `<id>/`를 추가하거나 고칩니다. 서버 확장에는 `index.ts`와 `package.json`이 필요하고, README에 무엇을 읽고 실행하고 보내는지 적어야 합니다.
 2. `package.json`의 `version`을 올립니다(클라이언트 확장은 `manifest.json`도 올리고 `dist/`를 다시 빌드).
-3. 릴리스 태그를 `<id>-v<버전>`으로 만듭니다(예: `guard-v0.2.0`). 확장마다 태그가 따로라서 폴더별로 버전이 독립적입니다.
-4. [pipaya-marketplace](https://github.com/dohwi/pipaya-marketplace)에서 `bun scripts/pin.ts <id> <태그>`를 실행하고 결과를 커밋합니다.
+3. `main`에 푸시합니다. `release` 워크플로가 검사를 돌리고 `<id>-v<버전>` 태그를 만듭니다(확장마다 태그가 따로라서
+   폴더별로 버전이 독립적). 마켓플레이스는 가장 새 태그로 알아서 고정합니다. 저장소 시크릿 `MARKETPLACE_TOKEN`이
+   있으면 바로, 없으면 한 시간 안에 반영됩니다.
+4. 새 확장은 처음 한 번만 [pipaya-marketplace](https://github.com/dohwi/pipaya-marketplace)의 `marketplace.json`에 항목을 추가합니다.
 
 ## 개발
 
