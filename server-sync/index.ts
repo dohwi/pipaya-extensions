@@ -327,6 +327,17 @@ export default (pi: any) => {
 		return host ? `http://${host}:${port}` : "";
 	};
 
+	/**
+	 * Where this server itself listens, for the calls it makes to its own routes. Not always loopback: the desktop app
+	 * can bind its bundled server to one address only (e.g. the Tailscale one), and then 127.0.0.1 refuses the call.
+	 */
+	const ownUrl = (): string => {
+		const port = process.env.PIPAYA_PORT ?? "8787";
+		const bind = String(process.env.PIPAYA_HOST ?? "").trim();
+		const host = !bind || bind === "0.0.0.0" || bind === "::" || bind === "[::]" ? "127.0.0.1" : bind;
+		return `http://${host.includes(":") && !host.startsWith("[") ? `[${host}]` : host}:${port}`;
+	};
+
 	/** The admin token of this server (`PIPAYA_TOKEN`, else the `token` file in the data dir). */
 	const adminToken = (): string => {
 		const fromEnv = process.env.PIPAYA_TOKEN;
@@ -440,14 +451,19 @@ export default (pi: any) => {
 			const theirs = Object.fromEntries(Object.entries(value).filter(([k]) => !CREDENTIAL_KEY.test(k)));
 			const next = { ...theirs, ...own };
 			if (sameObject(current, next)) continue;
-			const port = process.env.PIPAYA_PORT ?? "8787";
-			const res = await fetch(`http://127.0.0.1:${port}/extensions/${id}/settings`, {
+			let res: Response;
+			try {
+				res = await fetch(`${ownUrl()}/extensions/${id}/settings`, {
 				method: "PUT",
 				headers: { authorization: `Bearer ${adminToken()}`, "content-type": "application/json" },
 				body: JSON.stringify({ settings: next }),
 				signal: AbortSignal.timeout(5_000),
-			});
-			if (!res.ok) throw new Error(`could not save the settings of ${id} here (${res.status})`);
+				});
+			} catch (e) {
+				// Not the primary's fault: say it is this server, so the page does not read "cannot connect" to the peer.
+				throw new Error(`pulled from the primary, but could not save the settings of ${id} on this server (${ownUrl()}): ${e instanceof Error ? e.message : String(e)}`);
+			}
+			if (!res.ok) throw new Error(`pulled from the primary, but could not save the settings of ${id} on this server (${res.status})`);
 			changed.push(`ext:${id}`);
 		}
 		return changed;

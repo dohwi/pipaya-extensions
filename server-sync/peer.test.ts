@@ -279,6 +279,49 @@ describe("connecting by address alone", () => {
 		delete process.env.PIPAYA_PORT;
 	});
 
+	test("a server bound to one address saves pulled extension settings there, not on loopback", async () => {
+		const write = (root: string, id: string, value: unknown) => {
+			mkdirSync(join(root, "extensions", id), { recursive: true });
+			writeFileSync(join(root, "extensions", id, "settings.json"), JSON.stringify(value));
+		};
+		write(dir, "guard", { mode: "bound-test" });
+		seed(followerDb, {});
+		// Nothing listens on this loopback port; "this server" is reachable only at the bound address (::1 here).
+		const own = Bun.serve({
+			hostname: "::1", port: 0,
+			async fetch(req) {
+				const body = (await req.json()) as { settings: unknown };
+				write(followerDir, "guard", body.settings);
+				return Response.json({ applied: true });
+			},
+		});
+		try {
+			const follower = boot(followerDb, followerDir, "follower-admin-token", { role: "follower", remoteUrl: `http://127.0.0.1:${server!.port}`, remoteToken: "t", syncExtensions: true });
+			process.env.PIPAYA_PORT = String(own.port);
+			process.env.PIPAYA_HOST = "::1";
+			const res = (await follower.methods.get("sync")!()) as { applied: string[] };
+			expect(res.applied).toContain("ext:guard");
+			expect(JSON.parse(readFileSync(join(followerDir, "extensions", "guard", "settings.json"), "utf8"))).toEqual({ mode: "bound-test" });
+		} finally {
+			own.stop(true);
+			delete process.env.PIPAYA_PORT;
+			delete process.env.PIPAYA_HOST;
+		}
+	});
+
+	test("a failed save on this server is not reported as the primary being unreachable", async () => {
+		mkdirSync(join(dir, "extensions", "guard"), { recursive: true });
+		writeFileSync(join(dir, "extensions", "guard", "settings.json"), JSON.stringify({ mode: "unreachable-test" }));
+		seed(followerDb, {});
+		const follower = boot(followerDb, followerDir, "follower-admin-token", { role: "follower", remoteUrl: `http://127.0.0.1:${server!.port}`, remoteToken: "t", syncExtensions: true });
+		process.env.PIPAYA_PORT = "9"; // nothing listens here
+		try {
+			await expect(Promise.resolve(follower.methods.get("sync")!())).rejects.toThrow(/pulled from the primary, but could not save the settings of guard on this server/);
+		} finally {
+			delete process.env.PIPAYA_PORT;
+		}
+	});
+
 	test("an address alone is not enough", async () => {
 		seed(followerDb, {});
 		const follower = boot(followerDb, dir, "follower-admin-token", { role: "primary" });
