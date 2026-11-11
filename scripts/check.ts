@@ -53,6 +53,17 @@ export function checkExtension(id: string, dir = join(DIR, id)): Problem[] {
 			if (typeof f.label !== "string" || !f.label.trim()) errs.push(`${at}.label: expected a non-empty string`);
 			if ("readonly" in f && typeof f.readonly !== "boolean") errs.push(`${at}.readonly: expected a boolean`);
 			if (f.readonly === true && f.secret === true) errs.push(`${at}.readonly: a secret field cannot be read-only`);
+			// `when` must name an earlier field: a typo or a later key hides the field for good (app 0.8.6+ checks the same).
+			if ("when" in f) {
+				const earlier = meta.settings.slice(0, i).find((g: any) => g?.key === f.when?.key);
+				if (!f.when || typeof f.when !== "object" || !earlier) errs.push(`${at}.when.key: expected the key of an earlier field`);
+				else if (earlier.readonly === true) errs.push(`${at}.when.key: cannot depend on a read-only field`);
+				else {
+					const values = Array.isArray(f.when.equals) ? f.when.equals : [f.when.equals];
+					if (!values.length) errs.push(`${at}.when.equals: must not be empty`);
+					if (earlier.type === "select" && values.some((v: unknown) => !earlier.options?.some((o: any) => o?.value === v))) errs.push(`${at}.when.equals: not an option of ${earlier.key}`);
+				}
+			}
 			if (f.secret === true && "default" in f) errs.push(`${at}.default: a secret field must not have a default`);
 			if (f.type !== "select") { if ("options" in f) errs.push(`${at}.options: only select fields take options`); return; }
 			if (!Array.isArray(f.options)) { errs.push(`${at}.options: a select field needs options`); return; }

@@ -160,8 +160,15 @@ export default (pi: any) => {
 
 	/** The one line the page shows: a dot for the state, then what happened last. */
 	const statusText = (): string => {
-		if (role() === "primary") return "● 기준 서버 — 다른 서버가 이 서버의 설정을 가져갑니다";
-		if (!cfg().url) return "○ 상대 서버 주소를 입력하세요";
+		if (role() === "primary") {
+			const url = publicUrl();
+			return url
+				? `● 기준 서버 — 팔로워가 이 서버의 설정을 가져갑니다\n주소: ${url}\n연결 코드: 이 서버의 기기 탭 → 폰 추가 → 링크 복사`
+				: "● 기준 서버 — 다른 서버가 이 서버의 설정을 가져갑니다";
+		}
+		const pasted = String(settings().shareCode ?? "").trim();
+		if (!cfg().url && !pairingLink(pasted)) return "○ 기준 서버 주소를 입력하세요";
+		if (!cfg().token && !pasted) return "○ 기준 서버의 연결 코드를 붙여넣으세요";
 		if (lastError) return `✕ 연결 실패 — ${lastError}`;
 		if (lastSyncAt === null) return "○ 아직 연결하지 못했습니다";
 		const what = lastApplied.length ? `${lastApplied.length}개 항목 가져옴` : "바뀐 것 없음";
@@ -366,13 +373,16 @@ export default (pi: any) => {
 	const fillPeerToken = async () => {
 		if (fetching || role() !== "follower") return;
 		const s = settings();
-		const url = String(s.remoteUrl ?? "").trim().replace(/\/+$/, "");
-		const pasted = String(s.shareCode ?? "").trim();
+		const raw = String(s.shareCode ?? "").trim();
+		// The app's "링크 복사" link carries the address and the code together: either is enough to paste.
+		const link = pairingLink(raw);
+		const url = String(s.remoteUrl ?? "").trim().replace(/\/+$/, "") || link?.url || "";
+		const pasted = link?.code ?? raw;
 		if (!url || !pasted || String(s.remoteToken ?? "").trim()) return;
 		fetching = true;
 		try {
 			const token = await redeemPeerCode(url, pasted);
-			pi.settings.set({ ...settings(), remoteToken: token, shareCode: "" });
+			pi.settings.set({ ...settings(), remoteUrl: url, remoteToken: token, shareCode: "" });
 			log(`redeemed the peer's code at ${url}`);
 		} catch (e) {
 			lastError = e instanceof Error ? e.message : String(e);
@@ -418,6 +428,21 @@ export default (pi: any) => {
 		db = undefined;
 	});
 };
+
+/** `pipaya://connect?u=<address>&c=<code>` (the app's "링크 복사"), split into the address and the code; null for anything else. */
+export function pairingLink(input: string): { url: string; code: string } | null {
+	if (!input.startsWith("pipaya://")) return null;
+	try {
+		const link = new URL(input);
+		if (link.hostname !== "connect") return null;
+		const u = (link.searchParams.get("u") ?? "").trim().replace(/\/+$/, "");
+		const code = (link.searchParams.get("c") ?? "").trim();
+		const url = /^https?:\/\//i.test(u) ? u : u ? `http://${u}` : "";
+		return url && code ? { url, code } : null;
+	} catch {
+		return null;
+	}
+}
 
 /**
  * The first non-loopback IPv4 address of this machine: what a peer on the same tailnet or LAN should dial. Read from

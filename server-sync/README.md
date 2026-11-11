@@ -43,13 +43,16 @@ Both sides install this same extension; only the role differs. The follower hold
 4. The first pull happens within one interval; `POST /server-extensions/server-sync/methods/sync` forces one
    immediately and returns what changed.
 
-The form is short: **연결 상태**, the role, the peer address and the code.
+The form follows the role: a **primary** shows only the status and the role (the status line gives its own address
+and where to get a code); a **follower** also shows the address and the code. The app's [링크 복사] link
+(`pipaya://connect?u=…&c=…`) can be pasted into the code field alone — it carries the address too. The two fields are
+hidden with the settings field `when` (app 0.8.6+); an older app ignores it and shows every field.
 
 **상태** says what is happening without opening anything:
 
 - `● 기준 서버 — 다른 서버가 이 서버의 설정을 가져갑니다` on the primary
 - `● 연결됨 — 3분 전 확인, 2개 항목 가져옴` on a follower that is working
-- `✕ 연결 실패 — <why>` on one that is not, `○ 상대 서버 주소를 입력하세요` before it is set up
+- `✕ 연결 실패 — <why>` on one that is not, `○ 기준 서버 주소를 입력하세요` / `○ 기준 서버의 연결 코드를 붙여넣으세요` before it is set up
 
 The extension rewrites it after every pull and every 30 seconds (so "3분 전" stays true), and straight away after a
 save: the form posts every field back, this one included, so a fresh page would otherwise show an empty box until

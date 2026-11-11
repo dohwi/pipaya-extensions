@@ -4,7 +4,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import factory from "./index.ts";
+import factory, { pairingLink } from "./index.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "server-sync-peer-"));
 const primaryDb = join(dir, "primary.db");
@@ -140,6 +140,18 @@ describe("connecting by address alone", () => {
 		const follower = boot(followerDb, dir, "follower-admin-token", { role: "primary" });
 		await expect(Promise.resolve(follower.methods.get("connect")!({ url: `http://127.0.0.1:${server!.port}`, code: "wrong" }))).rejects.toThrow(/wrong or has expired/);
 		expect(follower.settings.role).toBe("primary");
+	});
+
+	test("the app's copied link alone fills the address and redeems the code", async () => {
+		seed(followerDb, {});
+		const settings: Record<string, unknown> = { role: "follower", shareCode: `pipaya://connect?u=${encodeURIComponent(`http://127.0.0.1:${server!.port}/`)}&c=the-code&n=ubuntu` };
+		const follower = boot(followerDb, dir, "follower-admin-token", settings);
+		for (let i = 0; i < 50 && !follower.settings.remoteToken; i++) await Bun.sleep(10);
+		expect(follower.settings.remoteToken).toBe("device-token-from-pairing");
+		expect(follower.settings.remoteUrl).toBe(`http://127.0.0.1:${server!.port}`);
+		expect(follower.settings.shareCode).toBe("");
+		expect(pairingLink("not a link")).toBeNull();
+		expect(pairingLink("pipaya://connect?u=100.1.2.3:8787&c=x")).toEqual({ url: "http://100.1.2.3:8787", code: "x" });
 	});
 
 	test("an address alone is not enough", async () => {
