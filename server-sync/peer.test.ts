@@ -1,7 +1,7 @@
 // A follower connecting to a primary by address alone, over real HTTP: the `connection` hand-out and `connect`.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import factory, { pairingLink } from "./index.ts";
@@ -9,6 +9,7 @@ import factory, { pairingLink } from "./index.ts";
 const dir = mkdtempSync(join(tmpdir(), "server-sync-peer-"));
 const primaryDb = join(dir, "primary.db");
 const followerDb = join(dir, "follower.db");
+const followerDir = join(dir, "follower");
 
 const seed = (file: string, rows: Record<string, unknown>) => {
 	const db = new Database(file);
@@ -64,6 +65,14 @@ beforeAll(() => {
 				const body = (await req.json()) as { code?: string };
 				if (body.code !== "the-code") return new Response("bad code", { status: 403 });
 				return Response.json({ token: "device-token-from-pairing" });
+			}
+			// The follower's own server, saving an extension's settings: write where the follower keeps them.
+			const ext = url.pathname.match(/^\/extensions\/([a-z0-9-]+)\/settings$/)?.[1];
+			if (ext && req.method === "PUT") {
+				const body = (await req.json()) as { settings: unknown };
+				mkdirSync(join(followerDir, "extensions", ext), { recursive: true });
+				writeFileSync(join(followerDir, "extensions", ext, "settings.json"), JSON.stringify(body.settings));
+				return Response.json({ value: body.settings, updatedAt: Date.now(), applied: true });
 			}
 			const name = url.pathname.match(/^\/server-extensions\/server-sync\/methods\/(\w+)$/)?.[1];
 			const fn = name ? primary.methods.get(name) : undefined;
@@ -152,6 +161,44 @@ describe("connecting by address alone", () => {
 		expect(follower.settings.shareCode).toBe("");
 		expect(pairingLink("not a link")).toBeNull();
 		expect(pairingLink("pipaya://connect?u=100.1.2.3:8787&c=x")).toEqual({ url: "http://100.1.2.3:8787", code: "x" });
+	});
+
+	test("a follower pulls only the groups it checked", async () => {
+		seed(followerDb, { default_model: { provider: "mine", model: "mine" }, skills: { global: {} } });
+		const follower = boot(followerDb, dir, "follower-admin-token", { role: "primary" });
+		follower.settings.syncModels = false;
+		const result = (await follower.methods.get("connect")!({ url: `http://127.0.0.1:${server!.port}`, code: "the-code" })) as { applied: string[] };
+		expect(result.applied).toEqual(["skills"]);
+		const db = new Database(followerDb);
+		const row = db.query("SELECT data FROM settings WHERE key = 'default_model'").get() as { data: string };
+		db.close();
+		expect(JSON.parse(row.data)).toEqual({ provider: "mine", model: "mine" });
+	});
+
+	test("extension settings come along only when checked, and credentials stay this server's own", async () => {
+		const write = (root: string, id: string, value: unknown) => {
+			mkdirSync(join(root, "extensions", id), { recursive: true });
+			writeFileSync(join(root, "extensions", id, "settings.json"), JSON.stringify(value));
+		};
+		write(dir, "quota-monitor", { httpOrigin: "http://primary:1", language: "ko", apiToken: "primary-secret" });
+		write(dir, "server-sync", { remoteToken: "never-sent" });
+		write(followerDir, "quota-monitor", { httpOrigin: "http://mine:1", apiToken: "mine" });
+		seed(followerDb, {});
+		const follower = boot(followerDb, followerDir, "follower-admin-token", { role: "follower", remoteUrl: `http://127.0.0.1:${server!.port}`, remoteToken: "t" });
+		process.env.PIPAYA_PORT = String(server!.port);
+		const off = (await follower.methods.get("sync")!()) as { applied: string[] };
+		expect(off.applied.some((k) => k.startsWith("ext:"))).toBe(false);
+
+		follower.settings.syncExtensions = true;
+		const on = (await follower.methods.get("sync")!()) as { applied: string[] };
+		expect(on.applied).toContain("ext:quota-monitor");
+		expect(on.applied).not.toContain("ext:server-sync");
+		const saved = JSON.parse(readFileSync(join(followerDir, "extensions", "quota-monitor", "settings.json"), "utf8"));
+		expect(saved).toEqual({ httpOrigin: "http://primary:1", language: "ko", apiToken: "mine" });
+		// Nothing changed since: no second write.
+		const again = (await follower.methods.get("sync")!()) as { applied: string[] };
+		expect(again.applied).toEqual([]);
+		delete process.env.PIPAYA_PORT;
 	});
 
 	test("an address alone is not enough", async () => {

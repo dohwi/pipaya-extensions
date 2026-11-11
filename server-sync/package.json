@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Mirrors a primary pipaya server's settings onto this one: model connections, defaults, MCP servers, skills, tools.",
   "license": "MIT",
   "author": "dohwi",
@@ -23,7 +23,7 @@
         "key": "role",
         "type": "select",
         "label": "역할",
-        "description": "기준: 이 서버의 설정을 다른 서버에 건네줍니다. 팔로워: 기준 서버의 설정을 받아와 그대로 따릅니다.",
+        "description": "기준: 이 서버의 설정을 다른 서버에 건네줍니다. 팔로워: 기준 서버에서 아래에 체크한 항목만 받아옵니다.",
         "default": "primary",
         "options": [
           {
@@ -58,6 +58,79 @@
           "key": "role",
           "equals": "follower"
         }
+      },
+      {
+        "key": "syncModels",
+        "type": "boolean",
+        "label": "모델 (기본·시스템·이미지 모델)",
+        "default": true,
+        "when": {
+          "key": "role",
+          "equals": "follower"
+        }
+      },
+      {
+        "key": "syncWorkdir",
+        "type": "boolean",
+        "label": "기본 작업 디렉터리",
+        "default": true,
+        "when": {
+          "key": "role",
+          "equals": "follower"
+        },
+        "description": "두 서버의 폴더 구조가 다르면 끄세요."
+      },
+      {
+        "key": "syncMcp",
+        "type": "boolean",
+        "label": "MCP 서버",
+        "default": true,
+        "when": {
+          "key": "role",
+          "equals": "follower"
+        }
+      },
+      {
+        "key": "syncSkills",
+        "type": "boolean",
+        "label": "스킬 켜기·끄기",
+        "default": true,
+        "when": {
+          "key": "role",
+          "equals": "follower"
+        }
+      },
+      {
+        "key": "syncTools",
+        "type": "boolean",
+        "label": "도구·도우미 설정",
+        "default": true,
+        "when": {
+          "key": "role",
+          "equals": "follower"
+        },
+        "description": "꺼 둔 도구와 도우미, 위임 정책."
+      },
+      {
+        "key": "syncHistory",
+        "type": "boolean",
+        "label": "대화 압축·보관 기간",
+        "default": true,
+        "when": {
+          "key": "role",
+          "equals": "follower"
+        }
+      },
+      {
+        "key": "syncExtensions",
+        "type": "boolean",
+        "label": "확장 설정",
+        "default": false,
+        "when": {
+          "key": "role",
+          "equals": "follower"
+        },
+        "description": "설치된 확장들의 설정값. 토큰·비밀번호 같은 값은 가져오지 않고 이 서버 것을 그대로 둡니다."
       }
     ]
   },

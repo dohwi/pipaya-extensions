@@ -11,7 +11,7 @@ import { Database } from "bun:sqlite";
 import { createHash, randomBytes } from "node:crypto";
 import { homedir, networkInterfaces } from "node:os";
 import { join } from "node:path";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 
 /** How often a failing pull is retried at most (the base interval is multiplied by 2 per miss, up to this). */
 const MAX_BACKOFF = 8;
@@ -24,6 +24,27 @@ const SYNCED_KEYS = [
 	"mcp_servers", "compaction", "retention", "skills",
 	"disabled_tools", "disabled_subagents", "delegate_policy",
 ] as const;
+
+/**
+ * What a follower can pick on its form. A checked group is pulled from the primary; an unchecked one keeps this server's
+ * own value and is never touched. A setting saved before 0.8.0 has none of these: everything counts as checked.
+ */
+const GROUPS = [
+	{ field: "syncModels", keys: ["default_model", "system_model", "image_model"] },
+	{ field: "syncWorkdir", keys: ["default_workdir"] },
+	{ field: "syncMcp", keys: ["mcp_servers"] },
+	{ field: "syncSkills", keys: ["skills"] },
+	{ field: "syncTools", keys: ["disabled_tools", "disabled_subagents", "delegate_policy"] },
+	{ field: "syncHistory", keys: ["compaction", "retention"] },
+] as const;
+const GROUPED = new Set<string>(GROUPS.flatMap((g) => g.keys));
+
+/** Extension settings keys that look like a credential (the app's own list): never sent, and the follower keeps its own. */
+const CREDENTIAL_KEY = /token|secret|password|credential|authorization|api.?key|cookie|private/i;
+/** A folder under `<dataDir>/extensions` that holds an extension's settings (the server's own id rule). */
+const EXTENSION_ID = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+/** This extension's own settings hold the peer address and token: never mirrored. */
+const SELF_ID = "server-sync";
 
 /** Never mirrored: per-device identity, token-adjacent or local-only rows. */
 const NEVER_SYNCED = new Set(["device_id", "default_approval", "voice_input", "retention_state", "session_retention_state"]);
@@ -40,6 +61,8 @@ interface DatabaseLike {
 interface Snapshot {
 	keys: string[];
 	settings: Record<string, unknown>;
+	/** Extension id -> its settings without credentials; only when the follower asked for them. */
+	extensions?: Record<string, Record<string, unknown>>;
 }
 
 interface Status {
@@ -48,8 +71,10 @@ interface Status {
 	url: string;
 	/** Seconds between pulls, as configured (minimum 15). */
 	intervalSeconds: number;
-	/** The keys this server mirrors. */
+	/** The keys this server mirrors (on a follower: the ones it picked). */
 	keys: string[];
+	/** Whether this follower also pulls extension settings. */
+	syncExtensions: boolean;
 	/** Unix ms of the last successful pull (follower only). */
 	lastSyncAt: number | null;
 	/** Keys the last successful pull changed. */
@@ -100,6 +125,36 @@ function applySnapshot(db: DatabaseLike, keys: readonly string[], peer: Record<s
 	return changed;
 }
 
+const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+const dataDir = () => process.env.PIPAYA_DATA_DIR ?? join(homedir(), ".pipaya");
+
+/** One extension's stored settings, or undefined when there are none (or they are damaged). */
+function readExtensionSettings(id: string): Record<string, unknown> | undefined {
+	try {
+		const value: unknown = JSON.parse(readFileSync(join(dataDir(), "extensions", id, "settings.json"), "utf8"));
+		return plain(value) ? value : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Every extension's settings on this server, credentials left out, this extension's own skipped. */
+function allExtensionSettings(): Record<string, Record<string, unknown>> {
+	const out: Record<string, Record<string, unknown>> = {};
+	const root = join(dataDir(), "extensions");
+	if (!existsSync(root)) return out;
+	for (const entry of readdirSync(root, { withFileTypes: true })) {
+		if (!entry.isDirectory() || entry.name === SELF_ID || !EXTENSION_ID.test(entry.name)) continue;
+		const value = readExtensionSettings(entry.name);
+		if (value) out[entry.name] = Object.fromEntries(Object.entries(value).filter(([k]) => !CREDENTIAL_KEY.test(k)));
+	}
+	return out;
+}
+
+/** Same value whatever the key order. */
+const sameObject = (a: Record<string, unknown> | undefined, b: Record<string, unknown>) =>
+	!!a && JSON.stringify(Object.keys(a).sort().map((k) => [k, a[k]])) === JSON.stringify(Object.keys(b).sort().map((k) => [k, b[k]]));
+
 /** Order-independent hash so a no-op sync is cheap to detect. */
 const hashOf = (settings: Record<string, unknown>) =>
 	createHash("sha256").update(JSON.stringify(Object.keys(settings).sort().map((k) => [k, settings[k]]))).digest("hex");
@@ -127,6 +182,13 @@ export default (pi: any) => {
 	};
 
 	const keys = (): string[] => effectiveKeys(String(settings().keys ?? ""));
+	/** A group is pulled unless the follower unchecked it (an older saved setting has no box at all: pull). */
+	const picked = (field: string) => settings()[field] !== false;
+	/** Of the keys the primary mirrors, the ones this follower picked. A key in no group (a listed extra) always comes along. */
+	const pickedKeys = (list: readonly string[]): string[] =>
+		list.filter((k) => !GROUPED.has(k) || GROUPS.some((g) => (g.keys as readonly string[]).includes(k) && picked(g.field)));
+	/** Extension settings are opt-in: they carry choices a follower may well want to keep its own. */
+	const syncExtensions = () => settings().syncExtensions === true;
 
 	/**
 	 * The server's own db, opened lazily at the same path the server process uses. The path is re-read each time and the
@@ -193,7 +255,8 @@ export default (pi: any) => {
 		role: role(),
 		url: cfg().url,
 		intervalSeconds: cfg().interval,
-		keys: keys(),
+		keys: role() === "follower" ? pickedKeys(keys()) : keys(),
+		syncExtensions: role() === "follower" && syncExtensions(),
 		lastSyncAt,
 		lastApplied,
 		lastError,
@@ -202,9 +265,12 @@ export default (pi: any) => {
 
 	// ---- what a peer reads: the rows this server mirrors and the keys they cover ----
 
-	pi.registerMethod("snapshot", (): Snapshot => {
+	pi.registerMethod("snapshot", (params: unknown): Snapshot => {
 		const list = keys();
-		return { keys: list, settings: readSettings(dbo(), list) };
+		const snap: Snapshot = { keys: list, settings: readSettings(dbo(), list) };
+		// Only when the follower asks: most never want them, and they are the bulkiest part.
+		if (plain(params) && params.extensions === true) snap.extensions = allExtensionSettings();
+		return snap;
 	});
 
 	pi.registerMethod("status", () => status());
@@ -221,8 +287,7 @@ export default (pi: any) => {
 		const fromEnv = process.env.PIPAYA_TOKEN;
 		if (fromEnv) return fromEnv.trim();
 		try {
-			const dir = process.env.PIPAYA_DATA_DIR ?? join(homedir(), ".pipaya");
-			return readFileSync(join(dir, "token"), "utf8").trim();
+			return readFileSync(join(dataDir(), "token"), "utf8").trim();
 		} catch {
 			return "";
 		}
@@ -294,21 +359,51 @@ export default (pi: any) => {
 	const syncNow = async (): Promise<string[]> => {
 		const { url, token } = cfg();
 		if (!url || !token) throw new Error("set the peer server URL and its admin token first");
+		const withExtensions = syncExtensions();
 		const res = await fetch(`${url}/server-extensions/server-sync/methods/snapshot`, {
 			method: "POST",
 			headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-			body: "null",
+			body: withExtensions ? JSON.stringify({ extensions: true }) : "null",
 			signal: AbortSignal.timeout(10_000),
 		});
 		if (res.status === 401 || res.status === 403) throw new Error(`the peer refused the token (${res.status})`);
 		if (!res.ok) throw new Error(`the peer answered ${res.status}`);
-		const body = (await res.json()) as { result?: { keys?: unknown; settings?: unknown } };
+		const body = (await res.json()) as { result?: { keys?: unknown; settings?: unknown; extensions?: unknown } };
 		const peer = body.result?.settings;
 		if (!peer || typeof peer !== "object" || Array.isArray(peer)) throw new Error("the peer returned no settings");
-		const list = mirrorKeys(body.result?.keys, keys());
+		const list = pickedKeys(mirrorKeys(body.result?.keys, keys()));
 		const mine = readSettings(dbo(), list);
-		if (hashOf(peer as Record<string, unknown>) === hashOf(mine)) return [];
-		return applySnapshot(dbo(), list, peer as Record<string, unknown>);
+		const theirs = Object.fromEntries(list.filter((k) => k in peer).map((k) => [k, (peer as Record<string, unknown>)[k]]));
+		const changed = hashOf(theirs) === hashOf(mine) ? [] : applySnapshot(dbo(), list, peer as Record<string, unknown>);
+		// A primary older than 0.8.0 sends no extensions: nothing to do, not an error.
+		if (withExtensions && plain(body.result?.extensions)) changed.push(...(await applyExtensions(body.result.extensions)));
+		return changed;
+	};
+
+	/**
+	 * Write the primary's extension settings here, through this server's own route so running extensions and open apps
+	 * hear about it. Credentials stay this server's own; an extension the primary lacks is left alone, never deleted.
+	 */
+	const applyExtensions = async (peer: Record<string, unknown>): Promise<string[]> => {
+		const changed: string[] = [];
+		for (const [id, value] of Object.entries(peer)) {
+			if (id === SELF_ID || !EXTENSION_ID.test(id) || !plain(value)) continue;
+			const current = readExtensionSettings(id);
+			const own = Object.fromEntries(Object.entries(current ?? {}).filter(([k]) => CREDENTIAL_KEY.test(k)));
+			const theirs = Object.fromEntries(Object.entries(value).filter(([k]) => !CREDENTIAL_KEY.test(k)));
+			const next = { ...theirs, ...own };
+			if (sameObject(current, next)) continue;
+			const port = process.env.PIPAYA_PORT ?? "8787";
+			const res = await fetch(`http://127.0.0.1:${port}/extensions/${id}/settings`, {
+				method: "PUT",
+				headers: { authorization: `Bearer ${adminToken()}`, "content-type": "application/json" },
+				body: JSON.stringify({ settings: next }),
+				signal: AbortSignal.timeout(5_000),
+			});
+			if (!res.ok) throw new Error(`could not save the settings of ${id} here (${res.status})`);
+			changed.push(`ext:${id}`);
+		}
+		return changed;
 	};
 
 	/** One pull, with the status and the client event updated either way. Shared by the timer and the method. */

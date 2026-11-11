@@ -19,10 +19,34 @@ Extra keys can be added in the settings form (`keys`, comma separated). Keys tha
 
 **Never synced:** conversations, sessions, events, credentials (API keys), installed extension code. Those stay per-server.
 
+## What a follower picks
+
+A follower's form has one box per group; an unchecked group keeps this server's own value and is never touched.
+
+| Box | Rows | Default |
+|---|---|---|
+| 모델 | `default_model`, `system_model`, `image_model` | on |
+| 기본 작업 디렉터리 | `default_workdir` | on |
+| MCP 서버 | `mcp_servers` | on |
+| 스킬 켜기·끄기 | `skills` | on |
+| 도구·도우미 설정 | `disabled_tools`, `disabled_subagents`, `delegate_policy` | on |
+| 대화 압축·보관 기간 | `compaction`, `retention` | on |
+| 확장 설정 | every extension's `settings.json` on the primary | **off** |
+
+A key listed in `keys` belongs to no box and always comes along. A setting saved before 0.8.0 has no boxes: everything
+counts as checked, as before.
+
+**확장 설정** copies each extension's stored settings from the primary (`<dataDir>/extensions/<id>/settings.json`) and
+saves them here through this server's own `PUT /extensions/:id/settings`, so running extensions and open apps hear the
+change. Keys that look like a credential (`token`, `secret`, `password`, `apiKey`, …, the app's own list) are never
+sent by the primary, and the follower keeps its own values for them. This extension's settings are never copied, and an
+extension the primary lacks is left alone. Environment variables (`PIPAYA_FLAG_*`) are process environment, not
+settings: they are not synced.
+
 ## What it reads, runs and sends
 
 - **Reads** the server's own SQLite database (`PIPAYA_DB`, or `<PIPAYA_DATA_DIR|~/.pipaya>/pipaya.db`) — only the `settings` table and the event counter.
-- **Network**: the follower talks to exactly one URL, the `remoteUrl` you configure: `POST /pairing/redeem` once to trade the code for a token, then `POST /server-extensions/server-sync/methods/snapshot` with that token. The primary only answers its own `/pairing` when asked for a code. Nothing else is sent anywhere.
+- **Network**: the follower talks to exactly one URL, the `remoteUrl` you configure: `POST /pairing/redeem` once to trade the code for a token, then `POST /server-extensions/server-sync/methods/snapshot` with that token. With 확장 설정 checked it also calls its own server at `127.0.0.1:$PIPAYA_PORT` to save them. The primary only answers its own `/pairing` when asked for a code. Nothing else is sent anywhere.
 - The remote token is stored in the extension's own settings file (`extensions/server-sync/settings.json`, mode 0600), is never logged and never appears in the status below.
 
 ## Roles
