@@ -21,7 +21,6 @@
 | [guard](guard) | server | Blocks destructive shell commands (`rm -rf /`, `mkfs`, fork bombs) before they run |
 | [prompt-templates](prompt-templates) | server | Save a long prompt as a Markdown file and call it with `/prompt:name` |
 | [quota-monitor](quota-monitor) | client | Claude, GPT and Antigravity quota gauges in the header |
-| [voice-input](voice-input) | client | Microphone button in the composer: speak, and any OpenAI-compatible transcription API (OpenAI, Groq, Mistral, self-hosted) types it |
 
 ## Install
 

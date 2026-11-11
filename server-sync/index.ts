@@ -47,7 +47,7 @@ const EXTENSION_ID = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const SELF_ID = "server-sync";
 
 /** Never mirrored: per-device identity, token-adjacent or local-only rows. */
-const NEVER_SYNCED = new Set(["device_id", "default_approval", "voice_input", "retention_state", "session_retention_state"]);
+const NEVER_SYNCED = new Set(["device_id", "default_approval", "retention_state", "session_retention_state"]);
 
 /** A settings key as the server writes it (`<feature>` or `<feature>.<field>`), and the most keys one snapshot may carry. */
 const KEY = /^[a-z][a-z0-9]*(?:[._][a-z0-9]+)*$/;
