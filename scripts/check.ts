@@ -73,6 +73,51 @@ export function checkExtension(id: string, dir = join(DIR, id)): Problem[] {
 			if (f.options.length < 2) errs.push(`${at}.options: a select field needs at least 2 options`);
 		});
 	}
+	// A client manifest can carry `descriptions`/`translations` only from the app release that reads them (older apps
+	// refuse unknown manifest fields); until then it is checked when it has them.
+	if (client) {
+		const m = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8"));
+		if (m.descriptions || m.translations) errs.push(...checkLanguages("manifest", m, m.settings ?? [], m.name, m.description));
+	} else errs.push(...checkLanguages("pipaya", meta, Array.isArray(meta.settings) ? meta.settings : [], meta.title, pkg.description));
+	return errs;
+}
+
+const HANGUL = /[가-힣]/;
+/** Text with letters a person reads: a placeholder like `http://localhost:8317` or a name like `English` needs no translation. */
+const wordy = (s: string) => HANGUL.test(s) || /[a-z]{3,}\s+[a-z]{2,}/i.test(s);
+
+/**
+ * Korean and English for everything a person reads (docs/i18n.md in the app repository): the title and the settings form
+ * are written in one of the two, and `translations.<other>` holds the other one, keyed by the text as written. A key
+ * that matches nothing the extension shows is reported too, so a renamed label does not leave a dead translation behind.
+ * `descriptions` must carry both `ko` and `en`.
+ */
+export function checkLanguages(where: string, meta: Record<string, any>, fields: any[], title: string | undefined, description: string | undefined): Problem[] {
+	const errs: Problem[] = [];
+	const d = meta.descriptions ?? {};
+	for (const tag of ["ko", "en"]) if (typeof d[tag] !== "string" || !d[tag].trim()) errs.push(`${where}.descriptions.${tag} is missing`);
+	if (typeof d.ko === "string" && !HANGUL.test(d.ko)) errs.push(`${where}.descriptions.ko is not Korean`);
+	if (typeof d.en === "string" && HANGUL.test(d.en)) errs.push(`${where}.descriptions.en has Korean in it`);
+	if (description && HANGUL.test(description)) errs.push(`${where === "manifest" ? "manifest" : "package.json"}: description is the fallback for every other language; write it in English`);
+	const table: Record<string, Record<string, string>> = meta.translations ?? {};
+	const texts: string[] = [];
+	// A Latin title is a product name ("Server Sync") and reads the same in Korean; a Korean one needs its English.
+	if (title && HANGUL.test(title)) texts.push(title);
+	const titleKeys = title ? [title] : [];
+	for (const f of fields) {
+		if (!f || typeof f !== "object") continue;
+		for (const k of ["label", "description", "placeholder"]) if (typeof f[k] === "string" && f[k].trim()) texts.push(f[k]);
+		for (const o of Array.isArray(f.options) ? f.options : []) if (typeof o?.label === "string") texts.push(o.label);
+	}
+	for (const text of texts) {
+		// a language named in itself (an option "한국어" next to "English") is never translated
+		if (!wordy(text) || text === "한국어") continue;
+		const other = HANGUL.test(text) ? "en" : "ko";
+		const hit = table[other]?.[text];
+		if (typeof hit !== "string" || !hit.trim()) errs.push(`${where}.translations.${other} has no entry for ${JSON.stringify(text.slice(0, 60))}`);
+		else if ((other === "ko") !== HANGUL.test(hit)) errs.push(`${where}.translations.${other} for ${JSON.stringify(text.slice(0, 60))} is not ${other === "ko" ? "Korean" : "English"}`);
+	}
+	for (const [tag, entries] of Object.entries(table)) for (const key of Object.keys(entries ?? {})) if (!texts.includes(key) && !titleKeys.includes(key)) errs.push(`${where}.translations.${tag} has an entry nothing shows: ${JSON.stringify(key.slice(0, 60))}`);
 	return errs;
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Mirrors a primary pipaya server's settings onto this one. The follower picks what to pull: models, workdir, MCP servers, skills, tools, history, and optionally extension settings (credentials excluded).",
   "license": "MIT",
   "author": "dohwi",
@@ -132,7 +132,31 @@
         },
         "description": "설치된 확장들의 설정값. 토큰·비밀번호 같은 값은 가져오지 않고 이 서버 것을 그대로 둡니다."
       }
-    ]
+    ],
+    "translations": {
+      "en": {
+        "상태": "Status",
+        "자동으로 갱신됩니다.": "Updated automatically.",
+        "역할": "Role",
+        "기준: 이 서버의 설정을 다른 서버에 건네줍니다. 팔로워: 기준 서버에서 아래에 체크한 항목만 받아옵니다.": "Primary: hands this server's settings to other servers. Follower: pulls only the items checked below from the primary.",
+        "기준 (설정을 건네줌)": "Primary (hands out settings)",
+        "팔로워 (설정을 받아옴)": "Follower (pulls settings)",
+        "상대 서버 주소": "Primary server address",
+        "기준 서버 주소. 아래에 연결 링크를 붙여넣으면 비워 둬도 됩니다.": "The primary's address. Leave it empty when you paste a connection link below.",
+        "연결 코드 또는 링크": "Connection code or link",
+        "기준 서버의 기기 탭 → 폰 추가 → [링크 복사]로 받은 값을 붙여넣으세요. 2분간 유효, 1회용.": "Paste what the primary's Devices tab → Add phone → [Copy link] gives you. Valid for 2 minutes, once.",
+        "모델 (기본·시스템·이미지 모델)": "Models (default, system, image)",
+        "기본 작업 디렉터리": "Default working directory",
+        "두 서버의 폴더 구조가 다르면 끄세요.": "Turn off when the two servers have different folders.",
+        "MCP 서버": "MCP servers",
+        "스킬 켜기·끄기": "Skills on/off",
+        "도구·도우미 설정": "Tools and helpers",
+        "꺼 둔 도구와 도우미, 위임 정책.": "Disabled tools and helpers, delegation policy.",
+        "대화 압축·보관 기간": "Compaction and retention",
+        "확장 설정": "Extension settings",
+        "설치된 확장들의 설정값. 토큰·비밀번호 같은 값은 가져오지 않고 이 서버 것을 그대로 둡니다.": "Settings of the installed extensions. Tokens, passwords and the like are never pulled; this server keeps its own."
+      }
+    }
   },
   "type": "module",
   "repository": {

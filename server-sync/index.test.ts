@@ -106,7 +106,8 @@ describe("the status line on the page", () => {
 			log: () => {}, registerMethod: () => {}, emit: () => {}, on: () => {},
 		};
 		factory(pi);
-		expect(String(settings.statusText)).toMatch(/^● 기준 서버/);
+		expect((settings.statusText as { ko: string }).ko).toMatch(/^● 기준 서버/);
+		expect((settings.statusText as { en: string }).en).toMatch(/^● Primary/);
 	});
 
 	test("a follower with no address says so, and one with an address says it is connected", async () => {
@@ -121,13 +122,13 @@ describe("the status line on the page", () => {
 			log: () => {}, registerMethod: (n: string, f: (p?: unknown) => unknown) => void methods.set(n, f), emit: () => {}, on: () => {},
 		};
 		factory(pi);
-		expect(String(settings.statusText)).toMatch(/주소를 입력하세요/);
+		expect((settings.statusText as { ko: string }).ko).toMatch(/주소를 입력하세요/);
 		// Saving an address and a token is what a follower does; the line then reports the connection.
 		settings.remoteUrl = "http://127.0.0.1:9";
 		settings.remoteToken = "t";
 		await expect(Promise.resolve(methods.get("sync")!())).rejects.toThrow();
 		// The pull failed, so the line says that instead of pretending to be connected.
-		expect(String(settings.statusText)).toMatch(/^✕ 연결 실패/);
+		expect((settings.statusText as { ko: string }).ko).toMatch(/^✕ 연결 실패/);
 	});
 });
 
@@ -144,11 +145,11 @@ describe("the status line survives a save from the form", () => {
 			log: () => {}, registerMethod: () => {}, emit: () => {}, on: () => {},
 		};
 		factory(pi);
-		expect(String(settings.statusText)).toMatch(/^● 기준 서버/);
+		expect((settings.statusText as { ko: string }).ko).toMatch(/^● 기준 서버/);
 		// The form posts every field back, the status one included, and a fresh page holds "".
 		settings.statusText = "";
 		onChange!();
-		expect(String(settings.statusText)).toMatch(/^● 기준 서버/);
+		expect((settings.statusText as { ko: string }).ko).toMatch(/^● 기준 서버/);
 	});
 });
 

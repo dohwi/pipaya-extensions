@@ -45,6 +45,11 @@ extensions/                # this repository (dohwi/pipaya-extensions)
    `MARKETPLACE_TOKEN` is set, else within the hour.
 4. A new extension is listed once by hand: add its entry to [pipaya-marketplace](https://github.com/dohwi/pipaya-marketplace)'s `marketplace.json`.
 
+**Korean and English.** Everything a person reads exists in both: `pipaya.descriptions` (`ko` and `en`) and
+`pipaya.translations` for the title and the settings form, keyed by the text as written. A status line the extension
+writes is `{ "ko": "…", "en": "…" }`. `bun scripts/check.ts` refuses an extension with a missing side. Rules:
+[docs/i18n.md](https://github.com/dohwi/pipaya/blob/main/docs/i18n.md).
+
 ## Development
 
 Requires [Bun](https://bun.sh) (`mise install`). Server extensions have no build step. Tests that need a running pipaya server read `PIPAYA_APP=<pipaya>/server`. The usual checkout puts this repository as `extensions/` beside `app/` (pipaya) and `marketplace/`:

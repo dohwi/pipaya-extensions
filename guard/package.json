@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-guard",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Blocks destructive shell commands (wiping / or ~, formatting or overwriting a disk, fork bombs) before they run.",
   "license": "MIT",
   "author": "dohwi",
@@ -14,32 +14,44 @@
       {
         "key": "wipe",
         "type": "boolean",
-        "label": "디스크·홈 삭제 차단",
-        "description": "rm -rf /, rm -rf ~ 처럼 디스크나 홈 디렉터리 전체를 지우는 명령을 막습니다.",
+        "label": "Block wiping disks and home",
+        "description": "Stops commands that delete a whole disk or home directory, such as rm -rf / and rm -rf ~.",
         "default": true
       },
       {
         "key": "disk",
         "type": "boolean",
-        "label": "디스크 포맷·덮어쓰기 차단",
-        "description": "mkfs, dd of=/dev/sdX, > /dev/nvme0n1 처럼 디스크를 포맷하거나 덮어쓰는 명령을 막습니다.",
+        "label": "Block formatting or overwriting disks",
+        "description": "Stops commands that format or overwrite a disk, such as mkfs, dd of=/dev/sdX and > /dev/nvme0n1.",
         "default": true
       },
       {
         "key": "fork",
         "type": "boolean",
-        "label": "포크 폭탄 차단",
-        "description": ":(){ :|:& };: 처럼 프로세스를 무한히 늘리는 명령을 막습니다.",
+        "label": "Block fork bombs",
+        "description": "Stops commands that multiply processes without end, such as :(){ :|:& };:.",
         "default": true
       },
       {
         "key": "permissions",
         "type": "boolean",
-        "label": "디스크·홈 권한 변경 차단",
-        "description": "chmod -R, chown -R 을 / 나 ~ 전체에 적용하는 명령을 막습니다.",
+        "label": "Block permission changes on disks and home",
+        "description": "Stops chmod -R and chown -R applied to all of / or ~.",
         "default": true
       }
-    ]
+    ],
+    "translations": {
+      "ko": {
+        "Block wiping disks and home": "디스크·홈 삭제 차단",
+        "Stops commands that delete a whole disk or home directory, such as rm -rf / and rm -rf ~.": "rm -rf /, rm -rf ~ 처럼 디스크나 홈 디렉터리 전체를 지우는 명령을 막습니다.",
+        "Block formatting or overwriting disks": "디스크 포맷·덮어쓰기 차단",
+        "Stops commands that format or overwrite a disk, such as mkfs, dd of=/dev/sdX and > /dev/nvme0n1.": "mkfs, dd of=/dev/sdX, > /dev/nvme0n1 처럼 디스크를 포맷하거나 덮어쓰는 명령을 막습니다.",
+        "Block fork bombs": "포크 폭탄 차단",
+        "Stops commands that multiply processes without end, such as :(){ :|:& };:.": ":(){ :|:& };: 처럼 프로세스를 무한히 늘리는 명령을 막습니다.",
+        "Block permission changes on disks and home": "디스크·홈 권한 변경 차단",
+        "Stops chmod -R and chown -R applied to all of / or ~.": "chmod -R, chown -R 을 / 나 ~ 전체에 적용하는 명령을 막습니다."
+      }
+    }
   },
   "repository": {
     "type": "git",

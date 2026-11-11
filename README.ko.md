@@ -45,6 +45,10 @@ extensions/                # 이 저장소 (dohwi/pipaya-extensions)
    있으면 바로, 없으면 한 시간 안에 반영됩니다.
 4. 새 확장은 처음 한 번만 [pipaya-marketplace](https://github.com/dohwi/pipaya-marketplace)의 `marketplace.json`에 항목을 추가합니다.
 
+**한국어와 영어.** 사람이 읽는 문구는 모두 두 언어로 둡니다. `pipaya.descriptions`(`ko`, `en`)와 제목·설정 폼용
+`pipaya.translations`(원문 그대로 → 번역). 확장이 쓰는 상태 문구는 `{ "ko": "…", "en": "…" }`.
+`bun scripts/check.ts`가 한쪽이 빠진 확장을 막습니다. 규칙: [docs/i18n.md](https://github.com/dohwi/pipaya/blob/main/docs/i18n.md).
+
 ## 개발
 
 [Bun](https://bun.sh)이 필요합니다(`mise install`). 서버 확장에는 빌드 단계가 없습니다. 실행 중인 pipaya 서버가 필요한 테스트는 `PIPAYA_APP=<pipaya>/server`를 읽습니다. 보통 이 저장소를 `app/`(pipaya), `marketplace/` 옆에 `extensions/`로 둡니다.

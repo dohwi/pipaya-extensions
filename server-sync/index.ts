@@ -49,6 +49,9 @@ const SELF_ID = "server-sync";
 /** Never mirrored: per-device identity, token-adjacent or local-only rows. */
 const NEVER_SYNCED = new Set(["device_id", "default_approval", "retention_state", "session_retention_state"]);
 
+/** The same text in Korean and English: the settings page shows the reader's (`readonly` field, app 0.8.6+). */
+type Text = { ko: string; en: string };
+
 /** A settings key as the server writes it (`<feature>` or `<feature>.<field>`), and the most keys one snapshot may carry. */
 const KEY = /^[a-z][a-z0-9]*(?:[._][a-z0-9]+)*$/;
 const MAX_KEYS = 200;
@@ -81,6 +84,8 @@ interface Status {
 	lastApplied: string[];
 	/** Why the last pull failed, if it did. */
 	lastError: string | null;
+	/** The status line of the page, in Korean and English. */
+	status: Text;
 }
 
 /** The effective key list: the built-ins plus the user's extras, minus the never-synced. */
@@ -209,44 +214,51 @@ export default (pi: any) => {
 	// `pi.log` already prefixes the extension name.
 	const log = (msg: string) => pi.log(msg);
 
-	/** "3분 전" and the like, in Korean: the page shows this instead of a timestamp the reader has to decode. */
-	const ago = (at: number): string => {
+	/** "3분 전" / "3 min ago": the page shows this instead of a timestamp the reader has to decode. */
+	const ago = (at: number): Text => {
 		const s = Math.max(0, Math.round((Date.now() - at) / 1000));
-		if (s < 60) return `${s}초 전`;
+		if (s < 60) return { ko: `${s}초 전`, en: `${s} s ago` };
 		const m = Math.round(s / 60);
-		if (m < 60) return `${m}분 전`;
+		if (m < 60) return { ko: `${m}분 전`, en: `${m} min ago` };
 		const h = Math.round(m / 60);
-		if (h < 24) return `${h}시간 전`;
-		return `${Math.round(h / 24)}일 전`;
+		if (h < 24) return { ko: `${h}시간 전`, en: `${h} h ago` };
+		const d = Math.round(h / 24);
+		return { ko: `${d}일 전`, en: `${d} day${d === 1 ? "" : "s"} ago` };
 	};
 
-	/** The one line the page shows: a dot for the state, then what happened last. */
-	const statusText = (): string => {
+	/** The one line the page shows, in Korean and English (the app shows the reader's): a dot for the state, then what happened last. */
+	const statusText = (): Text => {
 		if (role() === "primary") {
 			const url = publicUrl();
 			return url
-				? `● 기준 서버 — 팔로워가 이 서버의 설정을 가져갑니다\n주소: ${url}\n연결 코드: 이 서버의 기기 탭 → 폰 추가 → 링크 복사`
-				: "● 기준 서버 — 다른 서버가 이 서버의 설정을 가져갑니다";
+				? {
+					ko: `● 기준 서버 — 팔로워가 이 서버의 설정을 가져갑니다\n주소: ${url}\n연결 코드: 이 서버의 기기 탭 → 폰 추가 → 링크 복사`,
+					en: `● Primary — followers pull this server's settings\nAddress: ${url}\nConnection code: this server's Devices tab → Add phone → Copy link`,
+				}
+				: { ko: "● 기준 서버 — 다른 서버가 이 서버의 설정을 가져갑니다", en: "● Primary — other servers pull this server's settings" };
 		}
 		const pasted = String(settings().shareCode ?? "").trim();
-		if (!cfg().url && !pairingLink(pasted)) return "○ 기준 서버 주소를 입력하세요";
-		if (!cfg().token && !pasted) return "○ 기준 서버의 연결 코드를 붙여넣으세요";
-		if (lastError) return `✕ 연결 실패 — ${lastError}`;
-		if (lastSyncAt === null) return "○ 아직 연결하지 못했습니다";
-		const what = lastApplied.length ? `${lastApplied.length}개 항목 가져옴` : "바뀐 것 없음";
-		return `● 연결됨 — ${ago(lastSyncAt)} 확인, ${what}`;
+		if (!cfg().url && !pairingLink(pasted)) return { ko: "○ 기준 서버 주소를 입력하세요", en: "○ Enter the primary's address" };
+		if (!cfg().token && !pasted) return { ko: "○ 기준 서버의 연결 코드를 붙여넣으세요", en: "○ Paste the primary's connection code" };
+		// the reason is the peer's or the network's own words: shown as is in both
+		if (lastError) return { ko: `✕ 연결 실패 — ${lastError}`, en: `✕ Cannot connect — ${lastError}` };
+		if (lastSyncAt === null) return { ko: "○ 아직 연결하지 못했습니다", en: "○ Not connected yet" };
+		const n = lastApplied.length;
+		const when = ago(lastSyncAt);
+		return n
+			? { ko: `● 연결됨 — ${when.ko} 확인, ${n}개 항목 가져옴`, en: `● Connected — checked ${when.en}, pulled ${n} item${n === 1 ? "" : "s"}` }
+			: { ko: `● 연결됨 — ${when.ko} 확인, 바뀐 것 없음`, en: `● Connected — checked ${when.en}, nothing changed` };
 	};
 
 	/**
-	 * Keep the `연결 상태` field on the page in step. It is an ordinary string setting on purpose: a `readonly` field
-	 * would need an app release before an extension could use it, and this has to work on the app people already have.
+	 * Keep the status field on the page in step (a `readonly` field: the app shows the reader's language of the two).
 	 * Written only when the text changes, so a timer tick that changed nothing does not rewrite the settings file.
 	 */
 	let writing = false;
 	const showStatus = () => {
 		if (writing) return;
 		const text = statusText();
-		if (String(settings().statusText ?? "") === text) return;
+		if (JSON.stringify(settings().statusText ?? "") === JSON.stringify(text)) return;
 		writing = true;
 		try { pi.settings.set({ ...settings(), statusText: text }); } finally { writing = false; }
 	};
