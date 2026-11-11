@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.8.7",
+  "version": "0.8.8",
   "description": "Mirrors a primary pipaya server's settings onto this one. The follower picks what to pull: models, workdir, MCP servers, skills, tools, history, and optionally extension settings (credentials excluded).",
   "license": "MIT",
   "author": "dohwi",
