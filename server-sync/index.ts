@@ -251,13 +251,15 @@ export default (pi: any) => {
 	};
 
 	/**
-	 * Keep the status field on the page in step (a `readonly` field: the app shows the reader's language of the two).
-	 * Written only when the text changes, so a timer tick that changed nothing does not rewrite the settings file.
+	 * Keep the status field on the page in step. Written only when the text changes, so a timer tick that changed nothing
+	 * does not rewrite the settings file.
+	 * Korean for now: the app that shows a `{ ko, en }` value in the reader's language is not released yet, and 0.8.5 shows
+	 * an object as "아직 없음". Switch to `statusText()` once that app is out; the `status` method already returns both.
 	 */
 	let writing = false;
 	const showStatus = () => {
 		if (writing) return;
-		const text = statusText();
+		const text = statusText().ko;
 		if (JSON.stringify(settings().statusText ?? "") === JSON.stringify(text)) return;
 		writing = true;
 		try { pi.settings.set({ ...settings(), statusText: text }); } finally { writing = false; }
