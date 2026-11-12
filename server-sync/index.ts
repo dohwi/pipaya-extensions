@@ -70,7 +70,7 @@ interface Snapshot {
 	environment?: Environment;
 }
 
-/** One installed server extension: enough for the follower to install the same version from the marketplace. */
+/** One installed extension that runs inside the server: enough for the follower to install the same version from the marketplace. */
 interface InstalledExtension { id: string; version: string; /** The code itself, only when the follower asked for unlisted ones */ files?: FileSet }
 /** Files of a folder, by path inside it. */
 type FileSet = Record<string, string>;
@@ -85,10 +85,13 @@ interface Environment {
 	/** `~/.agents/extensions`: the owner's own extensions, single files and folders. */
 	agentExtensions?: { files: FileSet; folders: Record<string, FileSet> };
 }
-/** The environment parts a follower can ask for, by the settings box that turns each on. */
+/**
+ * The environment parts a follower can ask for, by the settings box that turns each on. "Installed extensions" is one
+ * box for the person; what runs inside the server and what runs in the apps are two reads here, never two boxes.
+ */
 const PARTS = {
-	serverExtensions: "syncServerExtensions",
-	clientExtensions: "syncClientExtensions",
+	serverExtensions: "syncInstalled",
+	clientExtensions: "syncInstalled",
 	skills: "syncSkillFiles",
 	subagents: "syncSubagentFiles",
 	agentsMd: "syncAgentsMd",
@@ -459,8 +462,8 @@ export default (pi: any) => {
 	const keyLabel = (k: string): Text => {
 		const [kind, rest = ""] = k.includes(":") ? [k.slice(0, k.indexOf(":")), k.slice(k.indexOf(":") + 1)] : ["", k];
 		if (kind === "ext") return { ko: `확장 설정: ${rest}`, en: `Extension settings: ${rest}` };
-		if (kind === "srv") return { ko: `서버 확장 설치: ${rest}`, en: `Server extension installed: ${rest}` };
-		if (kind === "client") return { ko: "클라이언트 확장 목록", en: "Client extensions" };
+		if (kind === "srv") return { ko: `확장 설치: ${rest}`, en: `Extension installed: ${rest}` };
+		if (kind === "client") return { ko: "앱 확장 목록·켜기 상태", en: "App extension list and on/off" };
 		if (kind === "skill") return { ko: `스킬 파일: ${rest}`, en: `Skill files: ${rest}` };
 		if (kind === "helper") return { ko: `도우미 역할: ${rest}`, en: `Helper role: ${rest}` };
 
@@ -530,9 +533,9 @@ export default (pi: any) => {
 			] });
 		}
 		if (lastError) children.push({ type: "alert", id: "error", tone: "danger", title: errorTitle(lastError), text: lastError });
-		if (token && unlisted.length && settings().syncServerExtensions === true) children.push({ type: "alert", id: "unlisted", tone: "warning",
-			title: { ko: "마켓플레이스에 없는 서버 확장은 설치하지 않았습니다", en: "Server extensions not in the marketplace were not installed" },
-			text: { ko: `${unlisted.join(", ")} — 기준 서버에서 복사하려면 아래 ‘마켓플레이스에 없는 확장도 복사’를 켜세요.`, en: `${unlisted.join(", ")} — to copy them from the primary, turn on ‘Also copy extensions not in the marketplace’ below.` } });
+		if (token && unlisted.length && settings().syncInstalled === true) children.push({ type: "alert", id: "unlisted", tone: "warning",
+			title: { ko: "마켓플레이스에 없는 확장은 설치하지 않았습니다", en: "Extensions not in the marketplace were not installed" },
+			text: { ko: `${unlisted.join(", ")} — 기준 서버에서 복사하려면 아래 ‘직접 만든 확장도 복사’를 켜세요.`, en: `${unlisted.join(", ")} — to copy them from the primary, turn on ‘Also copy extensions you made yourself’ below.` } });
 		if (token && lastApplied.length) {
 			children.push({ type: "text", id: "changed-title", size: "small", text: { ko: "지난번에 바뀐 항목", en: "Changed last time" } });
 			children.push({ type: "list", id: "changed", items: lastApplied.slice(0, 20).map((k, i) => ({ id: `k${i}`, title: keyLabel(k) })) });
@@ -621,7 +624,7 @@ export default (pi: any) => {
 		return Object.fromEntries(Object.entries(all).filter(([path]) => !EXTENSION_RUNTIME.has(path)));
 	};
 
-	/** The client extensions this server keeps for its apps (`client_settings`): the list and which are on. */
+	/** The extensions this server keeps for its apps (`client_settings`): the list and which are on. */
 	const clientExtensionRows = () => {
 		const row = (key: string) => {
 			const r = dbo().query("SELECT data FROM client_settings WHERE key = ?").get(key) as { data: string } | undefined;
@@ -752,7 +755,7 @@ export default (pi: any) => {
 		if (!url || !token) throw new Error("set the peer server URL and its admin token first");
 		const withExtensions = syncExtensions();
 		// Copying unlisted code is a sub-option of installing server extensions: it means nothing without it.
-		const parts = (Object.keys(PARTS) as Part[]).filter((p) => settings()[PARTS[p]] === true && (p !== "agentExtensions" || settings().syncServerExtensions === true));
+		const parts = (Object.keys(PARTS) as Part[]).filter((p) => settings()[PARTS[p]] === true && (p !== "agentExtensions" || settings().syncInstalled === true));
 		const res = await fetch(`${url}/server-extensions/server-sync/methods/snapshot`, {
 			method: "POST",
 			headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -861,7 +864,7 @@ export default (pi: any) => {
 			unlisted = [];
 		} else {
 			unlisted = missing.map((e) => `${e.id} ${e.version}`);
-			if (unlisted.length) log(`not in the marketplace: ${unlisted.join(", ")} (check 마켓플레이스에 없는 확장도 복사 to copy them)`);
+			if (unlisted.length) log(`not in the marketplace: ${unlisted.join(", ")} (turn on 직접 만든 확장도 복사 to copy them)`);
 		}
 		return changed;
 	};
@@ -897,7 +900,7 @@ export default (pi: any) => {
 		return list;
 	};
 
-	/** The client extension list and on/off states, through `/client-settings` so open apps reload them. */
+	/** The apps' extension list and on/off states, through `/client-settings` so open apps reload them. */
 	const applyClientExtensions = async (theirs: { list?: unknown; states?: unknown }): Promise<string[]> => {
 		const current = clientExtensionRows();
 		const changed: string[] = [];
@@ -1084,6 +1087,14 @@ export default (pi: any) => {
 		arm();
 	};
 
+	/** 0.10/0.11 had one box for server extensions and one for client extensions: they are one box now. */
+	const mergeOldBoxes = () => {
+		const s = settings();
+		if (!("syncServerExtensions" in s) && !("syncClientExtensions" in s)) return;
+		const { syncServerExtensions, syncClientExtensions, ...rest } = s;
+		pi.settings.set({ ...rest, ...("syncInstalled" in s ? {} : { syncInstalled: syncServerExtensions === true || syncClientExtensions === true }) });
+	};
+
 	/** 0.8.4 and older kept the token in the settings: move it to the peer file once, then drop it from there. */
 	const moveOldToken = () => {
 		const s = settings();
@@ -1128,6 +1139,7 @@ export default (pi: any) => {
 		});
 	}
 
+	mergeOldBoxes();
 	moveOldToken();
 	dropStaleCode();
 	void fillPeerToken();

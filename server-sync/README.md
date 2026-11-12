@@ -1,6 +1,6 @@
 # server-sync
 
-Server extension. Makes one pipaya server (the **follower**) match another (the **primary**): its settings and, box by box, what is installed there — server and client extensions, extension settings, skill files, helper roles, the global AGENTS.md and model providers — so two servers you use behave the same without configuring each by hand.
+An extension that makes one pipaya server (the **follower**) match another (the **primary**): its settings and, box by box, what is installed there — extensions, their settings, skill files, helper roles, the global AGENTS.md and model providers — so two servers you use behave the same without configuring each by hand.
 
 The settings page is in Korean: `pipaya.settings` labels are plain strings with no per-language form, and the author's servers are Korean.
 
@@ -31,10 +31,9 @@ A follower's form has one box per group; an unchecked group keeps this server's 
 | 스킬 켜기·끄기 | `skills` | on |
 | 도구·도우미 설정 | `disabled_tools`, `disabled_subagents`, `delegate_policy` | on |
 | 대화 압축·보관 기간 | `compaction`, `retention` | on |
-| 서버 확장 설치 | server extensions in `<dataDir>/extensions`, installed at the primary's version | **off** |
-| └ 마켓플레이스에 없는 확장도 복사 | the code of those not in the marketplace, and `~/.agents/extensions` | **off** |
-| 확장 설정 | every extension's `settings.json` on the primary | **off** |
-| 클라이언트 확장 목록 | `client_settings` rows `extensions`, `extensionStates` | **off** |
+| 설치된 확장 | extensions in `<dataDir>/extensions` installed at the primary's version, and the apps' extension list and on/off states (`client_settings` rows `extensions`, `extensionStates`) | **off** |
+| └ 직접 만든 확장도 복사 | the code of extensions not in the marketplace, and `~/.agents/extensions` | **off** |
+| 확장 설정 값 | every extension's `settings.json` on the primary | **off** |
 | 스킬 파일 | folders in `~/.agents/skills` | **off** |
 | 도우미 역할 파일 | `~/.agents/subagents/*.md` | **off** |
 | 전역 AGENTS.md | `~/.agents/AGENTS.md` | **off** |
@@ -43,7 +42,7 @@ A follower's form has one box per group; an unchecked group keeps this server's 
 A key listed in `keys` belongs to no box and always comes along. A setting saved before 0.8.0 has no boxes: everything
 counts as checked, as before.
 
-**확장 설정** copies each extension's stored settings from the primary (`<dataDir>/extensions/<id>/settings.json`) and
+**확장 설정 값** copies each extension's stored settings from the primary (`<dataDir>/extensions/<id>/settings.json`) and
 saves them here through this server's own `PUT /extensions/:id/settings`, so running extensions and open apps hear the
 change. Keys that look like a credential (`token`, `secret`, `password`, `apiKey`, …, the app's own list) are never
 sent by the primary, and the follower keeps its own values for them. This extension's settings are never copied, and an
@@ -52,16 +51,16 @@ settings: they are not synced.
 
 The boxes after it make the follower match what is installed, never by removing what it has on its own:
 
-- **서버 확장 설치**: the primary lists its server extensions and versions; the follower installs each one it lacks
+- **설치된 확장**: the primary lists its extensions and versions; the follower installs each one it lacks
   (or has at another version) from the marketplace's pinned git source through its own `POST /server-extensions/install`.
   One not in the marketplace at that version (made by hand, or a newer local build) is shown on the page and skipped,
-  unless **마켓플레이스에 없는 확장도 복사** is checked: then its files come from the primary as they are (text files,
+  unless **직접 만든 확장도 복사** is checked: then its files come from the primary as they are (text files,
   no `node_modules`, without its `settings.json`/`settings.at`, which stay this server's own), are swapped in whole and
   loaded with `POST /server-extensions/reload`. The same box copies `~/.agents/extensions` (the owner's own extension
   files and folders). That code runs inside this server unreviewed: check it only for a primary you trust. This
   extension is never installed, updated or removed this way, and an extension only on the follower stays.
-- **클라이언트 확장 목록**: the apps' client extension list and on/off states, written through `PUT /client-settings/:key`
-  so open apps reload them.
+  The same box matches the apps' extension list and on/off states, written through `PUT /client-settings/:key` so open
+  apps reload them.
 - **스킬 파일**: each skill folder on the primary is made identical here (text files up to 512 KB, 200 files and 2 MB per
   skill; files it lacks are removed from that folder). A skill only here, and a symlinked skill folder, stay.
 - **도우미 역할 파일**, **전역 AGENTS.md**: the files are made identical; a role only here stays.
@@ -87,7 +86,7 @@ Both sides install this same extension; only the role differs. The follower hold
 
 ## Setup
 
-1. Install the extension on both servers (Settings → Server extensions → `dohwi/pipaya-extensions`, folder `server-sync`).
+1. Install the extension on both servers (Settings → Extensions → Marketplace, or `dohwi/pipaya-extensions`, folder `server-sync`).
 2. **Primary** (`기준`): nothing to fill in. `POST .../methods/code` returns this server's address and a one-time
    **연결 코드** (a pairing code, the app's own `POST /pairing`), valid for two minutes.
 3. **Follower** (`팔로워`): put the primary's address in `상대 서버 주소` and the code in `연결 코드`, then save. The

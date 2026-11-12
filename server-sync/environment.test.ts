@@ -149,7 +149,7 @@ describe("environment parts", () => {
 	test("client extensions go through this server's client-settings route", async () => {
 		sql(P.db, "INSERT OR REPLACE INTO client_settings (key, data, updated_at) VALUES ('extensions', ?, 1)", JSON.stringify([{ manifest: { id: "quota-monitor" } }]));
 		sql(P.db, "INSERT OR REPLACE INTO client_settings (key, data, updated_at) VALUES ('extensionStates', ?, 1)", JSON.stringify({ "quota-monitor": true }));
-		const f = follower({ syncClientExtensions: true });
+		const f = follower({ syncInstalled: true });
 		const res = await f.sync();
 		expect(res.applied).toEqual(expect.arrayContaining(["client:extensions", "client:extensionStates"]));
 		expect(calls.some((c) => c.path === "/client-settings/extensions")).toBe(true);
@@ -172,7 +172,7 @@ describe("environment parts", () => {
 		write(join(P.data, "extensions", "guard", "package.json"), JSON.stringify({ version: "0.2.3" }));
 		write(join(P.data, "extensions", "server-sync", "package.json"), JSON.stringify({ version: "9.9.9" }));
 		write(join(P.data, "extensions", "local-only", "package.json"), JSON.stringify({ version: "1.0.0" }));
-		const f = follower({ syncServerExtensions: true });
+		const f = follower({ syncInstalled: true });
 		const res = await f.sync();
 		expect(res.applied).toContain("srv:guard");
 		const installs = calls.filter((c) => c.path === "/server-extensions/install").map((c) => (c.body as { id: string }).id);
@@ -231,13 +231,13 @@ describe("extensions that are not in the marketplace", () => {
 		write(join(P.data, "extensions", "my-tool", "node_modules", "dep", "index.js"), "never copied");
 		write(join(F.data, "extensions", "my-tool", "settings.json"), JSON.stringify({ mode: "mine" }));
 
-		const off = follower({ syncServerExtensions: true });
+		const off = follower({ syncInstalled: true });
 		const r1 = await off.sync();
 		expect(r1.applied).not.toContain("srv:my-tool");
 		expect(existsSync(join(F.data, "extensions", "my-tool", "index.ts"))).toBe(false);
 
 		calls.length = 0;
-		const on = follower({ syncServerExtensions: true, syncLocalExtensions: true });
+		const on = follower({ syncInstalled: true, syncLocalExtensions: true });
 		const r2 = await on.sync();
 		expect(r2.applied).toContain("srv:my-tool");
 		expect(readFileSync(join(F.data, "extensions", "my-tool", "index.ts"), "utf8")).toContain("primary build");
@@ -254,9 +254,9 @@ describe("extensions that are not in the marketplace", () => {
 	test("~/.agents/extensions comes along with the same box, files and folders", async () => {
 		write(join(P.home, ".agents", "extensions", "korean.ts"), "export default () => {};");
 		write(join(P.home, ".agents", "extensions", "tools", "index.ts"), "export default () => {};");
-		const off = follower({ syncServerExtensions: true });
+		const off = follower({ syncInstalled: true });
 		expect((await off.sync()).applied.some((k) => k.startsWith("agent-ext:"))).toBe(false);
-		const on = follower({ syncServerExtensions: true, syncLocalExtensions: true });
+		const on = follower({ syncInstalled: true, syncLocalExtensions: true });
 		const res = await on.sync();
 		expect(res.applied).toEqual(expect.arrayContaining(["agent-ext:korean", "agent-ext:tools"]));
 		expect(existsSync(join(F.home, ".agents", "extensions", "korean.ts"))).toBe(true);
@@ -264,5 +264,29 @@ describe("extensions that are not in the marketplace", () => {
 		const alone = follower({ syncLocalExtensions: true });
 		rmSync(join(F.home, ".agents", "extensions"), { recursive: true, force: true });
 		expect((await alone.sync()).applied.some((k) => k.startsWith("agent-ext:"))).toBe(false);
+	});
+});
+
+describe("one box for installed extensions", () => {
+	test("it turns on both what runs in the server and the apps' list", async () => {
+		write(join(P.data, "extensions", "guard", "package.json"), JSON.stringify({ version: "0.2.3" }));
+		sql(P.db, "INSERT OR REPLACE INTO client_settings (key, data, updated_at) VALUES ('extensions', ?, 1)", JSON.stringify([{ manifest: { id: "quota-monitor", version: "0.6.2" } }]));
+		rmSync(join(F.data, "extensions", "guard"), { recursive: true, force: true });
+		sql(F.db, "DELETE FROM client_settings");
+		const res = await follower({ syncInstalled: true }).sync();
+		expect(res.applied).toEqual(expect.arrayContaining(["srv:guard", "client:extensions"]));
+	});
+
+	test("the two boxes of 0.10/0.11 become the one box, and are gone from the settings", () => {
+		const a: Record<string, unknown> = { role: "follower", syncServerExtensions: false, syncClientExtensions: true };
+		boot(F, a);
+		expect(a.syncInstalled).toBe(true);
+		expect("syncServerExtensions" in a || "syncClientExtensions" in a).toBe(false);
+		const b: Record<string, unknown> = { role: "follower", syncServerExtensions: false };
+		boot(F, b);
+		expect(b.syncInstalled).toBe(false);
+		const c: Record<string, unknown> = { role: "follower", syncServerExtensions: true, syncInstalled: false };
+		boot(F, c);
+		expect(c.syncInstalled).toBe(false);
 	});
 });
