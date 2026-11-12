@@ -193,7 +193,7 @@ describe("the pull timer", () => {
 			expect(pulls.length).toBe(1);
 			// The status line rewriting itself, a checkbox saved: same peer, same interval.
 			for (let i = 0; i < 5; i++) { settings.statusText = `tick ${i}`; onChange!(); }
-			settings.syncModels = false;
+			settings.syncApp = false;
 			onChange!();
 			expect(pulls.length).toBe(1);
 			expect(live.size).toBe(1);
@@ -308,5 +308,24 @@ describe("the page (pi.ui, app 0.8.8+)", () => {
 		expect((h.methods.get("status")!() as { url: string }).url).toBe("");
 		expect(h.last()).toContain("연결 안 됨");
 		h.unload();
+	});
+});
+
+describe("the primary's page says whether secrets can leave", () => {
+	test("a warning only while sharing is on", () => {
+		const page = (extra: Record<string, unknown>) => {
+			const panels: string[] = [];
+			factory({
+				dataDir: mkdtempSync(join(dir, "pri-")),
+				settings: { get: () => ({ role: "primary", ...extra }), set: () => ({}), onChange: () => () => {} },
+				ui: { setPanel: (n: unknown) => void panels.push(JSON.stringify(n)), onEvent: () => {} },
+				log: () => {}, registerMethod: () => {}, emit: () => {}, on: () => {},
+			});
+			return panels.at(-1)!;
+		};
+		expect(page({})).toContain("secrets-off");
+		expect(page({})).not.toContain("secrets-on");
+		expect(page({ shareSecrets: true })).toContain("secrets-on");
+		expect(page({ shareSecrets: true })).toContain("모델 API 키");
 	});
 });

@@ -18,7 +18,7 @@ const side = (name: string) => {
 	d.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, data TEXT NOT NULL)");
 	d.exec("CREATE TABLE client_settings (key TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL)");
 	d.exec("CREATE TABLE custom_providers (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
-	d.exec("CREATE TABLE credentials (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
+	d.exec("CREATE TABLE credentials (provider_id TEXT PRIMARY KEY, data TEXT NOT NULL)");
 	d.close();
 	return { home, data, db };
 };
@@ -78,6 +78,17 @@ beforeAll(() => {
 			const provider = url.pathname.match(/^\/configuration\/providers\/([a-z0-9_-]+)$/)?.[1];
 			if (provider) { sql(F.db, "INSERT OR REPLACE INTO custom_providers (id, data) VALUES (?, ?)", provider, JSON.stringify({ ...(body as object), id: provider })); return Response.json({}); }
 			if (url.pathname === "/server-extensions/reload") return Response.json({ extensions: [] });
+			const settingsOf = url.pathname.match(/^\/extensions\/([a-z0-9-]+)\/settings$/)?.[1];
+			if (settingsOf && req.method === "PUT") {
+				write(join(F.data, "extensions", settingsOf, "settings.json"), JSON.stringify((body as { settings: unknown }).settings));
+				return Response.json({ applied: true });
+			}
+			const keyOf = url.pathname.match(/^\/providers\/([a-z0-9_-]+)\/credential$/)?.[1];
+			if (keyOf && req.method === "PUT") {
+				if (keyOf === "unknown") return new Response("no", { status: 404 });
+				sql(F.db, "INSERT OR REPLACE INTO credentials (provider_id, data) VALUES (?, ?)", keyOf, JSON.stringify({ type: "api_key", key: (body as { key: string }).key }));
+				return Response.json({ ok: true });
+			}
 			if (url.pathname === "/server-extensions/install") {
 				const b = body as { id: string };
 				write(join(F.data, "extensions", b.id, "package.json"), JSON.stringify({ version: "0.2.3" }));
@@ -127,7 +138,7 @@ describe("environment parts", () => {
 		write(join(F.home, ".agents", "skills", "writer", "SKILL.md"), "old");
 		write(join(F.home, ".agents", "skills", "writer", "stale.md"), "gone after sync");
 		write(join(F.home, ".agents", "skills", "mine", "SKILL.md"), "follower only");
-		const f = follower({ syncSkillFiles: true });
+		const f = follower({ syncAgent: true });
 		const res = await f.sync();
 		expect(res.applied).toContain("skill:writer");
 		expect(readFileSync(join(F.home, ".agents", "skills", "writer", "SKILL.md"), "utf8")).toContain("primary");
@@ -140,16 +151,19 @@ describe("environment parts", () => {
 	test("helper roles and AGENTS.md", async () => {
 		write(join(P.home, ".agents", "subagents", "explore.md"), "---\nname: explore\n---\nread");
 		write(join(P.home, ".agents", "AGENTS.md"), "primary rules");
-		const f = follower({ syncSubagentFiles: true, syncAgentsMd: true });
+		rmSync(join(F.home, ".agents", "AGENTS.md"), { force: true });
+		const f = follower({ syncAgent: true });
 		const res = await f.sync();
+		// The skill was already made identical by the test before; what is new here is the helper role and AGENTS.md.
 		expect(res.applied).toEqual(expect.arrayContaining(["helper:explore", "agents-md"]));
 		expect(readFileSync(join(F.home, ".agents", "AGENTS.md"), "utf8")).toBe("primary rules");
+		expect(readFileSync(join(F.home, ".agents", "subagents", "explore.md"), "utf8")).toContain("read");
 	});
 
 	test("client extensions go through this server's client-settings route", async () => {
 		sql(P.db, "INSERT OR REPLACE INTO client_settings (key, data, updated_at) VALUES ('extensions', ?, 1)", JSON.stringify([{ manifest: { id: "quota-monitor" } }]));
 		sql(P.db, "INSERT OR REPLACE INTO client_settings (key, data, updated_at) VALUES ('extensionStates', ?, 1)", JSON.stringify({ "quota-monitor": true }));
-		const f = follower({ syncInstalled: true });
+		const f = follower({ syncExtensions: true });
 		const res = await f.sync();
 		expect(res.applied).toEqual(expect.arrayContaining(["client:extensions", "client:extensionStates"]));
 		expect(calls.some((c) => c.path === "/client-settings/extensions")).toBe(true);
@@ -158,7 +172,7 @@ describe("environment parts", () => {
 
 	test("providers come without any secret, through the configuration route", async () => {
 		sql(P.db, "INSERT OR REPLACE INTO custom_providers (id, data) VALUES ('cliproxy', ?)", JSON.stringify({ id: "cliproxy", name: "CLIProxy", baseUrl: "http://ai.local:8317/v1", api: "openai-completions", authRequired: true, models: [], apiKey: "never" }));
-		sql(P.db, "INSERT OR REPLACE INTO credentials (id, data) VALUES ('cliproxy', 'secret')");
+		sql(P.db, "INSERT OR REPLACE INTO credentials (provider_id, data) VALUES ('cliproxy', ?)", JSON.stringify({ type: "api_key", key: "sk-primary" }));
 		const f = follower({ syncProviders: true });
 		const res = await f.sync();
 		expect(res.applied).toContain("provider:cliproxy");
@@ -172,7 +186,7 @@ describe("environment parts", () => {
 		write(join(P.data, "extensions", "guard", "package.json"), JSON.stringify({ version: "0.2.3" }));
 		write(join(P.data, "extensions", "server-sync", "package.json"), JSON.stringify({ version: "9.9.9" }));
 		write(join(P.data, "extensions", "local-only", "package.json"), JSON.stringify({ version: "1.0.0" }));
-		const f = follower({ syncInstalled: true });
+		const f = follower({ syncExtensions: true });
 		const res = await f.sync();
 		expect(res.applied).toContain("srv:guard");
 		const installs = calls.filter((c) => c.path === "/server-extensions/install").map((c) => (c.body as { id: string }).id);
@@ -189,7 +203,7 @@ describe("what the primary sees and what a peer cannot do", () => {
 			subagents: { "../x.md": "x", "role.md": "fine" },
 		} } }) });
 		try {
-			const settings: Record<string, unknown> = { role: "follower", remoteUrl: `http://127.0.0.1:${evil.port}`, remoteToken: "t", syncSkillFiles: true, syncSubagentFiles: true };
+			const settings: Record<string, unknown> = { role: "follower", remoteUrl: `http://127.0.0.1:${evil.port}`, remoteToken: "t", syncAgent: true, syncSubagentFiles: true };
 			const methods = boot(F, settings);
 			const res = (await as(F, () => methods.get("sync")!())) as { applied: string[] };
 			expect(res.applied.sort()).toEqual(["helper:role", "skill:ok"]);
@@ -231,18 +245,19 @@ describe("extensions that are not in the marketplace", () => {
 		write(join(P.data, "extensions", "my-tool", "node_modules", "dep", "index.js"), "never copied");
 		write(join(F.data, "extensions", "my-tool", "settings.json"), JSON.stringify({ mode: "mine" }));
 
-		const off = follower({ syncInstalled: true });
+		const off = follower({ syncExtensions: true });
 		const r1 = await off.sync();
 		expect(r1.applied).not.toContain("srv:my-tool");
 		expect(existsSync(join(F.data, "extensions", "my-tool", "index.ts"))).toBe(false);
 
 		calls.length = 0;
-		const on = follower({ syncInstalled: true, syncLocalExtensions: true });
+		const on = follower({ syncExtensions: true, syncLocalExtensions: true });
 		const r2 = await on.sync();
 		expect(r2.applied).toContain("srv:my-tool");
 		expect(readFileSync(join(F.data, "extensions", "my-tool", "index.ts"), "utf8")).toContain("primary build");
 		expect(readFileSync(join(F.data, "extensions", "my-tool", "lib", "util.ts"), "utf8")).toContain("x = 1");
-		expect(JSON.parse(readFileSync(join(F.data, "extensions", "my-tool", "settings.json"), "utf8"))).toEqual({ mode: "mine" });
+		// The code is the primary's; its settings values follow the same box as every extension's (확장).
+		expect(JSON.parse(readFileSync(join(F.data, "extensions", "my-tool", "settings.json"), "utf8"))).toEqual({ mode: "primary" });
 		expect(existsSync(join(F.data, "extensions", "my-tool", "node_modules"))).toBe(false);
 		expect(calls.some((c) => c.path === "/server-extensions/reload")).toBe(true);
 		// The same code again: nothing to copy, nothing to reload.
@@ -254,9 +269,9 @@ describe("extensions that are not in the marketplace", () => {
 	test("~/.agents/extensions comes along with the same box, files and folders", async () => {
 		write(join(P.home, ".agents", "extensions", "korean.ts"), "export default () => {};");
 		write(join(P.home, ".agents", "extensions", "tools", "index.ts"), "export default () => {};");
-		const off = follower({ syncInstalled: true });
+		const off = follower({ syncExtensions: true });
 		expect((await off.sync()).applied.some((k) => k.startsWith("agent-ext:"))).toBe(false);
-		const on = follower({ syncInstalled: true, syncLocalExtensions: true });
+		const on = follower({ syncExtensions: true, syncLocalExtensions: true });
 		const res = await on.sync();
 		expect(res.applied).toEqual(expect.arrayContaining(["agent-ext:korean", "agent-ext:tools"]));
 		expect(existsSync(join(F.home, ".agents", "extensions", "korean.ts"))).toBe(true);
@@ -273,21 +288,26 @@ describe("one box for installed extensions", () => {
 		sql(P.db, "INSERT OR REPLACE INTO client_settings (key, data, updated_at) VALUES ('extensions', ?, 1)", JSON.stringify([{ manifest: { id: "quota-monitor", version: "0.6.2" } }]));
 		rmSync(join(F.data, "extensions", "guard"), { recursive: true, force: true });
 		sql(F.db, "DELETE FROM client_settings");
-		const res = await follower({ syncInstalled: true }).sync();
+		const res = await follower({ syncExtensions: true }).sync();
 		expect(res.applied).toEqual(expect.arrayContaining(["srv:guard", "client:extensions"]));
 	});
 
-	test("the two boxes of 0.10/0.11 become the one box, and are gone from the settings", () => {
-		const a: Record<string, unknown> = { role: "follower", syncServerExtensions: false, syncClientExtensions: true };
-		boot(F, a);
-		expect(a.syncInstalled).toBe(true);
-		expect("syncServerExtensions" in a || "syncClientExtensions" in a).toBe(false);
-		const b: Record<string, unknown> = { role: "follower", syncServerExtensions: false };
-		boot(F, b);
-		expect(b.syncInstalled).toBe(false);
-		const c: Record<string, unknown> = { role: "follower", syncServerExtensions: true, syncInstalled: false };
-		boot(F, c);
-		expect(c.syncInstalled).toBe(false);
+	test("every box of 0.8–0.12 becomes one of today's four, and the old keys are gone", () => {
+		const run = (given: Record<string, unknown>) => { const a: Record<string, unknown> = { role: "follower", ...given }; boot(F, a); return a; };
+		const all = run({ syncModels: true, syncSkillFiles: true, syncClientExtensions: true });
+		expect([all.syncApp, all.syncExtensions, all.syncAgent]).toEqual([true, true, true]);
+		for (const k of ["syncModels", "syncSkillFiles", "syncClientExtensions", "syncInstalled"]) expect(k in all).toBe(false);
+		// Nothing was ever on beyond the defaults: app settings on, the rest off.
+		const fresh = run({ syncModels: true, syncWorkdir: true, syncMcp: true, syncSkills: true, syncTools: true, syncHistory: true });
+		expect([fresh.syncApp, fresh.syncExtensions, fresh.syncAgent]).toEqual([true, false, false]);
+		// Every old app group off: the app box is off.
+		const none = run({ syncModels: false, syncWorkdir: false, syncMcp: false, syncSkills: false, syncTools: false, syncHistory: false });
+		expect(none.syncApp).toBe(false);
+		// The old "확장 설정 값" box was called syncExtensions: it still turns extensions on.
+		const values = run({ syncExtensions: true, syncInstalled: false });
+		expect(values.syncExtensions).toBe(true);
+		// An explicit choice of today is never overwritten by an old key.
+		expect(run({ syncApp: false, syncModels: true }).syncApp).toBe(false);
 	});
 });
 
@@ -304,7 +324,7 @@ describe("a pulled extension that lacks a secret here", () => {
 		write(join(F.data, "extensions", "has-key", "settings.json"), JSON.stringify({ httpToken: "mine" }));
 		rmSync(join(F.data, "extensions", "needs-key"), { recursive: true, force: true });
 		const panels: string[] = [];
-		const settings: Record<string, unknown> = { role: "follower", remoteUrl: `http://127.0.0.1:${peer.port}`, remoteToken: "t", syncInstalled: true };
+		const settings: Record<string, unknown> = { role: "follower", remoteUrl: `http://127.0.0.1:${peer.port}`, remoteToken: "t", syncExtensions: true };
 		as(F, () => factory({
 			home: F.home, dataDir: mkdtempSync(join(root, "ext-")),
 			settings: { get: () => settings, set: (n: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, n); return settings; }, onChange: () => () => {} },
@@ -319,5 +339,54 @@ describe("a pulled extension that lacks a secret here", () => {
 		expect(page).not.toContain("HAS-KEY");
 		expect(page).not.toContain("OFF-ONE");
 		expect(page).not.toContain("NO-SECRET");
+	});
+});
+
+describe("secrets: only when both sides allow it", () => {
+	const seedSecrets = () => {
+		sql(P.db, "INSERT OR REPLACE INTO credentials (provider_id, data) VALUES ('cliproxy', ?)", JSON.stringify({ type: "api_key", key: "sk-primary" }));
+		sql(P.db, "INSERT OR REPLACE INTO credentials (provider_id, data) VALUES ('anthropic', ?)", JSON.stringify({ type: "oauth", access: "login-token", refresh: "r" }));
+		sql(P.db, "INSERT OR REPLACE INTO credentials (provider_id, data) VALUES ('voice_input', ?)", JSON.stringify({ type: "api_key", key: "voice-key" }));
+		sql(F.db, "DELETE FROM credentials");
+		write(join(P.data, "extensions", "quota-monitor", "settings.json"), JSON.stringify({ httpOrigin: "http://x", httpToken: "tok-primary" }));
+		write(join(F.data, "extensions", "quota-monitor", "settings.json"), JSON.stringify({ httpOrigin: "http://mine" }));
+	};
+	const primaryAllows = async (on: boolean) => { primary = boot(P, on ? { role: "primary", shareSecrets: true } : { role: "primary" }); };
+	const keysHere = () => rows(F.db, "SELECT provider_id, data FROM credentials").map((r) => r.provider_id).sort();
+
+	test("a follower that asks gets nothing while the primary has not allowed it", async () => {
+		seedSecrets();
+		await primaryAllows(false);
+		const res = await follower({ syncProviders: true, syncSecrets: true, syncExtensions: true }).sync();
+		expect(keysHere()).toEqual([]);
+		expect(res.applied.some((k) => k.startsWith("key:"))).toBe(false);
+		expect(JSON.parse(readFileSync(join(F.data, "extensions", "quota-monitor", "settings.json"), "utf8")).httpToken).toBeUndefined();
+	});
+
+	test("the primary allowing it is not enough: the follower must ask too", async () => {
+		seedSecrets();
+		await primaryAllows(true);
+		await follower({ syncProviders: true, syncExtensions: true }).sync();
+		expect(keysHere()).toEqual([]);
+		expect(JSON.parse(readFileSync(join(F.data, "extensions", "quota-monitor", "settings.json"), "utf8")).httpToken).toBeUndefined();
+	});
+
+	test("both on: api keys and extension tokens arrive; a login and the voice key never do", async () => {
+		seedSecrets();
+		await primaryAllows(true);
+		const res = await follower({ syncProviders: true, syncSecrets: true, syncExtensions: true }).sync();
+		expect(res.applied).toContain("key:cliproxy");
+		expect(keysHere()).toEqual(["cliproxy"]);
+		expect(JSON.parse(readFileSync(join(F.data, "extensions", "quota-monitor", "settings.json"), "utf8")).httpToken).toBe("tok-primary");
+	});
+
+	test("a secret already on this server is never replaced", async () => {
+		seedSecrets();
+		sql(F.db, "INSERT OR REPLACE INTO credentials (provider_id, data) VALUES ('cliproxy', ?)", JSON.stringify({ type: "api_key", key: "sk-mine" }));
+		write(join(F.data, "extensions", "quota-monitor", "settings.json"), JSON.stringify({ httpOrigin: "http://mine", httpToken: "tok-mine" }));
+		await primaryAllows(true);
+		await follower({ syncProviders: true, syncSecrets: true, syncExtensions: true }).sync();
+		expect(JSON.parse(rows(F.db, "SELECT data FROM credentials WHERE provider_id = 'cliproxy'")[0]!.data as string).key).toBe("sk-mine");
+		expect(JSON.parse(readFileSync(join(F.data, "extensions", "quota-monitor", "settings.json"), "utf8")).httpToken).toBe("tok-mine");
 	});
 });

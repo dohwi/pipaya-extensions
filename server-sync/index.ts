@@ -28,14 +28,10 @@ const SYNCED_KEYS = [
 /**
  * What a follower can pick on its form. A checked group is pulled from the primary; an unchecked one keeps this server's
  * own value and is never touched. A setting saved before 0.8.0 has none of these: everything counts as checked.
+ * The six groups of 0.8–0.12 are one box ("앱 설정", `syncApp`) now; they were nearly always checked together.
  */
 const GROUPS = [
-	{ field: "syncModels", keys: ["default_model", "system_model", "image_model"] },
-	{ field: "syncWorkdir", keys: ["default_workdir"] },
-	{ field: "syncMcp", keys: ["mcp_servers"] },
-	{ field: "syncSkills", keys: ["skills"] },
-	{ field: "syncTools", keys: ["disabled_tools", "disabled_subagents", "delegate_policy"] },
-	{ field: "syncHistory", keys: ["compaction", "retention"] },
+	{ field: "syncApp", keys: ["default_model", "system_model", "image_model", "default_workdir", "mcp_servers", "skills", "disabled_tools", "disabled_subagents", "delegate_policy", "compaction", "retention"] },
 ] as const;
 const GROUPED = new Set<string>(GROUPS.flatMap((g) => g.keys));
 
@@ -82,6 +78,8 @@ interface Environment {
 	subagents?: FileSet;
 	agentsMd?: string | null;
 	providers?: Record<string, Record<string, unknown>>;
+	/** Model API keys by provider id (api_key only): only when the follower turned on 비밀값 and the primary allows it. */
+	apiKeys?: Record<string, string>;
 	/** `~/.agents/extensions`: the owner's own extensions, single files and folders. */
 	agentExtensions?: { files: FileSet; folders: Record<string, FileSet> };
 }
@@ -90,12 +88,13 @@ interface Environment {
  * box for the person; what runs inside the server and what runs in the apps are two reads here, never two boxes.
  */
 const PARTS = {
-	serverExtensions: "syncInstalled",
-	clientExtensions: "syncInstalled",
-	skills: "syncSkillFiles",
-	subagents: "syncSubagentFiles",
-	agentsMd: "syncAgentsMd",
+	serverExtensions: "syncExtensions",
+	clientExtensions: "syncExtensions",
+	skills: "syncAgent",
+	subagents: "syncAgent",
+	agentsMd: "syncAgent",
 	providers: "syncProviders",
+	apiKeys: "syncSecrets",
 	agentExtensions: "syncLocalExtensions",
 } as const;
 type Part = keyof typeof PARTS;
@@ -182,14 +181,14 @@ function readExtensionSettings(id: string): Record<string, unknown> | undefined 
 }
 
 /** Every extension's settings on this server, credentials left out, this extension's own skipped. */
-function allExtensionSettings(): Record<string, Record<string, unknown>> {
+function allExtensionSettings(withSecrets = false): Record<string, Record<string, unknown>> {
 	const out: Record<string, Record<string, unknown>> = {};
 	const root = join(dataDir(), "extensions");
 	if (!existsSync(root)) return out;
 	for (const entry of readdirSync(root, { withFileTypes: true })) {
 		if (!entry.isDirectory() || entry.name === SELF_ID || !EXTENSION_ID.test(entry.name)) continue;
 		const value = readExtensionSettings(entry.name);
-		if (value) out[entry.name] = Object.fromEntries(Object.entries(value).filter(([k]) => !CREDENTIAL_KEY.test(k)));
+		if (value) out[entry.name] = Object.fromEntries(Object.entries(value).filter(([k]) => withSecrets || !CREDENTIAL_KEY.test(k)));
 	}
 	return out;
 }
@@ -377,7 +376,9 @@ export default (pi: any) => {
 	/** Of the keys the primary mirrors, the ones this follower picked. A key in no group (a listed extra) always comes along. */
 	const pickedKeys = (list: readonly string[]): string[] =>
 		list.filter((k) => !GROUPED.has(k) || GROUPS.some((g) => (g.keys as readonly string[]).includes(k) && picked(g.field)));
-	/** Extension settings are opt-in: they carry choices a follower may well want to keep its own. */
+	/** Pull secrets too (a model API key, an extension's own token): its own box, off, and the primary must allow it. */
+	const wantSecrets = () => settings().syncSecrets === true;
+	/** Extension settings values travel with the extensions: one box, "확장". */
 	const syncExtensions = () => settings().syncExtensions === true;
 
 	/**
@@ -469,6 +470,7 @@ export default (pi: any) => {
 		if (kind === "skill") return { ko: `스킬 파일: ${rest}`, en: `Skill files: ${rest}` };
 		if (kind === "helper") return { ko: `도우미 역할: ${rest}`, en: `Helper role: ${rest}` };
 
+		if (kind === "key") return { ko: `모델 API 키: ${rest}`, en: `Model API key: ${rest}` };
 		if (kind === "provider") return { ko: `모델 연결: ${rest}`, en: `Model provider: ${rest}` };
 		if (kind === "agent-ext") return { ko: `내 확장(~/.agents/extensions): ${rest}`, en: `Own extension (~/.agents/extensions): ${rest}` };
 		if (k === "agents-md") return { ko: "전역 AGENTS.md", en: "Global AGENTS.md" };
@@ -503,7 +505,10 @@ export default (pi: any) => {
 					{ type: "text", id: "what", text: { ko: "팔로워 서버가 이 서버의 설정을 가져갑니다.", en: "Follower servers pull this server's settings." } },
 					...(url ? [{ type: "stat", id: "address", label: { ko: "이 서버 주소", en: "This server's address" }, value: hostOf(url) }] : []),
 					{ type: "text", id: "how", size: "small", text: { ko: "팔로워를 연결하려면: 이 서버의 기기 탭 → [연결 링크 복사] → 팔로워의 연결 링크 칸에 붙여넣기", en: "To connect a follower: this server's Devices tab → [Copy connection link] → paste it into the follower's link field" } },
-					{ type: "text", id: "pick", size: "small", text: { ko: "무엇을 가져갈지(모델·확장·스킬 등)는 팔로워 서버의 이 화면에서 고릅니다. 기준 서버에는 고를 항목이 없습니다.", en: "What to pull (models, extensions, skills, …) is picked on the follower's own page. The primary has nothing to pick." } },
+					{ type: "text", id: "pick", size: "small", text: { ko: "무엇을 가져갈지(앱 설정·확장·스킬 등)는 팔로워 서버의 이 화면에서 고릅니다.", en: "What to pull (app settings, extensions, skills, …) is picked on the follower's own page." } },
+					settings().shareSecrets === true
+						? { type: "alert", id: "secrets-on", tone: "warning", text: { ko: "비밀값 내보내기가 켜져 있습니다. 팔로워가 요청하면 이 서버의 모델 API 키와 확장 토큰을 건네줍니다. 내 서버가 아니면 끄세요.", en: "Sharing secrets is on. A follower that asks gets this server's model API keys and extension tokens. Turn it off unless the follower is yours." } }
+						: { type: "text", id: "secrets-off", size: "small", text: { ko: "API 키·토큰은 나가지 않습니다(비밀값 내보내기 꺼짐).", en: "API keys and tokens do not leave (sharing secrets is off)." } },
 				],
 			};
 		}
@@ -535,7 +540,7 @@ export default (pi: any) => {
 			] });
 		}
 		if (lastError) children.push({ type: "alert", id: "error", tone: "danger", title: errorTitle(lastError), text: lastError });
-		if (token && needsInput.length && settings().syncInstalled === true) {
+		if (token && needsInput.length && settings().syncExtensions === true) {
 			// The alert carries the sentence; the list under it names each extension and what it lacks (an alert's text
 			// is one paragraph, so a list inside it would run together).
 			children.push({ type: "alert", id: "needs-input", tone: "warning",
@@ -546,7 +551,7 @@ export default (pi: any) => {
 				description: { ko: `입력할 값: ${n.fields.join(" · ")}`, en: `To enter: ${n.fields.join(" · ")}` },
 			})) });
 		}
-		if (token && unlisted.length && settings().syncInstalled === true) children.push({ type: "alert", id: "unlisted", tone: "warning",
+		if (token && unlisted.length && settings().syncExtensions === true) children.push({ type: "alert", id: "unlisted", tone: "warning",
 			title: { ko: "마켓플레이스에 없는 확장은 설치하지 않았습니다", en: "Extensions not in the marketplace were not installed" },
 			text: { ko: `${unlisted.join(", ")} — 기준 서버에서 복사하려면 아래 ‘직접 만든 확장도 복사’를 켜세요.`, en: `${unlisted.join(", ")} — to copy them from the primary, turn on ‘Also copy extensions you made yourself’ below.` } });
 		if (token && lastApplied.length) {
@@ -580,7 +585,8 @@ export default (pi: any) => {
 		const list = keys();
 		const snap: Snapshot = { keys: list, settings: readSettings(dbo(), list) };
 		// Only when the follower asks: most never want them, and they are the bulkiest part.
-		if (plain(params) && params.extensions === true) snap.extensions = allExtensionSettings();
+		// Secrets of extensions (their own settings file) go only when this server's owner allows it AND the follower asked.
+		if (plain(params) && params.extensions === true) snap.extensions = allExtensionSettings(settings().shareSecrets === true && params.secrets === true);
 		const asked = plain(params) && Array.isArray(params.parts) ? params.parts.filter((p): p is Part => typeof p === "string" && p in PARTS) : [];
 		// The code of extensions, for those the follower cannot get from the marketplace: only the ids it names.
 		const codeOf = plain(params) && Array.isArray(params.codeOf) ? params.codeOf.filter((x): x is string => typeof x === "string" && EXTENSION_ID.test(x) && x !== SELF_ID).slice(0, 50) : [];
@@ -605,6 +611,7 @@ export default (pi: any) => {
 				else if (part === "subagents") env.subagents = readFiles(join(home, ".agents", "subagents"), /\.md$/);
 				else if (part === "agentsMd") env.agentsMd = readText(join(home, ".agents", "AGENTS.md"));
 				else if (part === "providers") env.providers = providerRows();
+				else if (part === "apiKeys") env.apiKeys = apiKeyRows();
 				else if (part === "agentExtensions") {
 					const dir = join(home, ".agents", "extensions");
 					env.agentExtensions = { files: readFiles(dir, /\.(ts|js|mjs)$/), folders: readFolders(dir) };
@@ -644,6 +651,25 @@ export default (pi: any) => {
 			try { return r ? JSON.parse(r.data) : null; } catch { return null; }
 		};
 		return { list: row("extensions"), states: row("extensionStates") };
+	};
+
+	/**
+	 * Model API keys of this server (credentials of type api_key; a login (oauth) is tied to this server and never copied).
+	 * Served only when the owner of THIS server allows it (`shareSecrets`): the follower asking is not enough, because
+	 * a key leaves the machine. The link is the Tailscale address and a revocable device token, but it is still a key.
+	 */
+	const apiKeyRows = (): Record<string, string> => {
+		if (settings().shareSecrets !== true) return {};
+		const out: Record<string, string> = {};
+		const rows = dbo().query("SELECT provider_id, data FROM credentials").all() as { provider_id: string; data: string }[];
+		for (const r of rows) {
+			try {
+				const v: unknown = JSON.parse(r.data);
+				// the voice-input key is this server's own microphone service: not a model provider, never copied
+				if (plain(v) && v.type === "api_key" && typeof v.key === "string" && v.key && r.provider_id !== "voice_input") out[r.provider_id] = v.key;
+			} catch { /* a damaged row is not ours to fix */ }
+		}
+		return out;
 	};
 
 	/** Custom model providers without anything secret: the key is in the credentials table, which is never read. */
@@ -768,11 +794,11 @@ export default (pi: any) => {
 		if (!url || !token) throw new Error("set the peer server URL and its admin token first");
 		const withExtensions = syncExtensions();
 		// Copying unlisted code is a sub-option of installing server extensions: it means nothing without it.
-		const parts = (Object.keys(PARTS) as Part[]).filter((p) => settings()[PARTS[p]] === true && (p !== "agentExtensions" || settings().syncInstalled === true));
+		const parts = (Object.keys(PARTS) as Part[]).filter((p) => settings()[PARTS[p]] === true && (p !== "agentExtensions" || settings().syncExtensions === true) && (p !== "apiKeys" || settings().syncSecrets === true));
 		const res = await fetch(`${url}/server-extensions/server-sync/methods/snapshot`, {
 			method: "POST",
 			headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-			body: withExtensions || parts.length ? JSON.stringify({ ...(withExtensions ? { extensions: true } : {}), ...(parts.length ? { parts } : {}) }) : "null",
+			body: withExtensions || parts.length ? JSON.stringify({ ...(withExtensions ? { extensions: true, ...(wantSecrets() ? { secrets: true } : {}) } : {}), ...(parts.length ? { parts } : {}) }) : "null",
 			signal: AbortSignal.timeout(10_000),
 		});
 		if (res.status === 401 || res.status === 403) throw new Error(`the peer refused the token (${res.status})`);
@@ -809,6 +835,7 @@ export default (pi: any) => {
 		if (parts.includes("subagents") && plain(env.subagents)) changed.push(...applyFiles(join(home, ".agents", "subagents"), env.subagents as FileSet, /\.md$/, "helper"));
 		if (parts.includes("agentsMd") && "agentsMd" in env) changed.push(...applyText(join(home, ".agents", "AGENTS.md"), env.agentsMd ?? null, "agents-md"));
 		if (parts.includes("providers") && plain(env.providers)) changed.push(...(await applyProviders(env.providers as Record<string, Record<string, unknown>>)));
+		if (parts.includes("apiKeys") && plain(env.apiKeys)) changed.push(...(await applyApiKeys(env.apiKeys as Record<string, string>)));
 		if (parts.includes("agentExtensions") && plain(env.agentExtensions)) {
 			const dir = join(home, ".agents", "extensions");
 			const a = env.agentExtensions as { files?: unknown; folders?: unknown };
@@ -954,6 +981,21 @@ export default (pi: any) => {
 	 * Custom providers, through the configuration route (which checks them and loads them at once). The key stays this
 	 * server's own: set it once in Settings → Models on each server. A provider only here stays.
 	 */
+	/** A key is set only where this server has none: a key typed here is never replaced by the primary's. */
+	const applyApiKeys = async (theirs: Record<string, string>): Promise<string[]> => {
+		const have = new Set((dbo().query("SELECT provider_id FROM credentials").all() as { provider_id: string }[]).map((r) => r.provider_id));
+		const changed: string[] = [];
+		for (const [id, key] of Object.entries(theirs)) {
+			if (!/^[a-z][a-z0-9_-]{0,63}$/.test(id) || typeof key !== "string" || !key || have.has(id) || id === "voice_input") continue;
+			const res = await own("PUT", `/providers/${id}/credential`, { key });
+			// 404: the provider is not on this server (its connection was not pulled): nothing to attach the key to
+			if (res.status === 404) continue;
+			if (!res.ok) throw new Error(`pulled from the primary, but could not save the key of ${id} on this server (${res.status})`);
+			changed.push(`key:${id}`);
+		}
+		return changed;
+	};
+
 	const applyProviders = async (theirs: Record<string, Record<string, unknown>>): Promise<string[]> => {
 		const mine = providerRows();
 		const changed: string[] = [];
@@ -978,8 +1020,10 @@ export default (pi: any) => {
 		for (const [id, value] of Object.entries(peer)) {
 			if (id === SELF_ID || !EXTENSION_ID.test(id) || !plain(value)) continue;
 			const current = readExtensionSettings(id);
-			const own = Object.fromEntries(Object.entries(current ?? {}).filter(([k]) => CREDENTIAL_KEY.test(k)));
-			const theirs = Object.fromEntries(Object.entries(value).filter(([k]) => !CREDENTIAL_KEY.test(k)));
+			// This server's own secrets win: a value typed here is never replaced. A key it lacks comes from the primary
+			// only when 비밀값 is on (the primary then sent them).
+			const own = Object.fromEntries(Object.entries(current ?? {}).filter(([k, v]) => CREDENTIAL_KEY.test(k) && v !== "" && v !== null && v !== undefined));
+			const theirs = Object.fromEntries(Object.entries(value).filter(([k]) => wantSecrets() || !CREDENTIAL_KEY.test(k)));
 			const next = { ...theirs, ...own };
 			if (sameObject(current, next)) continue;
 			let res: Response;
@@ -1123,12 +1167,25 @@ export default (pi: any) => {
 		arm();
 	};
 
-	/** 0.10/0.11 had one box for server extensions and one for client extensions: they are one box now. */
+	/**
+	 * Boxes of older versions become the four of today: 0.8–0.12 had up to fifteen. A box that was on stays on; a
+	 * group that was off (and not covered by another) is off. Old keys are removed so nothing flips back later.
+	 */
+	const OLD_BOXES = ["syncModels", "syncWorkdir", "syncMcp", "syncSkills", "syncTools", "syncHistory", "syncInstalled", "syncServerExtensions", "syncClientExtensions", "syncSkillFiles", "syncSubagentFiles", "syncAgentsMd"] as const;
 	const mergeOldBoxes = () => {
 		const s = settings();
-		if (!("syncServerExtensions" in s) && !("syncClientExtensions" in s)) return;
-		const { syncServerExtensions, syncClientExtensions, ...rest } = s;
-		pi.settings.set({ ...rest, ...("syncInstalled" in s ? {} : { syncInstalled: syncServerExtensions === true || syncClientExtensions === true }) });
+		if (!OLD_BOXES.some((k) => k in s)) return;
+		const on = (k: string) => s[k] === true;
+		const next: Record<string, unknown> = Object.fromEntries(Object.entries(s).filter(([k]) => !(OLD_BOXES as readonly string[]).includes(k)));
+		// 앱 설정: the six groups. Off only when every one that was ever saved is off (a fresh setting has none: on).
+		const app = ["syncModels", "syncWorkdir", "syncMcp", "syncSkills", "syncTools", "syncHistory"].filter((k) => k in s);
+		if (!("syncApp" in s)) next.syncApp = app.length ? app.some((k) => s[k] !== false) : true;
+		// 확장: installed extensions, their settings values (the old 확장 설정 값 was the box named syncExtensions) or the old two boxes.
+		if (!("syncExtensions" in s) || OLD_BOXES.some((k) => ["syncInstalled", "syncServerExtensions", "syncClientExtensions"].includes(k) && k in s)) {
+			next.syncExtensions = on("syncExtensions") || on("syncInstalled") || on("syncServerExtensions") || on("syncClientExtensions");
+		}
+		if (!("syncAgent" in s)) next.syncAgent = on("syncSkillFiles") || on("syncSubagentFiles") || on("syncAgentsMd");
+		pi.settings.set(next);
 	};
 
 	/** 0.8.4 and older kept the token in the settings: move it to the peer file once, then drop it from there. */

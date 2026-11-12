@@ -248,13 +248,17 @@ describe("connecting by address alone", () => {
 	test("a follower pulls only the groups it checked", async () => {
 		seed(followerDb, { default_model: { provider: "mine", model: "mine" }, skills: { global: {} } });
 		const follower = boot(followerDb, dir, "follower-admin-token", { role: "primary" });
-		follower.settings.syncModels = false;
+		follower.settings.syncApp = false;
 		const result = (await follower.methods.get("connect")!({ url: `http://127.0.0.1:${server!.port}`, code: "the-code" })) as { applied: string[] };
-		expect(result.applied).toEqual(["skills"]);
+		// The app box is off: no setting row moves, whatever the primary has.
+		expect(result.applied).toEqual([]);
 		const db = new Database(followerDb);
 		const row = db.query("SELECT data FROM settings WHERE key = 'default_model'").get() as { data: string };
 		db.close();
 		expect(JSON.parse(row.data)).toEqual({ provider: "mine", model: "mine" });
+		const skills = new Database(followerDb);
+		expect(skills.query("SELECT data FROM settings WHERE key = 'skills'").get()).toEqual({ data: JSON.stringify({ global: {} }) });
+		skills.close();
 	});
 
 	test("extension settings come along only when checked, and credentials stay this server's own", async () => {
