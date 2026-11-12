@@ -1,6 +1,6 @@
 # server-sync
 
-Server extension. Mirrors the settings of one pipaya server (the **primary**) onto another (the **follower**), so two servers you use behave the same without configuring each by hand.
+Server extension. Makes one pipaya server (the **follower**) match another (the **primary**): its settings and, box by box, what is installed there — server and client extensions, extension settings, skill files, helper roles, the global AGENTS.md and model providers — so two servers you use behave the same without configuring each by hand.
 
 The settings page is in Korean: `pipaya.settings` labels are plain strings with no per-language form, and the author's servers are Korean.
 
@@ -9,7 +9,7 @@ folder extension kept running its old helper after a reload and failed with "Exp
 
 ## What it syncs
 
-Rows of the server's `settings` table only:
+Settings rows of the server's `settings` table:
 
 `default_model`, `default_workdir`, `system_model`, `image_model`, `mcp_servers`, `compaction`, `retention`, `skills`, `disabled_tools`, `disabled_subagents`, `delegate_policy`
 
@@ -17,7 +17,7 @@ Extra keys can be added in the settings form (`keys`, comma separated). Keys tha
 
 **The primary decides the list.** The follower asks for exactly the keys the primary says it mirrors, so a row that is missing on the primary means "deleted there" and is deleted here too — it never means "this side happens to mirror one more key".
 
-**Never synced:** conversations, sessions, events, credentials (API keys), installed extension code. Those stay per-server.
+**Never synced:** conversations, sessions, events, credentials (API keys, tokens, passwords), and this extension's own settings. Those stay per-server.
 
 ## What a follower picks
 
@@ -31,7 +31,13 @@ A follower's form has one box per group; an unchecked group keeps this server's 
 | 스킬 켜기·끄기 | `skills` | on |
 | 도구·도우미 설정 | `disabled_tools`, `disabled_subagents`, `delegate_policy` | on |
 | 대화 압축·보관 기간 | `compaction`, `retention` | on |
+| 서버 확장 설치 | server extensions in `<dataDir>/extensions`, installed at the primary's version | **off** |
 | 확장 설정 | every extension's `settings.json` on the primary | **off** |
+| 클라이언트 확장 목록 | `client_settings` rows `extensions`, `extensionStates` | **off** |
+| 스킬 파일 | folders in `~/.agents/skills` | **off** |
+| 도우미 역할 파일 | `~/.agents/subagents/*.md` | **off** |
+| 전역 AGENTS.md | `~/.agents/AGENTS.md` | **off** |
+| 모델 연결 | `custom_providers` (address and models, no key) | **off** |
 
 A key listed in `keys` belongs to no box and always comes along. A setting saved before 0.8.0 has no boxes: everything
 counts as checked, as before.
@@ -43,10 +49,28 @@ sent by the primary, and the follower keeps its own values for them. This extens
 extension the primary lacks is left alone. Environment variables (`PIPAYA_FLAG_*`) are process environment, not
 settings: they are not synced.
 
+The boxes after it make the follower match what is installed, never by removing what it has on its own:
+
+- **서버 확장 설치**: the primary lists its server extensions and versions; the follower installs each one it lacks
+  (or has at another version) from the marketplace's pinned git source through its own `POST /server-extensions/install`.
+  One not in the marketplace at that version (a hand-copied build) is logged and skipped. This extension is never
+  installed, updated or removed this way, and an extension only on the follower stays.
+- **클라이언트 확장 목록**: the apps' client extension list and on/off states, written through `PUT /client-settings/:key`
+  so open apps reload them.
+- **스킬 파일**: each skill folder on the primary is made identical here (text files up to 512 KB, 200 files and 2 MB per
+  skill; files it lacks are removed from that folder). A skill only here, and a symlinked skill folder, stay.
+- **도우미 역할 파일**, **전역 AGENTS.md**: the files are made identical; a role only here stays.
+- **모델 연결**: each custom provider's address, API type and model list, through `PUT /configuration/providers/:id`.
+  The API key is never sent: set it once in Settings → Models on each server.
+
+Paths sent by a peer are checked part by part (no `..`, no hidden files) and can only land inside the folder they
+belong to.
+
 ## What it reads, runs and sends
 
-- **Reads** the server's own SQLite database (`PIPAYA_DB`, or `<PIPAYA_DATA_DIR|~/.pipaya>/pipaya.db`) — only the `settings` table and the event counter.
-- **Network**: the follower talks to exactly one URL, the `remoteUrl` you configure: `POST /pairing/redeem` once to trade the code for a token, then `POST /server-extensions/server-sync/methods/snapshot` with that token. With 확장 설정 checked it also calls its own server at `127.0.0.1:$PIPAYA_PORT` to save them. The primary only answers its own `/pairing` when asked for a code. Nothing else is sent anywhere.
+- **Reads** the server's own SQLite database (`PIPAYA_DB`, or `<PIPAYA_DATA_DIR|~/.pipaya>/pipaya.db`): the `settings` table, and with the boxes above `client_settings` and `custom_providers` (never `credentials`). On the primary it also reads `~/.agents/{skills,subagents,AGENTS.md}` and the extension folders when a follower asks for them.
+- **Writes** on the follower, only for checked boxes: settings rows, `~/.agents/{skills,subagents,AGENTS.md}`, and the rest through its own server's routes (install, `/extensions/:id/settings`, `/client-settings/:key`, `/configuration/providers/:id`).
+- **Network**: the follower talks to exactly one URL, the `remoteUrl` you configure: `POST /pairing/redeem` once to trade the code for a token, then `POST /server-extensions/server-sync/methods/snapshot` with that token. With the boxes above it also calls its own server (at its bound address, `PIPAYA_HOST`/`PIPAYA_PORT`) to save what it pulled, and reads the marketplace index (`raw.githubusercontent.com/dohwi/pipaya-marketplace`) to find an extension's pinned source. The primary only answers its own `/pairing` when asked for a code. Nothing else is sent anywhere.
 - The device token is stored in the extension's own data folder (`extension-data/server-sync/peer.json`, mode 0600), not in its settings: the app's form saves only the fields it shows, so a token kept there was wiped by the next save. It is never logged and never appears in the status below. A token an older version kept in the settings moves there on load.
 
 ## Roles
@@ -54,7 +78,7 @@ settings: they are not synced.
 - **primary** — keeps its own settings, serves them to the peer. It never writes anything and never polls.
 - **follower** — polls the primary every `intervalSeconds` (minimum 15) and applies what it sees: rows are overwritten, rows the primary lacks are deleted. Its own conflicting edits do not survive. A failed pull is logged and retried with a growing wait (2× per miss, at most 8 intervals), so a primary that is down is not hammered.
 
-Both sides install this same extension; only the role differs. The follower holds a **device token** it redeemed from the primary's pairing code — revocable on the primary, never its admin token.
+Both sides install this same extension; only the role differs. The follower holds a **device token** it redeemed from the primary's pairing code — revocable on the primary, never its admin token. The primary's Devices tab lists it under **기준 서버에 보일 이름**, or `Server Sync · <host> (<address>)` when that is empty.
 
 ## Setup
 

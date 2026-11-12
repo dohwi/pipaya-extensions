@@ -174,10 +174,10 @@ describe("the pull timer", () => {
 		const realSet = globalThis.setTimeout;
 		const realClear = globalThis.clearTimeout;
 		const live = new Set<unknown>();
-		// Record the pull timer (the only one of 15 s or more) and whether it is ever cancelled.
+		// Record the pull timer (the first one runs after 3 s, the rest after the interval) and whether it is cancelled.
 		globalThis.setTimeout = ((fn: () => void, ms?: number) => {
 			const h = realSet(() => {}, 0);
-			if ((ms ?? 0) >= 15_000) { pulls.push(ms!); live.add(h); }
+			if (ms === 3_000 || (ms ?? 0) >= 15_000) { pulls.push(ms!); live.add(h); }
 			return h;
 		}) as typeof setTimeout;
 		globalThis.clearTimeout = ((h: unknown) => { live.delete(h); realClear(h as never); }) as typeof clearTimeout;
@@ -200,7 +200,8 @@ describe("the pull timer", () => {
 			// A new interval does restart it.
 			settings.intervalSeconds = 120;
 			onChange!();
-			expect(pulls).toEqual([60_000, 120_000]);
+			// Still nothing pulled, so the restarted timer also checks within seconds.
+			expect(pulls).toEqual([3_000, 3_000]);
 			expect(live.size).toBe(1);
 		} finally {
 			globalThis.setTimeout = realSet;

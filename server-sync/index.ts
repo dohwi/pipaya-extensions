@@ -9,9 +9,9 @@
 // found". Everything lives here so an update is a single file that always reloads.
 import { Database } from "bun:sqlite";
 import { createHash, randomBytes } from "node:crypto";
-import { homedir, networkInterfaces } from "node:os";
-import { join } from "node:path";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, hostname, networkInterfaces } from "node:os";
+import { dirname, join, relative, sep } from "node:path";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 
 /** How often a failing pull is retried at most (the base interval is multiplied by 2 per miss, up to this). */
 const MAX_BACKOFF = 8;
@@ -66,7 +66,37 @@ interface Snapshot {
 	settings: Record<string, unknown>;
 	/** Extension id -> its settings without credentials; only when the follower asked for them. */
 	extensions?: Record<string, Record<string, unknown>>;
+	/** The rest of the environment, each part only when the follower asked for it (0.10.0+). */
+	environment?: Environment;
 }
+
+/** One installed server extension: enough for the follower to install the same version from the marketplace. */
+interface InstalledExtension { id: string; version: string }
+/** Files of a folder, by path inside it. */
+type FileSet = Record<string, string>;
+/** What a primary sends besides settings rows. Never a secret: see each reader. */
+interface Environment {
+	serverExtensions?: InstalledExtension[];
+	clientExtensions?: { list: unknown; states: unknown };
+	skills?: Record<string, FileSet>;
+	subagents?: FileSet;
+	agentsMd?: string | null;
+	providers?: Record<string, Record<string, unknown>>;
+}
+/** The environment parts a follower can ask for, by the settings box that turns each on. */
+const PARTS = {
+	serverExtensions: "syncServerExtensions",
+	clientExtensions: "syncClientExtensions",
+	skills: "syncSkillFiles",
+	subagents: "syncSubagentFiles",
+	agentsMd: "syncAgentsMd",
+	providers: "syncProviders",
+} as const;
+type Part = keyof typeof PARTS;
+/** Where the marketplace lists each extension's pinned git source. */
+const CATALOG_URL = "https://raw.githubusercontent.com/dohwi/pipaya-marketplace/main/index.json";
+/** Bounds on what a folder copy may carry: a skill is a few text files, not a repository. */
+const FOLDER_LIMITS = { files: 200, bytes: 2 * 1024 * 1024, file: 512 * 1024 };
 
 interface Status {
 	role: "primary" | "follower";
@@ -154,6 +184,116 @@ function allExtensionSettings(): Record<string, Record<string, unknown>> {
 		if (value) out[entry.name] = Object.fromEntries(Object.entries(value).filter(([k]) => !CREDENTIAL_KEY.test(k)));
 	}
 	return out;
+}
+
+/** A file or folder name that may be copied: no hidden files, no path tricks. */
+const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,99}$/;
+
+/** A text file, or null when there is none. */
+function readText(file: string): string | null {
+	try { return readFileSync(file, "utf8"); } catch { return null; }
+}
+
+/** The text files directly in a folder whose names match, by name. */
+function readFiles(dir: string, match: RegExp): FileSet {
+	const out: FileSet = {};
+	if (!existsSync(dir)) return out;
+	for (const e of readdirSync(dir, { withFileTypes: true })) {
+		if (!e.isFile() || !SAFE_NAME.test(e.name) || !match.test(e.name)) continue;
+		const text = readText(join(dir, e.name));
+		if (text !== null && text.length <= FOLDER_LIMITS.file) out[e.name] = text;
+	}
+	return out;
+}
+
+/**
+ * Every sub-folder of `root` as path -> text, within FOLDER_LIMITS. Symlinks are not followed and binary files are left
+ * out: a skill is instructions and small scripts.
+ */
+function readFolders(root: string): Record<string, FileSet> {
+	const out: Record<string, FileSet> = {};
+	if (!existsSync(root)) return out;
+	for (const e of readdirSync(root, { withFileTypes: true })) {
+		if (!e.isDirectory() || !SAFE_NAME.test(e.name)) continue;
+		const files: FileSet = {};
+		let count = 0;
+		let bytes = 0;
+		const walk = (dir: string) => {
+			for (const f of readdirSync(dir, { withFileTypes: true })) {
+				if (!SAFE_NAME.test(f.name) || count >= FOLDER_LIMITS.files) continue;
+				const path = join(dir, f.name);
+				if (f.isDirectory()) { walk(path); continue; }
+				if (!f.isFile()) continue;
+				const text = readText(path);
+				if (text === null || text.length > FOLDER_LIMITS.file || text.includes("\u0000") || bytes + text.length > FOLDER_LIMITS.bytes) continue;
+				files[relative(join(root, e.name), path).split(sep).join("/")] = text;
+				count++;
+				bytes += text.length;
+			}
+		};
+		walk(join(root, e.name));
+		if (Object.keys(files).length) out[e.name] = files;
+	}
+	return out;
+}
+
+/** A relative path from a peer, checked part by part: it must stay inside the folder it is written to. */
+const safePath = (path: string) => typeof path === "string" && path.length <= 300 && path.split("/").every((p) => SAFE_NAME.test(p));
+
+/** Write a file only when its text differs. Returns whether it did. */
+function writeIfChanged(file: string, text: string): boolean {
+	if (readText(file) === text) return false;
+	mkdirSync(dirname(file), { recursive: true });
+	const tmp = `${file}.${randomBytes(4).toString("hex")}.tmp`;
+	writeFileSync(tmp, text);
+	renameSync(tmp, file);
+	return true;
+}
+
+/**
+ * Make each folder the primary has the same as there (files it lacks are removed from that folder). A folder only here
+ * stays: a follower keeps what it added itself. A symlinked folder here is someone's own link and is left alone.
+ */
+function applyFolders(root: string, theirs: Record<string, FileSet>, label: string): string[] {
+	const changed: string[] = [];
+	for (const [name, files] of Object.entries(theirs)) {
+		if (!SAFE_NAME.test(name) || !plain(files)) continue;
+		const dir = join(root, name);
+		try { if (lstatSync(dir).isSymbolicLink()) continue; } catch { /* not there yet */ }
+		let touched = false;
+		for (const [path, text] of Object.entries(files)) {
+			if (!safePath(path) || typeof text !== "string" || text.length > FOLDER_LIMITS.file) continue;
+			if (writeIfChanged(join(dir, ...path.split("/")), text)) touched = true;
+		}
+		const keep = new Set(Object.keys(files).filter(safePath));
+		const prune = (sub: string) => {
+			if (!existsSync(sub)) return;
+			for (const f of readdirSync(sub, { withFileTypes: true })) {
+				const path = join(sub, f.name);
+				if (f.isDirectory()) { prune(path); if (!readdirSync(path).length) rmSync(path, { recursive: true, force: true }); continue; }
+				if (f.isFile() && SAFE_NAME.test(f.name) && !keep.has(relative(dir, path).split(sep).join("/"))) { rmSync(path, { force: true }); touched = true; }
+			}
+		};
+		prune(dir);
+		if (touched) changed.push(`${label}:${name}`);
+	}
+	return changed;
+}
+
+/** The files directly in `dir` matching `match`, made the same as the primary's; a file only here stays. */
+function applyFiles(dir: string, theirs: FileSet, match: RegExp, label: string): string[] {
+	const changed: string[] = [];
+	for (const [name, text] of Object.entries(theirs)) {
+		if (!SAFE_NAME.test(name) || !match.test(name) || typeof text !== "string" || text.length > FOLDER_LIMITS.file) continue;
+		if (writeIfChanged(join(dir, name), text)) changed.push(`${label}:${name.replace(match, "")}`);
+	}
+	return changed;
+}
+
+/** One file made the same as the primary's. A primary without it leaves this server's own in place. */
+function applyText(file: string, text: string | null, label: string): string[] {
+	if (typeof text !== "string" || text.length > FOLDER_LIMITS.file) return [];
+	return writeIfChanged(file, text) ? [label] : [];
 }
 
 /** Same value whatever the key order. */
@@ -309,8 +449,18 @@ export default (pi: any) => {
 		delegate_policy: { ko: "위임 정책", en: "Delegation policy" }, compaction: { ko: "대화 압축", en: "Compaction" },
 		retention: { ko: "보관 기간", en: "Retention" },
 	};
-	const keyLabel = (k: string): Text =>
-		k.startsWith("ext:") ? { ko: `확장 설정: ${k.slice(4)}`, en: `Extension settings: ${k.slice(4)}` } : KEY_LABEL[k] ?? { ko: k, en: k };
+	const keyLabel = (k: string): Text => {
+		const [kind, rest = ""] = k.includes(":") ? [k.slice(0, k.indexOf(":")), k.slice(k.indexOf(":") + 1)] : ["", k];
+		if (kind === "ext") return { ko: `확장 설정: ${rest}`, en: `Extension settings: ${rest}` };
+		if (kind === "srv") return { ko: `서버 확장 설치: ${rest}`, en: `Server extension installed: ${rest}` };
+		if (kind === "client") return { ko: "클라이언트 확장 목록", en: "Client extensions" };
+		if (kind === "skill") return { ko: `스킬 파일: ${rest}`, en: `Skill files: ${rest}` };
+		if (kind === "helper") return { ko: `도우미 역할: ${rest}`, en: `Helper role: ${rest}` };
+
+		if (kind === "provider") return { ko: `모델 연결: ${rest}`, en: `Model provider: ${rest}` };
+		if (k === "agents-md") return { ko: "전역 AGENTS.md", en: "Global AGENTS.md" };
+		return KEY_LABEL[k] ?? { ko: k, en: k };
+	};
 	/** "42초 후" / "in 42 s", rounded like `ago`. */
 	const until = (at: number): Text => {
 		const s = Math.max(0, Math.round((at - Date.now()) / 1000));
@@ -340,6 +490,7 @@ export default (pi: any) => {
 					{ type: "text", id: "what", text: { ko: "팔로워 서버가 이 서버의 설정을 가져갑니다.", en: "Follower servers pull this server's settings." } },
 					...(url ? [{ type: "stat", id: "address", label: { ko: "이 서버 주소", en: "This server's address" }, value: hostOf(url) }] : []),
 					{ type: "text", id: "how", size: "small", text: { ko: "팔로워를 연결하려면: 이 서버의 기기 탭 → [연결 링크 복사] → 팔로워의 연결 링크 칸에 붙여넣기", en: "To connect a follower: this server's Devices tab → [Copy connection link] → paste it into the follower's link field" } },
+					{ type: "text", id: "pick", size: "small", text: { ko: "무엇을 가져갈지(모델·확장·스킬 등)는 팔로워 서버의 이 화면에서 고릅니다. 기준 서버에는 고를 항목이 없습니다.", en: "What to pull (models, extensions, skills, …) is picked on the follower's own page. The primary has nothing to pick." } },
 				],
 			};
 		}
@@ -403,8 +554,66 @@ export default (pi: any) => {
 		const snap: Snapshot = { keys: list, settings: readSettings(dbo(), list) };
 		// Only when the follower asks: most never want them, and they are the bulkiest part.
 		if (plain(params) && params.extensions === true) snap.extensions = allExtensionSettings();
+		const asked = plain(params) && Array.isArray(params.parts) ? params.parts.filter((p): p is Part => typeof p === "string" && p in PARTS) : [];
+		if (asked.length) snap.environment = readEnvironment(asked);
 		return snap;
 	});
+
+	/** This server's environment parts, as a follower asked for them. */
+	const readEnvironment = (parts: readonly Part[]): Environment => {
+		const env: Environment = {};
+		const home = typeof pi.home === "string" && pi.home ? pi.home : homedir();
+		for (const part of parts) {
+			try {
+				if (part === "serverExtensions") env.serverExtensions = installedServerExtensions();
+				else if (part === "clientExtensions") env.clientExtensions = clientExtensionRows();
+				else if (part === "skills") env.skills = readFolders(join(home, ".agents", "skills"));
+				else if (part === "subagents") env.subagents = readFiles(join(home, ".agents", "subagents"), /\.md$/);
+				else if (part === "agentsMd") env.agentsMd = readText(join(home, ".agents", "AGENTS.md"));
+				else if (part === "providers") env.providers = providerRows();
+			} catch (e) {
+				log(`snapshot ${part}: ${e instanceof Error ? e.message : String(e)}`);
+			}
+		}
+		return env;
+	};
+
+	/** Server extensions installed in the data folder (not `~/.agents/extensions`, which are the owner's own files), with their versions. */
+	const installedServerExtensions = (): InstalledExtension[] => {
+		const root = join(dataDir(), "extensions");
+		if (!existsSync(root)) return [];
+		const out: InstalledExtension[] = [];
+		for (const entry of readdirSync(root, { withFileTypes: true })) {
+			if (!entry.isDirectory() || entry.name === SELF_ID || !EXTENSION_ID.test(entry.name)) continue;
+			try {
+				const pkg = JSON.parse(readFileSync(join(root, entry.name, "package.json"), "utf8")) as { version?: unknown };
+				if (typeof pkg.version === "string") out.push({ id: entry.name, version: pkg.version });
+			} catch { /* a folder that only holds settings: not an installed extension */ }
+		}
+		return out;
+	};
+
+	/** The client extensions this server keeps for its apps (`client_settings`): the list and which are on. */
+	const clientExtensionRows = () => {
+		const row = (key: string) => {
+			const r = dbo().query("SELECT data FROM client_settings WHERE key = ?").get(key) as { data: string } | undefined;
+			try { return r ? JSON.parse(r.data) : null; } catch { return null; }
+		};
+		return { list: row("extensions"), states: row("extensionStates") };
+	};
+
+	/** Custom model providers without anything secret: the key is in the credentials table, which is never read. */
+	const providerRows = (): Record<string, Record<string, unknown>> => {
+		const out: Record<string, Record<string, unknown>> = {};
+		const rows = dbo().query("SELECT id, data FROM custom_providers").all() as { id: string; data: string }[];
+		for (const r of rows) {
+			try {
+				const v: unknown = JSON.parse(r.data);
+				if (plain(v)) out[r.id] = Object.fromEntries(Object.entries(v).filter(([k]) => !CREDENTIAL_KEY.test(k)));
+			} catch { /* a damaged row is not ours to fix */ }
+		}
+		return out;
+	};
 
 	pi.registerMethod("status", () => status());
 
@@ -424,6 +633,14 @@ export default (pi: any) => {
 		const bind = String(process.env.PIPAYA_HOST ?? "").trim();
 		const host = !bind || bind === "0.0.0.0" || bind === "::" || bind === "[::]" ? "127.0.0.1" : bind;
 		return `http://${host.includes(":") && !host.startsWith("[") ? `[${host}]` : host}:${port}`;
+	};
+
+	/** How the primary's Devices tab names this follower: the name it gave itself, else this machine and its address. */
+	const followerLabel = (): string => {
+		const given = String(settings().followerName ?? "").trim();
+		if (given) return given.slice(0, 60);
+		const ip = firstAddress();
+		return `Server Sync · ${hostname()}${ip ? ` (${ip})` : ""}`.slice(0, 60);
 	};
 
 	/** The admin token of this server (`PIPAYA_TOKEN`, else the `token` file in the data dir). */
@@ -466,7 +683,7 @@ export default (pi: any) => {
 		const res = await fetch(`${url}/pairing/redeem`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ code: value, name: "server-sync follower" }),
+			body: JSON.stringify({ code: value, name: followerLabel() }),
 			signal: AbortSignal.timeout(5_000),
 		});
 		if (res.status === 403) throw new CodeRejected("the code is wrong, expired or already used; copy a new link on the primary");
@@ -506,23 +723,115 @@ export default (pi: any) => {
 		const { url, token } = cfg();
 		if (!url || !token) throw new Error("set the peer server URL and its admin token first");
 		const withExtensions = syncExtensions();
+		const parts = (Object.keys(PARTS) as Part[]).filter((p) => settings()[PARTS[p]] === true);
 		const res = await fetch(`${url}/server-extensions/server-sync/methods/snapshot`, {
 			method: "POST",
 			headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-			body: withExtensions ? JSON.stringify({ extensions: true }) : "null",
+			body: withExtensions || parts.length ? JSON.stringify({ ...(withExtensions ? { extensions: true } : {}), ...(parts.length ? { parts } : {}) }) : "null",
 			signal: AbortSignal.timeout(10_000),
 		});
 		if (res.status === 401 || res.status === 403) throw new Error(`the peer refused the token (${res.status})`);
 		if (!res.ok) throw new Error(`the peer answered ${res.status}`);
-		const body = (await res.json()) as { result?: { keys?: unknown; settings?: unknown; extensions?: unknown } };
+		const body = (await res.json()) as { result?: { keys?: unknown; settings?: unknown; extensions?: unknown; environment?: unknown } };
 		const peer = body.result?.settings;
 		if (!peer || typeof peer !== "object" || Array.isArray(peer)) throw new Error("the peer returned no settings");
 		const list = pickedKeys(mirrorKeys(body.result?.keys, keys()));
 		const mine = readSettings(dbo(), list);
 		const theirs = Object.fromEntries(list.filter((k) => k in peer).map((k) => [k, (peer as Record<string, unknown>)[k]]));
 		const changed = hashOf(theirs) === hashOf(mine) ? [] : applySnapshot(dbo(), list, peer as Record<string, unknown>);
+		// Server extensions first: a pulled extension's settings need the extension installed to mean anything.
+		// A primary older than 0.10.0 sends no environment: nothing to do, not an error.
+		const env = plain(body.result?.environment) ? (body.result.environment as Environment) : {};
+		if (parts.includes("serverExtensions") && Array.isArray(env.serverExtensions)) changed.push(...(await applyServerExtensions(env.serverExtensions)));
 		// A primary older than 0.8.0 sends no extensions: nothing to do, not an error.
 		if (withExtensions && plain(body.result?.extensions)) changed.push(...(await applyExtensions(body.result.extensions)));
+		const home = typeof pi.home === "string" && pi.home ? pi.home : homedir();
+		if (parts.includes("clientExtensions") && plain(env.clientExtensions)) changed.push(...(await applyClientExtensions(env.clientExtensions)));
+		if (parts.includes("skills") && plain(env.skills)) changed.push(...applyFolders(join(home, ".agents", "skills"), env.skills as Record<string, FileSet>, "skill"));
+		if (parts.includes("subagents") && plain(env.subagents)) changed.push(...applyFiles(join(home, ".agents", "subagents"), env.subagents as FileSet, /\.md$/, "helper"));
+		if (parts.includes("agentsMd") && "agentsMd" in env) changed.push(...applyText(join(home, ".agents", "AGENTS.md"), env.agentsMd ?? null, "agents-md"));
+		if (parts.includes("providers") && plain(env.providers)) changed.push(...(await applyProviders(env.providers as Record<string, Record<string, unknown>>)));
+		return changed;
+	};
+
+	/** This server's own route, as the admin: what every apply below goes through so the app hears about it. */
+	const own = async (method: string, path: string, body?: unknown): Promise<Response> => {
+		try {
+			return await fetch(`${ownUrl()}${path}`, {
+				method,
+				headers: { authorization: `Bearer ${adminToken()}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+				...(body === undefined ? {} : { body: JSON.stringify(body) }),
+				signal: AbortSignal.timeout(60_000),
+			});
+		} catch (e) {
+			throw new Error(`pulled from the primary, but could not reach this server (${ownUrl()}): ${e instanceof Error ? e.message : String(e)}`);
+		}
+	};
+
+	/**
+	 * Install what the primary has and this server lacks (or has at another version), from the marketplace's pinned git
+	 * source, through this server's own install route. Never removes one: an extension only here stays.
+	 */
+	const applyServerExtensions = async (theirs: InstalledExtension[]): Promise<string[]> => {
+		const mine = new Map(installedServerExtensions().map((e) => [e.id, e.version]));
+		const wanted = theirs.filter((e) => plain(e) && typeof e.id === "string" && EXTENSION_ID.test(e.id) && e.id !== SELF_ID && typeof e.version === "string" && mine.get(e.id) !== e.version);
+		if (!wanted.length) return [];
+		const catalog = await fetchCatalog();
+		const changed: string[] = [];
+		const missing: string[] = [];
+		for (const e of wanted) {
+			const entry = catalog.find((c) => c.id === e.id && c.kind === "server" && c.version === e.version && plain(c.source) && c.source.type === "git");
+			if (!entry) { missing.push(`${e.id} ${e.version}`); continue; }
+			const { repo, dir, ref, commit, host } = entry.source as Record<string, string>;
+			const res = await own("POST", "/server-extensions/install", { id: e.id, repo, ref, commit, ...(dir ? { dir } : {}), ...(host ? { host } : {}) });
+			if (!res.ok) throw new Error(`pulled from the primary, but could not install ${e.id} ${e.version} on this server (${res.status}: ${(await res.text()).slice(0, 200)})`);
+			changed.push(`srv:${e.id}`);
+		}
+		// Not in the marketplace at that version (a hand-copied or newer local build): say so, the rest still applies.
+		if (missing.length) log(`not in the marketplace, install by hand: ${missing.join(", ")}`);
+		return changed;
+	};
+	let catalogCache: { at: number; list: Record<string, any>[] } | null = null;
+	const fetchCatalog = async (): Promise<Record<string, any>[]> => {
+		if (catalogCache && Date.now() - catalogCache.at < 10 * 60_000) return catalogCache.list;
+		const res = await fetch(CATALOG_URL, { signal: AbortSignal.timeout(10_000) });
+		if (!res.ok) throw new Error(`could not read the marketplace (${res.status})`);
+		const body = (await res.json()) as { extensions?: unknown };
+		const list = Array.isArray(body.extensions) ? body.extensions.filter(plain) : [];
+		catalogCache = { at: Date.now(), list };
+		return list;
+	};
+
+	/** The client extension list and on/off states, through `/client-settings` so open apps reload them. */
+	const applyClientExtensions = async (theirs: { list?: unknown; states?: unknown }): Promise<string[]> => {
+		const current = clientExtensionRows();
+		const changed: string[] = [];
+		for (const [key, value] of [["extensions", theirs.list], ["extensionStates", theirs.states]] as const) {
+			if (value === null || value === undefined) continue;
+			if (JSON.stringify(current[key === "extensions" ? "list" : "states"]) === JSON.stringify(value)) continue;
+			const res = await own("PUT", `/client-settings/${key}`, { value });
+			if (!res.ok) throw new Error(`pulled from the primary, but could not save ${key} on this server (${res.status})`);
+			changed.push(`client:${key}`);
+		}
+		return changed;
+	};
+
+	/**
+	 * Custom providers, through the configuration route (which checks them and loads them at once). The key stays this
+	 * server's own: set it once in Settings → Models on each server. A provider only here stays.
+	 */
+	const applyProviders = async (theirs: Record<string, Record<string, unknown>>): Promise<string[]> => {
+		const mine = providerRows();
+		const changed: string[] = [];
+		for (const [id, value] of Object.entries(theirs)) {
+			if (!/^[a-z][a-z0-9_-]{0,63}$/.test(id) || !plain(value)) continue;
+			const { id: _, ...body } = value;
+			const { id: __, ...current } = mine[id] ?? {};
+			if (mine[id] && JSON.stringify(Object.keys(current).sort().map((k) => [k, current[k]])) === JSON.stringify(Object.keys(body).sort().map((k) => [k, body[k]]))) continue;
+			const res = await own("PUT", `/configuration/providers/${id}`, body);
+			if (!res.ok) throw new Error(`pulled from the primary, but could not save the provider ${id} on this server (${res.status}: ${(await res.text()).slice(0, 200)})`);
+			changed.push(`provider:${id}`);
+		}
 		return changed;
 	};
 
@@ -612,7 +921,8 @@ export default (pi: any) => {
 		};
 		const schedule = () => {
 			if (timer) return;
-			const wait = Math.min(interval * 2 ** Math.min(failures, 4), interval * MAX_BACKOFF);
+			// Right after a (re)start nothing has been checked yet: do it within seconds, not one interval later.
+			const wait = lastSyncAt === null && failures === 0 ? 3 : Math.min(interval * 2 ** Math.min(failures, 4), interval * MAX_BACKOFF);
 			timer = setTimeout(tick, wait * 1000);
 			nextPullAt = Date.now() + wait * 1000;
 			// A pending pull must not keep the process alive on shutdown.
