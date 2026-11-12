@@ -317,6 +317,8 @@ export default (pi: any) => {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	/** Extensions the primary has that could not be installed here (not in the marketplace, copying not allowed). */
 	let unlisted: string[] = [];
+	/** Pulled extensions that cannot run here until a secret is typed in on this server: name -> the settings they lack. */
+	let needsInput: { id: string; title: string; fields: string[] }[] = [];
 	/** When the pull timer fires next, for the page. */
 	let nextPullAt = 0;
 	let busy = false;
@@ -514,7 +516,7 @@ export default (pi: any) => {
 			: waiting || (token && lastSyncAt === null) ? { tone: "neutral", text: { ko: "연결 중", en: "Connecting" } }
 			: token ? { tone: "success", text: { ko: "연결됨", en: "Connected" } }
 			: { tone: "neutral", text: { ko: "연결 안 됨", en: "Not connected" } };
-		const next = timer && nextPullAt ? until(nextPullAt) : null;
+		const next = timer && nextPullAt > Date.now() ? until(nextPullAt) : null;
 		const children: unknown[] = [
 			{ type: "stack", id: "head", direction: "horizontal", gap: "small", children: [
 				{ type: "badge", id: "state", tone: state.tone, text: state.text },
@@ -529,10 +531,21 @@ export default (pi: any) => {
 			children.push({ type: "grid", id: "numbers", columns: 3, children: [
 				{ type: "stat", id: "peer", label: { ko: "기준 서버", en: "Primary" }, value: hostOf(url) },
 				{ type: "stat", id: "pulled", label: { ko: "지난번 가져온 항목", en: "Pulled last time" }, value: lastSyncAt === null ? "—" : lastApplied.length ? { ko: `${lastApplied.length}개`, en: String(lastApplied.length) } : { ko: "변경 없음", en: "No changes" } },
-				{ type: "stat", id: "next", label: { ko: "다음 동기화", en: "Next sync" }, value: pulling ? { ko: "지금", en: "now" } : next ?? "—" },
+				{ type: "stat", id: "next", label: { ko: "다음 동기화", en: "Next sync" }, value: pulling || busy ? { ko: "지금", en: "now" } : next ?? { ko: "곧", en: "soon" } },
 			] });
 		}
 		if (lastError) children.push({ type: "alert", id: "error", tone: "danger", title: errorTitle(lastError), text: lastError });
+		if (token && needsInput.length && settings().syncInstalled === true) {
+			// The alert carries the sentence; the list under it names each extension and what it lacks (an alert's text
+			// is one paragraph, so a list inside it would run together).
+			children.push({ type: "alert", id: "needs-input", tone: "warning",
+				title: { ko: "이 서버에서 직접 입력해야 하는 값이 있습니다", en: "Some values must be entered on this server" },
+				text: { ko: "비밀값(토큰·키)은 보안상 기준 서버에서 가져오지 않습니다. 설정 → 확장에서 해당 확장을 열어 한 번만 입력하면 켜집니다. 주소 같은 나머지 값은 이미 맞춰져 있습니다.", en: "Secrets (tokens, keys) are never pulled from the primary. Open the extension under Settings → Extensions and enter them once; then it turns on. Addresses and the other values are already matched." } });
+			children.push({ type: "list", id: "needs-input-list", items: needsInput.slice(0, 20).map((n, i) => ({
+				id: `n${i}`, title: n.title,
+				description: { ko: `입력할 값: ${n.fields.join(" · ")}`, en: `To enter: ${n.fields.join(" · ")}` },
+			})) });
+		}
 		if (token && unlisted.length && settings().syncInstalled === true) children.push({ type: "alert", id: "unlisted", tone: "warning",
 			title: { ko: "마켓플레이스에 없는 확장은 설치하지 않았습니다", en: "Extensions not in the marketplace were not installed" },
 			text: { ko: `${unlisted.join(", ")} — 기준 서버에서 복사하려면 아래 ‘직접 만든 확장도 복사’를 켜세요.`, en: `${unlisted.join(", ")} — to copy them from the primary, turn on ‘Also copy extensions you made yourself’ below.` } });
@@ -900,10 +913,33 @@ export default (pi: any) => {
 		return list;
 	};
 
+	/**
+	 * Which of the apps' extensions are on in the pulled states but lack a required secret here. A secret (a token, a
+	 * key) never leaves the primary, so after a pull the follower has the extension and its address but not the key:
+	 * the apps then keep it off with "required". Saying so here tells the person what to type and where.
+	 */
+	const findNeedsInput = (list: unknown, states: unknown): { id: string; title: string; fields: string[] }[] => {
+		if (!Array.isArray(list)) return [];
+		const on = plain(states) ? states : {};
+		const out: { id: string; title: string; fields: string[] }[] = [];
+		for (const item of list) {
+			const m = plain(item) && plain(item.manifest) ? item.manifest : null;
+			if (!m || typeof m.id !== "string" || !Array.isArray(m.settings) || on[m.id] !== true) continue;
+			const have = readExtensionSettings(m.id) ?? {};
+			const lacking = (m.settings as unknown[]).filter(plain)
+				.filter((f) => f.required === true && f.readonly !== true && typeof f.key === "string" && (f.secret === true || CREDENTIAL_KEY.test(f.key)))
+				.filter((f) => { const v = have[f.key as string]; return v === undefined || v === null || v === ""; })
+				.map((f) => (typeof f.label === "string" && f.label ? f.label : String(f.key)));
+			if (lacking.length) out.push({ id: m.id, title: typeof m.name === "string" && m.name ? m.name : m.id, fields: lacking });
+		}
+		return out;
+	};
+
 	/** The apps' extension list and on/off states, through `/client-settings` so open apps reload them. */
 	const applyClientExtensions = async (theirs: { list?: unknown; states?: unknown }): Promise<string[]> => {
 		const current = clientExtensionRows();
 		const changed: string[] = [];
+		needsInput = findNeedsInput(theirs.list ?? current.list, theirs.states ?? current.states);
 		for (const [key, value] of [["extensions", theirs.list], ["extensionStates", theirs.states]] as const) {
 			if (value === null || value === undefined) continue;
 			if (JSON.stringify(current[key === "extensions" ? "list" : "states"]) === JSON.stringify(value)) continue;

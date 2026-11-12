@@ -290,3 +290,34 @@ describe("one box for installed extensions", () => {
 		expect(c.syncInstalled).toBe(false);
 	});
 });
+
+describe("a pulled extension that lacks a secret here", () => {
+	test("the page says what to type, and only for extensions that are on and need a required secret", async () => {
+		const manifest = (id: string, fields: unknown[]) => ({ manifest: { id, name: id.toUpperCase(), settings: fields } });
+		sql(P.db, "INSERT OR REPLACE INTO client_settings (key, data, updated_at) VALUES ('extensions', ?, 1)", JSON.stringify([
+			manifest("needs-key", [{ key: "origin", label: "주소", required: true }, { key: "httpToken", label: "관리 키", required: true, secret: true }]),
+			manifest("has-key", [{ key: "httpToken", label: "관리 키", required: true, secret: true }]),
+			manifest("off-one", [{ key: "apiKey", label: "키", required: true }]),
+			manifest("no-secret", [{ key: "origin", label: "주소", required: true }]),
+		]));
+		sql(P.db, "INSERT OR REPLACE INTO client_settings (key, data, updated_at) VALUES ('extensionStates', ?, 1)", JSON.stringify({ "needs-key": true, "has-key": true, "no-secret": true }));
+		write(join(F.data, "extensions", "has-key", "settings.json"), JSON.stringify({ httpToken: "mine" }));
+		rmSync(join(F.data, "extensions", "needs-key"), { recursive: true, force: true });
+		const panels: string[] = [];
+		const settings: Record<string, unknown> = { role: "follower", remoteUrl: `http://127.0.0.1:${peer.port}`, remoteToken: "t", syncInstalled: true };
+		as(F, () => factory({
+			home: F.home, dataDir: mkdtempSync(join(root, "ext-")),
+			settings: { get: () => settings, set: (n: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, n); return settings; }, onChange: () => () => {} },
+			ui: { setPanel: (n: unknown) => void panels.push(JSON.stringify(n)), onEvent: () => {} },
+			log: () => {}, registerMethod: (n: string, f: (p?: unknown) => unknown) => { if (n === "sync") (globalThis as Record<string, unknown>).__sync = f; }, emit: () => {}, on: () => {},
+		}));
+		await as(F, () => (globalThis as unknown as { __sync: () => Promise<unknown> }).__sync());
+		const page = panels.at(-1)!;
+		expect(page).toContain("needs-input");
+		expect(page).toContain("NEEDS-KEY");
+		expect(page).toContain("입력할 값: 관리 키");
+		expect(page).not.toContain("HAS-KEY");
+		expect(page).not.toContain("OFF-ONE");
+		expect(page).not.toContain("NO-SECRET");
+	});
+});
