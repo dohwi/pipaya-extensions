@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Mirrors a primary pipaya server onto this one: settings, and optionally installed server and client extensions, extension settings, skills, helper roles, AGENTS.md and model providers (secrets never leave the primary).",
   "license": "MIT",
   "author": "dohwi",
@@ -130,10 +130,21 @@
         "type": "boolean",
         "label": "서버 확장 설치",
         "default": false,
-        "description": "기준 서버에 설치된 서버 확장을 같은 버전으로 설치합니다(마켓플레이스에 있는 것만). 이 서버에만 있는 확장은 지우지 않습니다.",
+        "description": "기준 서버에 설치된 서버 확장을 같은 버전으로 설치합니다(마켓플레이스에서 받음). 이 서버에만 있는 확장은 지우지 않습니다.",
         "when": {
           "key": "role",
           "equals": "follower"
+        }
+      },
+      {
+        "key": "syncLocalExtensions",
+        "type": "boolean",
+        "label": "마켓플레이스에 없는 확장도 복사",
+        "default": false,
+        "description": "직접 만들었거나 마켓플레이스에 없는 서버 확장은 기준 서버의 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요.",
+        "when": {
+          "key": "syncServerExtensions",
+          "equals": true
         }
       },
       {
@@ -227,7 +238,6 @@
         "예: 집 데스크톱": "e.g. Home desktop",
         "모델 (기본·시스템·이미지)": "Models (default, system, image)",
         "서버 확장 설치": "Install server extensions",
-        "기준 서버에 설치된 서버 확장을 같은 버전으로 설치합니다(마켓플레이스에 있는 것만). 이 서버에만 있는 확장은 지우지 않습니다.": "Installs the primary's server extensions at the same version (those in the marketplace). Extensions only on this server are kept.",
         "클라이언트 확장 목록": "Client extensions",
         "앱에 설치된 클라이언트 확장과 켜기·끄기 상태. 이 서버에 접속한 앱이 같은 확장을 씁니다.": "The client extensions installed for the apps and whether each is on. Apps connected to this server get the same ones.",
         "스킬 파일": "Skill files",
@@ -237,7 +247,10 @@
         "전역 AGENTS.md": "Global AGENTS.md",
         "~/.agents/AGENTS.md. 모든 대화에 들어가는 기본 지침입니다.": "~/.agents/AGENTS.md, the instructions every conversation starts with.",
         "모델 연결 (사용자 지정 제공자)": "Model providers (custom)",
-        "주소와 모델 목록만 가져옵니다. API 키는 각 서버에서 따로 넣으세요.": "Only the address and the model list. Enter the API key on each server."
+        "주소와 모델 목록만 가져옵니다. API 키는 각 서버에서 따로 넣으세요.": "Only the address and the model list. Enter the API key on each server.",
+        "마켓플레이스에 없는 확장도 복사": "Also copy extensions not in the marketplace",
+        "직접 만들었거나 마켓플레이스에 없는 서버 확장은 기준 서버의 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요.": "Server extensions you made yourself, or that are not in the marketplace, are copied from the primary as they are. It is code that runs inside this server: turn this on only if you trust the primary.",
+        "기준 서버에 설치된 서버 확장을 같은 버전으로 설치합니다(마켓플레이스에서 받음). 이 서버에만 있는 확장은 지우지 않습니다.": "Installs the primary's server extensions at the same version, from the marketplace. Extensions only on this server are kept."
       }
     }
   },
