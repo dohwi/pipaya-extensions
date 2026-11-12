@@ -329,3 +329,30 @@ describe("the primary's page says whether secrets can leave", () => {
 		expect(page({ shareSecrets: true })).toContain("모델 API 키");
 	});
 });
+
+describe("the page after a pull", () => {
+	test("is redrawn once the pull is over, so 'now' does not stay on screen", async () => {
+		const settings: Record<string, unknown> = { role: "follower", remoteUrl: "http://127.0.0.1:9", remoteToken: "t" };
+		const panels: string[] = [];
+		const timers: (() => void)[] = [];
+		const realSet = globalThis.setTimeout;
+		globalThis.setTimeout = ((fn: () => void, ms?: number) => { if (ms === 3_000) { timers.push(fn); return realSet(() => {}, 0); } return realSet(fn, ms); }) as typeof setTimeout;
+		try {
+			factory({
+				dataDir: mkdtempSync(join(dir, "after-")),
+				settings: { get: () => settings, set: (n: Record<string, unknown>) => { Object.assign(settings, n); return settings; }, onChange: () => () => {} },
+				ui: { setPanel: (n: unknown) => void panels.push(JSON.stringify(n)), onEvent: () => {} },
+				log: () => {}, registerMethod: () => {}, emit: () => {}, on: () => {},
+			});
+		} finally {
+			globalThis.setTimeout = realSet;
+		}
+		expect(timers.length).toBe(1);
+		timers[0]!(); // the first timed pull starts: the page says "now" while it runs
+		await Bun.sleep(5);
+		await Bun.sleep(400); // the pull to a closed port fails quickly
+		const last = panels.at(-1)!;
+		expect(last).not.toContain('"value":{"ko":"지금"');
+		expect(last).toContain("연결 실패");
+	});
+});

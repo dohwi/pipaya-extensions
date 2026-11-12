@@ -543,9 +543,14 @@ export default (pi: any) => {
 		if (token && needsInput.length && settings().syncExtensions === true) {
 			// The alert carries the sentence; the list under it names each extension and what it lacks (an alert's text
 			// is one paragraph, so a list inside it would run together).
+			// What is true depends on the box: with 비밀값 on, the server-side secrets already came; what is left is a value an
+			// app keeps only on the device (a `secret` field of an extension's settings), which never reaches any server.
+			const asked = settings().syncSecrets === true;
 			children.push({ type: "alert", id: "needs-input", tone: "warning",
-				title: { ko: "이 서버에서 직접 입력해야 하는 값이 있습니다", en: "Some values must be entered on this server" },
-				text: { ko: "비밀값(토큰·키)은 보안상 기준 서버에서 가져오지 않습니다. 설정 → 확장에서 해당 확장을 열어 한 번만 입력하면 켜집니다. 주소 같은 나머지 값은 이미 맞춰져 있습니다.", en: "Secrets (tokens, keys) are never pulled from the primary. Open the extension under Settings → Extensions and enter them once; then it turns on. Addresses and the other values are already matched." } });
+				title: { ko: "이 서버(기기)에서 직접 입력해야 하는 값이 있습니다", en: "Some values must be entered here" },
+				text: asked
+					? { ko: "‘API 키·토큰도 가져오기’를 켰지만, 아래 값은 앱이 각 기기에만 저장하고 서버에는 올리지 않아서 기준 서버에도 없습니다. 설정 → 확장에서 해당 확장을 열어 이 기기에서 한 번만 입력하면 켜집니다. 주소 같은 나머지 값은 이미 맞춰져 있습니다.", en: "‘Also pull API keys and tokens’ is on, but the values below are kept by the app on each device only and never reach a server, so the primary does not have them either. Open the extension under Settings → Extensions and enter them once on this device; then it turns on. Addresses and the other values are already matched." }
+					: { ko: "비밀값(토큰·키)은 기본으로 기준 서버에서 가져오지 않습니다. 설정 → 확장에서 해당 확장을 열어 한 번만 입력하면 켜집니다. 주소 같은 나머지 값은 이미 맞춰져 있습니다. (서버에 저장된 키는 ‘API 키·토큰도 가져오기’로 가져올 수 있지만, 앱이 기기에만 저장하는 값은 가져올 수 없습니다.)", en: "Secrets (tokens, keys) are not pulled by default. Open the extension under Settings → Extensions and enter them once; then it turns on. Addresses and the other values are already matched. (‘Also pull API keys and tokens’ brings keys stored on a server, but not values an app keeps on the device only.)" } });
 			children.push({ type: "list", id: "needs-input-list", items: needsInput.slice(0, 20).map((n, i) => ({
 				id: `n${i}`, title: n.title,
 				description: { ko: `입력할 값: ${n.fields.join(" · ")}`, en: `To enter: ${n.fields.join(" · ")}` },
@@ -1095,7 +1100,7 @@ export default (pi: any) => {
 			busy = true;
 			pull()
 				.catch(() => { /* already logged and recorded in the status */ })
-				.finally(() => { busy = false; schedule(); });
+				.finally(() => { busy = false; schedule(); showStatus(); });
 		};
 		const schedule = () => {
 			if (timer) return;
@@ -1148,7 +1153,7 @@ export default (pi: any) => {
 			// Pull now: the page should say "connected" right after the save, not one interval later.
 			if (!busy) {
 				busy = true;
-				void pull().catch(() => { /* recorded in the status */ }).finally(() => { busy = false; });
+				void pull().catch(() => { /* recorded in the status */ }).finally(() => { busy = false; showStatus(); });
 			}
 		} catch (e) {
 			lastError = e instanceof Error ? e.message : String(e);
