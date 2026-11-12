@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "Makes a pipaya server match another: app settings, extensions with their settings, skills/helpers/AGENTS.md, and model connections. Secrets only when both sides allow it.",
   "license": "MIT",
   "author": "dohwi",
