@@ -1,14 +1,14 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.12.1",
-  "description": "Makes a pipaya server match another: its settings and, box by box, installed extensions, extension settings, skill files, helper roles, AGENTS.md and model providers (secrets never leave the primary).",
+  "version": "0.13.0",
+  "description": "Makes a pipaya server match another: app settings, extensions with their settings, skills/helpers/AGENTS.md, and model connections. Secrets only when both sides allow it.",
   "license": "MIT",
   "author": "dohwi",
   "pipaya": {
     "title": "Server Sync",
     "descriptions": {
-      "en": "Makes this server match a primary pipaya server. Connect with the link from the primary's Devices tab, then pick what to pull: settings (models, workdir, MCP, skills on/off, tools, history), installed extensions with their settings, skill files, helper roles, AGENTS.md and model providers. Tokens, passwords and API keys never leave the primary.",
-      "ko": "이 서버를 기준 서버와 똑같이 맞춥니다. 기준 서버의 기기 탭에서 받은 연결 링크로 연결하고, 가져올 항목을 고르세요. 설정(모델·작업 디렉터리·MCP·스킬 켜기/끄기·도구·대화 보관)뿐 아니라 설치된 확장과 그 설정, 스킬 파일, 도우미 역할, AGENTS.md, 모델 연결까지 가져올 수 있습니다. 토큰·비밀번호·API 키는 넘어오지 않습니다."
+      "en": "Makes this server match a primary pipaya server. Connect with the link from the primary's Devices tab, then pick what to pull: app settings (models, workdir, MCP, skills on/off, tools, history), extensions with their settings, skills, helper roles and AGENTS.md, and model connections. API keys and tokens come over only if you turn that on here and the primary allows it.",
+      "ko": "이 서버를 기준 서버와 똑같이 맞춥니다. 기준 서버의 기기 탭에서 받은 연결 링크로 연결하고, 가져올 항목을 고르세요. 앱 설정(모델·작업 디렉터리·MCP·스킬 켜기/끄기·도구·대화 보관), 확장과 그 설정, 스킬·도우미 역할·AGENTS.md, 모델 연결을 가져올 수 있습니다. API 키·토큰은 여기서 켜고 기준 서버도 허용할 때만 넘어옵니다."
     },
     "settings": [
       {
@@ -55,7 +55,7 @@
         "key": "followerName",
         "type": "string",
         "label": "기준 서버에 보일 이름",
-        "description": "기준 서버의 기기 탭에 이 이름으로 표시됩니다. 비우면 이 PC 이름과 주소를 씁니다. 연결할 때 적용됩니다.",
+        "description": "기준 서버의 기기 탭에 이 이름으로 표시됩니다. 비우면 이 PC 이름과 주소를 씁니다.",
         "default": "",
         "placeholder": "예: 집 데스크톱",
         "when": {
@@ -64,143 +64,81 @@
         }
       },
       {
-        "key": "syncModels",
+        "key": "syncApp",
         "type": "boolean",
-        "label": "모델 (기본·시스템·이미지)",
-        "default": true,
-        "when": {
-          "key": "role",
-          "equals": "follower"
-        }
-      },
-      {
-        "key": "syncWorkdir",
-        "type": "boolean",
-        "label": "기본 작업 디렉터리",
+        "label": "앱 설정",
         "default": true,
         "when": {
           "key": "role",
           "equals": "follower"
         },
-        "description": "두 서버의 폴더 구조가 다르면 끄세요."
+        "description": "모델, 작업 디렉터리, MCP 서버, 스킬 켜기·끄기, 도구·도우미 설정, 대화 압축·보관 기간."
       },
       {
-        "key": "syncMcp",
+        "key": "syncExtensions",
         "type": "boolean",
-        "label": "MCP 서버",
-        "default": true,
-        "when": {
-          "key": "role",
-          "equals": "follower"
-        }
-      },
-      {
-        "key": "syncSkills",
-        "type": "boolean",
-        "label": "스킬 켜기·끄기",
-        "default": true,
-        "when": {
-          "key": "role",
-          "equals": "follower"
-        }
-      },
-      {
-        "key": "syncTools",
-        "type": "boolean",
-        "label": "도구·도우미 설정",
-        "default": true,
-        "when": {
-          "key": "role",
-          "equals": "follower"
-        },
-        "description": "꺼 둔 도구와 도우미, 위임 정책."
-      },
-      {
-        "key": "syncHistory",
-        "type": "boolean",
-        "label": "대화 압축·보관 기간",
-        "default": true,
-        "when": {
-          "key": "role",
-          "equals": "follower"
-        }
-      },
-      {
-        "key": "syncInstalled",
-        "type": "boolean",
-        "label": "설치된 확장",
+        "label": "확장",
         "default": false,
         "when": {
           "key": "role",
           "equals": "follower"
         },
-        "description": "기준 서버에 설치된 확장을 같은 버전으로 설치하고, 앱의 확장 목록과 켜기·끄기 상태도 맞춥니다(마켓플레이스에서 받음). 이 서버에만 있는 확장은 지우지 않습니다."
+        "description": "기준 서버에 설치된 확장을 같은 버전으로 설치하고, 앱의 확장 목록·켜기 상태와 확장 설정 값을 맞춥니다. 이 서버에만 있는 확장은 지우지 않습니다."
       },
       {
         "key": "syncLocalExtensions",
         "type": "boolean",
         "label": "직접 만든 확장도 복사",
         "default": false,
-        "description": "마켓플레이스에 없는 확장(직접 만들었거나 ~/.agents/extensions에 둔 것)은 기준 서버의 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요.",
         "when": {
-          "key": "syncInstalled",
+          "key": "syncExtensions",
           "equals": true
-        }
+        },
+        "description": "마켓플레이스에 없는 확장(직접 만들었거나 ~/.agents/extensions에 둔 것)은 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요."
       },
       {
-        "key": "syncExtensions",
+        "key": "syncAgent",
         "type": "boolean",
-        "label": "확장 설정 값",
+        "label": "스킬·도우미·AGENTS.md",
         "default": false,
-        "description": "확장들의 설정 값을 기준 서버와 맞춥니다. 토큰·비밀번호 같은 값은 가져오지 않고 이 서버 것을 그대로 둡니다. ‘설치된 확장’과 함께 켜면 확장과 설정이 함께 맞춰집니다.",
         "when": {
           "key": "role",
           "equals": "follower"
-        }
-      },
-      {
-        "key": "syncSkillFiles",
-        "type": "boolean",
-        "label": "스킬 파일",
-        "default": false,
-        "description": "~/.agents/skills의 스킬 폴더. 기준 서버에 있는 스킬은 내용을 똑같이 맞추고, 이 서버에만 있는 스킬은 그대로 둡니다.",
-        "when": {
-          "key": "role",
-          "equals": "follower"
-        }
-      },
-      {
-        "key": "syncSubagentFiles",
-        "type": "boolean",
-        "label": "도우미 역할 파일",
-        "default": false,
-        "description": "~/.agents/subagents의 역할 정의(.md).",
-        "when": {
-          "key": "role",
-          "equals": "follower"
-        }
-      },
-      {
-        "key": "syncAgentsMd",
-        "type": "boolean",
-        "label": "전역 AGENTS.md",
-        "default": false,
-        "description": "~/.agents/AGENTS.md. 모든 대화에 들어가는 기본 지침입니다.",
-        "when": {
-          "key": "role",
-          "equals": "follower"
-        }
+        },
+        "description": "~/.agents의 스킬 폴더, 도우미 역할(.md), 전역 AGENTS.md. 기준 서버에 있는 것은 똑같이 맞추고, 이 서버에만 있는 것은 그대로 둡니다."
       },
       {
         "key": "syncProviders",
         "type": "boolean",
-        "label": "모델 연결 (사용자 지정 제공자)",
+        "label": "모델 연결",
         "default": false,
-        "description": "주소와 모델 목록만 가져옵니다. API 키는 각 서버에서 따로 넣으세요.",
         "when": {
           "key": "role",
           "equals": "follower"
-        }
+        },
+        "description": "사용자 지정 제공자의 주소와 모델 목록."
+      },
+      {
+        "key": "syncSecrets",
+        "type": "boolean",
+        "label": "API 키·토큰도 가져오기",
+        "default": false,
+        "when": {
+          "key": "role",
+          "equals": "follower"
+        },
+        "description": "모델 API 키와 확장 설정의 토큰을 함께 가져옵니다. 이 서버에 이미 있는 값은 바꾸지 않습니다. 기준 서버에서도 ‘비밀값 내보내기 허용’이 켜져 있어야 합니다."
+      },
+      {
+        "key": "shareSecrets",
+        "type": "boolean",
+        "label": "비밀값 내보내기 허용",
+        "default": false,
+        "when": {
+          "key": "role",
+          "equals": "primary"
+        },
+        "description": "켜면 팔로워가 요청할 때 이 서버의 모델 API 키와 확장 토큰을 건네줍니다(로그인으로 연결한 계정은 제외). 팔로워가 내 서버일 때만 켜세요. 끄면 비밀값은 절대 나가지 않습니다."
       }
     ],
     "translations": {
@@ -211,33 +149,25 @@
         "팔로워 (설정을 받아옴)": "Follower (pulls settings)",
         "상대 서버 주소": "Primary server address",
         "기준 서버 주소. 아래에 연결 링크를 붙여넣으면 비워 둬도 됩니다.": "The primary's address. Leave it empty when you paste a connection link below.",
-        "기준 서버의 기기 탭 → [연결 링크 복사]로 받은 링크를 붙여넣고 저장하세요. 2분간 유효, 1회용.": "Paste the link from the primary's Devices tab → [Copy connection link], then save. Valid for 2 minutes, once.",
-        "기본 작업 디렉터리": "Default working directory",
-        "두 서버의 폴더 구조가 다르면 끄세요.": "Turn off when the two servers have different folders.",
-        "MCP 서버": "MCP servers",
-        "스킬 켜기·끄기": "Skills on/off",
-        "도구·도우미 설정": "Tools and helpers",
-        "꺼 둔 도구와 도우미, 위임 정책.": "Disabled tools and helpers, delegation policy.",
-        "대화 압축·보관 기간": "Compaction and retention",
         "연결 링크": "Connection link",
+        "기준 서버의 기기 탭 → [연결 링크 복사]로 받은 링크를 붙여넣고 저장하세요. 2분간 유효, 1회용.": "Paste the link from the primary's Devices tab → [Copy connection link], then save. Valid for 2 minutes, once.",
         "기준 서버에 보일 이름": "Name shown on the primary",
-        "기준 서버의 기기 탭에 이 이름으로 표시됩니다. 비우면 이 PC 이름과 주소를 씁니다. 연결할 때 적용됩니다.": "How the primary's Devices tab lists this server. Empty: this computer's name and address. Applied when connecting.",
         "예: 집 데스크톱": "e.g. Home desktop",
-        "모델 (기본·시스템·이미지)": "Models (default, system, image)",
-        "스킬 파일": "Skill files",
-        "~/.agents/skills의 스킬 폴더. 기준 서버에 있는 스킬은 내용을 똑같이 맞추고, 이 서버에만 있는 스킬은 그대로 둡니다.": "Skill folders in ~/.agents/skills. Skills on the primary are made identical; skills only here are kept.",
-        "도우미 역할 파일": "Helper role files",
-        "~/.agents/subagents의 역할 정의(.md).": "Role definitions (.md) in ~/.agents/subagents.",
-        "전역 AGENTS.md": "Global AGENTS.md",
-        "~/.agents/AGENTS.md. 모든 대화에 들어가는 기본 지침입니다.": "~/.agents/AGENTS.md, the instructions every conversation starts with.",
-        "모델 연결 (사용자 지정 제공자)": "Model providers (custom)",
-        "주소와 모델 목록만 가져옵니다. API 키는 각 서버에서 따로 넣으세요.": "Only the address and the model list. Enter the API key on each server.",
-        "설치된 확장": "Installed extensions",
-        "기준 서버에 설치된 확장을 같은 버전으로 설치하고, 앱의 확장 목록과 켜기·끄기 상태도 맞춥니다(마켓플레이스에서 받음). 이 서버에만 있는 확장은 지우지 않습니다.": "Installs the primary's extensions at the same version and matches the apps' extension list and on/off states (from the marketplace). Extensions only on this server are kept.",
+        "기준 서버의 기기 탭에 이 이름으로 표시됩니다. 비우면 이 PC 이름과 주소를 씁니다.": "How the primary's Devices tab lists this server. Empty: this computer's name and address.",
+        "앱 설정": "App settings",
+        "모델, 작업 디렉터리, MCP 서버, 스킬 켜기·끄기, 도구·도우미 설정, 대화 압축·보관 기간.": "Models, working directory, MCP servers, skills on/off, tool and helper settings, compaction and retention.",
+        "확장": "Extensions",
+        "기준 서버에 설치된 확장을 같은 버전으로 설치하고, 앱의 확장 목록·켜기 상태와 확장 설정 값을 맞춥니다. 이 서버에만 있는 확장은 지우지 않습니다.": "Installs the primary's extensions at the same version and matches the apps' extension list, on/off states and the extensions' settings values. Extensions only on this server are kept.",
         "직접 만든 확장도 복사": "Also copy extensions you made yourself",
-        "마켓플레이스에 없는 확장(직접 만들었거나 ~/.agents/extensions에 둔 것)은 기준 서버의 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요.": "Extensions that are not in the marketplace (made by you, or kept in ~/.agents/extensions) are copied from the primary as they are. It is code that runs inside this server: turn this on only if you trust the primary.",
-        "확장 설정 값": "Extension settings",
-        "확장들의 설정 값을 기준 서버와 맞춥니다. 토큰·비밀번호 같은 값은 가져오지 않고 이 서버 것을 그대로 둡니다. ‘설치된 확장’과 함께 켜면 확장과 설정이 함께 맞춰집니다.": "Matches the extensions' settings to the primary. Tokens, passwords and the like are never pulled; this server keeps its own. Turn it on with ‘Installed extensions’ to match both."
+        "마켓플레이스에 없는 확장(직접 만들었거나 ~/.agents/extensions에 둔 것)은 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요.": "Extensions not in the marketplace (made by you, or kept in ~/.agents/extensions) are copied as they are. It is code that runs inside this server: turn this on only if you trust the primary.",
+        "스킬·도우미·AGENTS.md": "Skills, helpers and AGENTS.md",
+        "~/.agents의 스킬 폴더, 도우미 역할(.md), 전역 AGENTS.md. 기준 서버에 있는 것은 똑같이 맞추고, 이 서버에만 있는 것은 그대로 둡니다.": "The skill folders, helper roles (.md) and global AGENTS.md in ~/.agents. What the primary has is made identical; what is only here stays.",
+        "모델 연결": "Model connections",
+        "사용자 지정 제공자의 주소와 모델 목록.": "Address and model list of custom providers.",
+        "API 키·토큰도 가져오기": "Also pull API keys and tokens",
+        "모델 API 키와 확장 설정의 토큰을 함께 가져옵니다. 이 서버에 이미 있는 값은 바꾸지 않습니다. 기준 서버에서도 ‘비밀값 내보내기 허용’이 켜져 있어야 합니다.": "Pulls model API keys and the tokens in extension settings. A value already on this server is never replaced. The primary must also have ‘Allow secrets to leave’ on.",
+        "비밀값 내보내기 허용": "Allow secrets to leave",
+        "켜면 팔로워가 요청할 때 이 서버의 모델 API 키와 확장 토큰을 건네줍니다(로그인으로 연결한 계정은 제외). 팔로워가 내 서버일 때만 켜세요. 끄면 비밀값은 절대 나가지 않습니다.": "When on, this server hands its model API keys and extension tokens to a follower that asks (accounts connected by login are excluded). Turn it on only when the follower is your own server. Off: no secret ever leaves."
       }
     }
   },
