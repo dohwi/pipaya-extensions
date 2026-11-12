@@ -77,6 +77,7 @@ beforeAll(() => {
 			if (key) { sql(F.db, "INSERT OR REPLACE INTO client_settings (key, data, updated_at) VALUES (?, ?, ?)", key, JSON.stringify((body as { value: unknown }).value), Date.now()); return Response.json({ applied: true }); }
 			const provider = url.pathname.match(/^\/configuration\/providers\/([a-z0-9_-]+)$/)?.[1];
 			if (provider) { sql(F.db, "INSERT OR REPLACE INTO custom_providers (id, data) VALUES (?, ?)", provider, JSON.stringify({ ...(body as object), id: provider })); return Response.json({}); }
+			if (url.pathname === "/server-extensions/reload") return Response.json({ extensions: [] });
 			if (url.pathname === "/server-extensions/install") {
 				const b = body as { id: string };
 				write(join(F.data, "extensions", b.id, "package.json"), JSON.stringify({ version: "0.2.3" }));
@@ -218,5 +219,50 @@ describe("what the primary sees and what a peer cannot do", () => {
 		} finally {
 			pairing.stop(true);
 		}
+	});
+});
+
+describe("extensions that are not in the marketplace", () => {
+	test("are reported, not copied, until their own box is checked; then their code comes over with this server's settings kept", async () => {
+		write(join(P.data, "extensions", "my-tool", "package.json"), JSON.stringify({ version: "0.1.0", pipaya: { title: "My tool" } }));
+		write(join(P.data, "extensions", "my-tool", "index.ts"), "export default (pi) => pi.log('primary build');");
+		write(join(P.data, "extensions", "my-tool", "lib", "util.ts"), "export const x = 1;");
+		write(join(P.data, "extensions", "my-tool", "settings.json"), JSON.stringify({ mode: "primary" }));
+		write(join(P.data, "extensions", "my-tool", "node_modules", "dep", "index.js"), "never copied");
+		write(join(F.data, "extensions", "my-tool", "settings.json"), JSON.stringify({ mode: "mine" }));
+
+		const off = follower({ syncServerExtensions: true });
+		const r1 = await off.sync();
+		expect(r1.applied).not.toContain("srv:my-tool");
+		expect(existsSync(join(F.data, "extensions", "my-tool", "index.ts"))).toBe(false);
+
+		calls.length = 0;
+		const on = follower({ syncServerExtensions: true, syncLocalExtensions: true });
+		const r2 = await on.sync();
+		expect(r2.applied).toContain("srv:my-tool");
+		expect(readFileSync(join(F.data, "extensions", "my-tool", "index.ts"), "utf8")).toContain("primary build");
+		expect(readFileSync(join(F.data, "extensions", "my-tool", "lib", "util.ts"), "utf8")).toContain("x = 1");
+		expect(JSON.parse(readFileSync(join(F.data, "extensions", "my-tool", "settings.json"), "utf8"))).toEqual({ mode: "mine" });
+		expect(existsSync(join(F.data, "extensions", "my-tool", "node_modules"))).toBe(false);
+		expect(calls.some((c) => c.path === "/server-extensions/reload")).toBe(true);
+		// The same code again: nothing to copy, nothing to reload.
+		calls.length = 0;
+		expect((await on.sync()).applied).not.toContain("srv:my-tool");
+		expect(calls.some((c) => c.path === "/server-extensions/reload")).toBe(false);
+	});
+
+	test("~/.agents/extensions comes along with the same box, files and folders", async () => {
+		write(join(P.home, ".agents", "extensions", "korean.ts"), "export default () => {};");
+		write(join(P.home, ".agents", "extensions", "tools", "index.ts"), "export default () => {};");
+		const off = follower({ syncServerExtensions: true });
+		expect((await off.sync()).applied.some((k) => k.startsWith("agent-ext:"))).toBe(false);
+		const on = follower({ syncServerExtensions: true, syncLocalExtensions: true });
+		const res = await on.sync();
+		expect(res.applied).toEqual(expect.arrayContaining(["agent-ext:korean", "agent-ext:tools"]));
+		expect(existsSync(join(F.home, ".agents", "extensions", "korean.ts"))).toBe(true);
+		// The copy box without the install box means nothing.
+		const alone = follower({ syncLocalExtensions: true });
+		rmSync(join(F.home, ".agents", "extensions"), { recursive: true, force: true });
+		expect((await alone.sync()).applied.some((k) => k.startsWith("agent-ext:"))).toBe(false);
 	});
 });

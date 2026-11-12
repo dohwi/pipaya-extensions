@@ -32,6 +32,7 @@ A follower's form has one box per group; an unchecked group keeps this server's 
 | 도구·도우미 설정 | `disabled_tools`, `disabled_subagents`, `delegate_policy` | on |
 | 대화 압축·보관 기간 | `compaction`, `retention` | on |
 | 서버 확장 설치 | server extensions in `<dataDir>/extensions`, installed at the primary's version | **off** |
+| └ 마켓플레이스에 없는 확장도 복사 | the code of those not in the marketplace, and `~/.agents/extensions` | **off** |
 | 확장 설정 | every extension's `settings.json` on the primary | **off** |
 | 클라이언트 확장 목록 | `client_settings` rows `extensions`, `extensionStates` | **off** |
 | 스킬 파일 | folders in `~/.agents/skills` | **off** |
@@ -53,8 +54,12 @@ The boxes after it make the follower match what is installed, never by removing 
 
 - **서버 확장 설치**: the primary lists its server extensions and versions; the follower installs each one it lacks
   (or has at another version) from the marketplace's pinned git source through its own `POST /server-extensions/install`.
-  One not in the marketplace at that version (a hand-copied build) is logged and skipped. This extension is never
-  installed, updated or removed this way, and an extension only on the follower stays.
+  One not in the marketplace at that version (made by hand, or a newer local build) is shown on the page and skipped,
+  unless **마켓플레이스에 없는 확장도 복사** is checked: then its files come from the primary as they are (text files,
+  no `node_modules`, without its `settings.json`/`settings.at`, which stay this server's own), are swapped in whole and
+  loaded with `POST /server-extensions/reload`. The same box copies `~/.agents/extensions` (the owner's own extension
+  files and folders). That code runs inside this server unreviewed: check it only for a primary you trust. This
+  extension is never installed, updated or removed this way, and an extension only on the follower stays.
 - **클라이언트 확장 목록**: the apps' client extension list and on/off states, written through `PUT /client-settings/:key`
   so open apps reload them.
 - **스킬 파일**: each skill folder on the primary is made identical here (text files up to 512 KB, 200 files and 2 MB per

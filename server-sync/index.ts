@@ -71,7 +71,7 @@ interface Snapshot {
 }
 
 /** One installed server extension: enough for the follower to install the same version from the marketplace. */
-interface InstalledExtension { id: string; version: string }
+interface InstalledExtension { id: string; version: string; /** The code itself, only when the follower asked for unlisted ones */ files?: FileSet }
 /** Files of a folder, by path inside it. */
 type FileSet = Record<string, string>;
 /** What a primary sends besides settings rows. Never a secret: see each reader. */
@@ -82,6 +82,8 @@ interface Environment {
 	subagents?: FileSet;
 	agentsMd?: string | null;
 	providers?: Record<string, Record<string, unknown>>;
+	/** `~/.agents/extensions`: the owner's own extensions, single files and folders. */
+	agentExtensions?: { files: FileSet; folders: Record<string, FileSet> };
 }
 /** The environment parts a follower can ask for, by the settings box that turns each on. */
 const PARTS = {
@@ -91,12 +93,15 @@ const PARTS = {
 	subagents: "syncSubagentFiles",
 	agentsMd: "syncAgentsMd",
 	providers: "syncProviders",
+	agentExtensions: "syncLocalExtensions",
 } as const;
 type Part = keyof typeof PARTS;
 /** Where the marketplace lists each extension's pinned git source. */
 const CATALOG_URL = "https://raw.githubusercontent.com/dohwi/pipaya-marketplace/main/index.json";
 /** Bounds on what a folder copy may carry: a skill is a few text files, not a repository. */
 const FOLDER_LIMITS = { files: 200, bytes: 2 * 1024 * 1024, file: 512 * 1024 };
+/** An extension's own runtime files: never part of its code (settings travel with 확장 설정, the rest is per server). */
+const EXTENSION_RUNTIME = new Set(["settings.json", "settings.at"]);
 
 interface Status {
 	role: "primary" | "follower";
@@ -210,17 +215,17 @@ function readFiles(dir: string, match: RegExp): FileSet {
  * Every sub-folder of `root` as path -> text, within FOLDER_LIMITS. Symlinks are not followed and binary files are left
  * out: a skill is instructions and small scripts.
  */
-function readFolders(root: string): Record<string, FileSet> {
+function readFolders(root: string, only?: string): Record<string, FileSet> {
 	const out: Record<string, FileSet> = {};
 	if (!existsSync(root)) return out;
 	for (const e of readdirSync(root, { withFileTypes: true })) {
-		if (!e.isDirectory() || !SAFE_NAME.test(e.name)) continue;
+		if (!e.isDirectory() || !SAFE_NAME.test(e.name) || (only !== undefined && e.name !== only)) continue;
 		const files: FileSet = {};
 		let count = 0;
 		let bytes = 0;
 		const walk = (dir: string) => {
 			for (const f of readdirSync(dir, { withFileTypes: true })) {
-				if (!SAFE_NAME.test(f.name) || count >= FOLDER_LIMITS.files) continue;
+				if (!SAFE_NAME.test(f.name) || f.name === "node_modules" || count >= FOLDER_LIMITS.files) continue;
 				const path = join(dir, f.name);
 				if (f.isDirectory()) { walk(path); continue; }
 				if (!f.isFile()) continue;
@@ -307,6 +312,8 @@ const hashOf = (settings: Record<string, unknown>) =>
 export default (pi: any) => {
 	let db: Database | undefined;
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	/** Extensions the primary has that could not be installed here (not in the marketplace, copying not allowed). */
+	let unlisted: string[] = [];
 	/** When the pull timer fires next, for the page. */
 	let nextPullAt = 0;
 	let busy = false;
@@ -458,6 +465,7 @@ export default (pi: any) => {
 		if (kind === "helper") return { ko: `도우미 역할: ${rest}`, en: `Helper role: ${rest}` };
 
 		if (kind === "provider") return { ko: `모델 연결: ${rest}`, en: `Model provider: ${rest}` };
+		if (kind === "agent-ext") return { ko: `내 확장(~/.agents/extensions): ${rest}`, en: `Own extension (~/.agents/extensions): ${rest}` };
 		if (k === "agents-md") return { ko: "전역 AGENTS.md", en: "Global AGENTS.md" };
 		return KEY_LABEL[k] ?? { ko: k, en: k };
 	};
@@ -522,6 +530,9 @@ export default (pi: any) => {
 			] });
 		}
 		if (lastError) children.push({ type: "alert", id: "error", tone: "danger", title: errorTitle(lastError), text: lastError });
+		if (token && unlisted.length && settings().syncServerExtensions === true) children.push({ type: "alert", id: "unlisted", tone: "warning",
+			title: { ko: "마켓플레이스에 없는 서버 확장은 설치하지 않았습니다", en: "Server extensions not in the marketplace were not installed" },
+			text: { ko: `${unlisted.join(", ")} — 기준 서버에서 복사하려면 아래 ‘마켓플레이스에 없는 확장도 복사’를 켜세요.`, en: `${unlisted.join(", ")} — to copy them from the primary, turn on ‘Also copy extensions not in the marketplace’ below.` } });
 		if (token && lastApplied.length) {
 			children.push({ type: "text", id: "changed-title", size: "small", text: { ko: "지난번에 바뀐 항목", en: "Changed last time" } });
 			children.push({ type: "list", id: "changed", items: lastApplied.slice(0, 20).map((k, i) => ({ id: `k${i}`, title: keyLabel(k) })) });
@@ -555,7 +566,14 @@ export default (pi: any) => {
 		// Only when the follower asks: most never want them, and they are the bulkiest part.
 		if (plain(params) && params.extensions === true) snap.extensions = allExtensionSettings();
 		const asked = plain(params) && Array.isArray(params.parts) ? params.parts.filter((p): p is Part => typeof p === "string" && p in PARTS) : [];
+		// The code of extensions, for those the follower cannot get from the marketplace: only the ids it names.
+		const codeOf = plain(params) && Array.isArray(params.codeOf) ? params.codeOf.filter((x): x is string => typeof x === "string" && EXTENSION_ID.test(x) && x !== SELF_ID).slice(0, 50) : [];
 		if (asked.length) snap.environment = readEnvironment(asked);
+		if (codeOf.length) {
+			const env = (snap.environment ??= {});
+			const list = env.serverExtensions ?? installedServerExtensions();
+			env.serverExtensions = list.map((e) => (codeOf.includes(e.id) ? { ...e, files: extensionFiles(e.id) } : e));
+		}
 		return snap;
 	});
 
@@ -571,6 +589,10 @@ export default (pi: any) => {
 				else if (part === "subagents") env.subagents = readFiles(join(home, ".agents", "subagents"), /\.md$/);
 				else if (part === "agentsMd") env.agentsMd = readText(join(home, ".agents", "AGENTS.md"));
 				else if (part === "providers") env.providers = providerRows();
+				else if (part === "agentExtensions") {
+					const dir = join(home, ".agents", "extensions");
+					env.agentExtensions = { files: readFiles(dir, /\.(ts|js|mjs)$/), folders: readFolders(dir) };
+				}
 			} catch (e) {
 				log(`snapshot ${part}: ${e instanceof Error ? e.message : String(e)}`);
 			}
@@ -591,6 +613,12 @@ export default (pi: any) => {
 			} catch { /* a folder that only holds settings: not an installed extension */ }
 		}
 		return out;
+	};
+
+	/** An installed extension's code as text files, without its settings and without anything hidden or binary. */
+	const extensionFiles = (id: string): FileSet => {
+		const all = readFolders(join(dataDir(), "extensions"), id)[id] ?? {};
+		return Object.fromEntries(Object.entries(all).filter(([path]) => !EXTENSION_RUNTIME.has(path)));
 	};
 
 	/** The client extensions this server keeps for its apps (`client_settings`): the list and which are on. */
@@ -723,7 +751,8 @@ export default (pi: any) => {
 		const { url, token } = cfg();
 		if (!url || !token) throw new Error("set the peer server URL and its admin token first");
 		const withExtensions = syncExtensions();
-		const parts = (Object.keys(PARTS) as Part[]).filter((p) => settings()[PARTS[p]] === true);
+		// Copying unlisted code is a sub-option of installing server extensions: it means nothing without it.
+		const parts = (Object.keys(PARTS) as Part[]).filter((p) => settings()[PARTS[p]] === true && (p !== "agentExtensions" || settings().syncServerExtensions === true));
 		const res = await fetch(`${url}/server-extensions/server-sync/methods/snapshot`, {
 			method: "POST",
 			headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -742,7 +771,20 @@ export default (pi: any) => {
 		// Server extensions first: a pulled extension's settings need the extension installed to mean anything.
 		// A primary older than 0.10.0 sends no environment: nothing to do, not an error.
 		const env = plain(body.result?.environment) ? (body.result.environment as Environment) : {};
-		if (parts.includes("serverExtensions") && Array.isArray(env.serverExtensions)) changed.push(...(await applyServerExtensions(env.serverExtensions)));
+		if (parts.includes("serverExtensions") && Array.isArray(env.serverExtensions)) {
+			const fetchCode = async (ids: string[]): Promise<InstalledExtension[]> => {
+				const r = await fetch(`${url}/server-extensions/server-sync/methods/snapshot`, {
+					method: "POST",
+					headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+					body: JSON.stringify({ codeOf: ids }),
+					signal: AbortSignal.timeout(30_000),
+				});
+				if (!r.ok) throw new Error(`the peer answered ${r.status} when asked for extension code`);
+				const b = (await r.json()) as { result?: { environment?: { serverExtensions?: unknown } } };
+				return Array.isArray(b.result?.environment?.serverExtensions) ? (b.result.environment.serverExtensions as InstalledExtension[]) : [];
+			};
+			changed.push(...(await applyServerExtensions(env.serverExtensions, fetchCode)));
+		}
 		// A primary older than 0.8.0 sends no extensions: nothing to do, not an error.
 		if (withExtensions && plain(body.result?.extensions)) changed.push(...(await applyExtensions(body.result.extensions)));
 		const home = typeof pi.home === "string" && pi.home ? pi.home : homedir();
@@ -751,6 +793,19 @@ export default (pi: any) => {
 		if (parts.includes("subagents") && plain(env.subagents)) changed.push(...applyFiles(join(home, ".agents", "subagents"), env.subagents as FileSet, /\.md$/, "helper"));
 		if (parts.includes("agentsMd") && "agentsMd" in env) changed.push(...applyText(join(home, ".agents", "AGENTS.md"), env.agentsMd ?? null, "agents-md"));
 		if (parts.includes("providers") && plain(env.providers)) changed.push(...(await applyProviders(env.providers as Record<string, Record<string, unknown>>)));
+		if (parts.includes("agentExtensions") && plain(env.agentExtensions)) {
+			const dir = join(home, ".agents", "extensions");
+			const a = env.agentExtensions as { files?: unknown; folders?: unknown };
+			const copied = [
+				...(plain(a.files) ? applyFiles(dir, a.files as FileSet, /\.(ts|js|mjs)$/, "agent-ext") : []),
+				...(plain(a.folders) ? applyFolders(dir, a.folders as Record<string, FileSet>, "agent-ext") : []),
+			];
+			if (copied.length) {
+				const res = await own("POST", "/server-extensions/reload", {});
+				if (!res.ok) throw new Error(`copied ~/.agents/extensions from the primary, but this server could not reload them (${res.status})`);
+			}
+			changed.push(...copied);
+		}
 		return changed;
 	};
 
@@ -772,24 +827,64 @@ export default (pi: any) => {
 	 * Install what the primary has and this server lacks (or has at another version), from the marketplace's pinned git
 	 * source, through this server's own install route. Never removes one: an extension only here stays.
 	 */
-	const applyServerExtensions = async (theirs: InstalledExtension[]): Promise<string[]> => {
-		const mine = new Map(installedServerExtensions().map((e) => [e.id, e.version]));
+	const applyServerExtensions = async (theirs: InstalledExtension[], fetchCode: (ids: string[]) => Promise<InstalledExtension[]>): Promise<string[]> => {
+		const mineList = installedServerExtensions();
+		const mine = new Map(mineList.map((e) => [e.id, e.version]));
 		const wanted = theirs.filter((e) => plain(e) && typeof e.id === "string" && EXTENSION_ID.test(e.id) && e.id !== SELF_ID && typeof e.version === "string" && mine.get(e.id) !== e.version);
-		if (!wanted.length) return [];
-		const catalog = await fetchCatalog();
+		if (!wanted.length) { unlisted = []; return []; }
+		let catalog: Record<string, any>[] = [];
+		try { catalog = await fetchCatalog(); } catch (e) { log(`marketplace: ${e instanceof Error ? e.message : String(e)}`); }
 		const changed: string[] = [];
-		const missing: string[] = [];
+		const missing: InstalledExtension[] = [];
 		for (const e of wanted) {
 			const entry = catalog.find((c) => c.id === e.id && c.kind === "server" && c.version === e.version && plain(c.source) && c.source.type === "git");
-			if (!entry) { missing.push(`${e.id} ${e.version}`); continue; }
+			if (!entry) { missing.push(e); continue; }
 			const { repo, dir, ref, commit, host } = entry.source as Record<string, string>;
 			const res = await own("POST", "/server-extensions/install", { id: e.id, repo, ref, commit, ...(dir ? { dir } : {}), ...(host ? { host } : {}) });
 			if (!res.ok) throw new Error(`pulled from the primary, but could not install ${e.id} ${e.version} on this server (${res.status}: ${(await res.text()).slice(0, 200)})`);
 			changed.push(`srv:${e.id}`);
 		}
-		// Not in the marketplace at that version (a hand-copied or newer local build): say so, the rest still applies.
-		if (missing.length) log(`not in the marketplace, install by hand: ${missing.join(", ")}`);
+		// Not in the marketplace at that version (a hand-made or newer local build): its code comes from the primary, but
+		// only with its own box checked, since it is code nobody reviewed that runs inside this server.
+		if (missing.length && settings().syncLocalExtensions === true) {
+			const withCode = await fetchCode(missing.map((e) => e.id));
+			let copied = false;
+			for (const e of withCode) {
+				if (!plain(e) || !missing.some((m) => m.id === e.id) || !plain(e.files) || !Object.keys(e.files).length) continue;
+				if (copyExtension(e.id, e.files as FileSet)) { changed.push(`srv:${e.id}`); copied = true; }
+			}
+			// The server loads extensions from disk on reload: the copied code starts now.
+			if (copied) {
+				const res = await own("POST", "/server-extensions/reload", {});
+				if (!res.ok) throw new Error(`copied extensions from the primary, but this server could not reload them (${res.status})`);
+			}
+			unlisted = [];
+		} else {
+			unlisted = missing.map((e) => `${e.id} ${e.version}`);
+			if (unlisted.length) log(`not in the marketplace: ${unlisted.join(", ")} (check 마켓플레이스에 없는 확장도 복사 to copy them)`);
+		}
 		return changed;
+	};
+
+	/**
+	 * Replace this server's copy of one extension with the primary's files, keeping its settings. Written next to it and
+	 * swapped in, so a half-written copy is never loaded. Returns whether anything changed.
+	 */
+	const copyExtension = (id: string, files: FileSet): boolean => {
+		const root = join(dataDir(), "extensions");
+		const to = join(root, id);
+		const current = existsSync(to) ? extensionFiles(id) : {};
+		const incoming = Object.fromEntries(Object.entries(files).filter(([path, text]) => safePath(path) && !EXTENSION_RUNTIME.has(path) && typeof text === "string" && text.length <= FOLDER_LIMITS.file));
+		if (!Object.keys(incoming).some((p) => p === "package.json")) return false;
+		if (JSON.stringify(Object.keys(current).sort().map((k) => [k, current[k]])) === JSON.stringify(Object.keys(incoming).sort().map((k) => [k, incoming[k]]))) return false;
+		try { if (lstatSync(to).isSymbolicLink()) return false; } catch { /* not there yet */ }
+		const staging = `${to}.syncing`;
+		rmSync(staging, { recursive: true, force: true });
+		for (const [path, text] of Object.entries(incoming)) writeIfChanged(join(staging, ...path.split("/")), text);
+		for (const keep of EXTENSION_RUNTIME) if (existsSync(join(to, keep))) writeFileSync(join(staging, keep), readFileSync(join(to, keep)));
+		rmSync(to, { recursive: true, force: true });
+		renameSync(staging, to);
+		return true;
 	};
 	let catalogCache: { at: number; list: Record<string, any>[] } | null = null;
 	const fetchCatalog = async (): Promise<Record<string, any>[]> => {
