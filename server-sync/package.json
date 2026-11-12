@@ -1,14 +1,14 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.11.0",
-  "description": "Mirrors a primary pipaya server onto this one: settings, and optionally installed server and client extensions, extension settings, skills, helper roles, AGENTS.md and model providers (secrets never leave the primary).",
+  "version": "0.12.0",
+  "description": "Makes a pipaya server match another: its settings and, box by box, installed extensions, extension settings, skill files, helper roles, AGENTS.md and model providers (secrets never leave the primary).",
   "license": "MIT",
   "author": "dohwi",
   "pipaya": {
     "title": "Server Sync",
     "descriptions": {
-      "en": "Makes this server match a primary pipaya server. Connect with the link from the primary's Devices tab, then pick what to pull: settings (models, workdir, MCP, skills on/off, tools, history), installed server and client extensions with their settings, skill files, helper roles, AGENTS.md and model providers. Tokens, passwords and API keys never leave the primary.",
-      "ko": "이 서버를 기준 서버와 똑같이 맞춥니다. 기준 서버의 기기 탭에서 받은 연결 링크로 연결하고, 가져올 항목을 고르세요. 설정(모델·작업 디렉터리·MCP·스킬 켜기/끄기·도구·대화 보관)뿐 아니라 설치된 서버·클라이언트 확장과 그 설정, 스킬 파일, 도우미 역할, AGENTS.md, 모델 연결까지 가져올 수 있습니다. 토큰·비밀번호·API 키는 넘어오지 않습니다."
+      "en": "Makes this server match a primary pipaya server. Connect with the link from the primary's Devices tab, then pick what to pull: settings (models, workdir, MCP, skills on/off, tools, history), installed extensions with their settings, skill files, helper roles, AGENTS.md and model providers. Tokens, passwords and API keys never leave the primary.",
+      "ko": "이 서버를 기준 서버와 똑같이 맞춥니다. 기준 서버의 기기 탭에서 받은 연결 링크로 연결하고, 가져올 항목을 고르세요. 설정(모델·작업 디렉터리·MCP·스킬 켜기/끄기·도구·대화 보관)뿐 아니라 설치된 확장과 그 설정, 스킬 파일, 도우미 역할, AGENTS.md, 모델 연결까지 가져올 수 있습니다. 토큰·비밀번호·API 키는 넘어오지 않습니다."
     },
     "settings": [
       {
@@ -126,44 +126,33 @@
         }
       },
       {
-        "key": "syncServerExtensions",
+        "key": "syncInstalled",
         "type": "boolean",
-        "label": "서버 확장 설치",
+        "label": "설치된 확장",
         "default": false,
-        "description": "기준 서버에 설치된 서버 확장을 같은 버전으로 설치합니다(마켓플레이스에서 받음). 이 서버에만 있는 확장은 지우지 않습니다.",
         "when": {
           "key": "role",
           "equals": "follower"
-        }
+        },
+        "description": "기준 서버에 설치된 확장을 같은 버전으로 설치하고, 앱의 확장 목록과 켜기·끄기 상태도 맞춥니다(마켓플레이스에서 받음). 이 서버에만 있는 확장은 지우지 않습니다."
       },
       {
         "key": "syncLocalExtensions",
         "type": "boolean",
-        "label": "마켓플레이스에 없는 확장도 복사",
+        "label": "직접 만든 확장도 복사",
         "default": false,
-        "description": "직접 만들었거나 마켓플레이스에 없는 서버 확장은 기준 서버의 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요.",
+        "description": "마켓플레이스에 없는 확장(직접 만들었거나 ~/.agents/extensions에 둔 것)은 기준 서버의 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요.",
         "when": {
-          "key": "syncServerExtensions",
+          "key": "syncInstalled",
           "equals": true
         }
       },
       {
         "key": "syncExtensions",
         "type": "boolean",
-        "label": "확장 설정",
+        "label": "확장 설정 값",
         "default": false,
-        "description": "설치된 확장들의 설정값. 토큰·비밀번호 같은 값은 가져오지 않고 이 서버 것을 그대로 둡니다.",
-        "when": {
-          "key": "role",
-          "equals": "follower"
-        }
-      },
-      {
-        "key": "syncClientExtensions",
-        "type": "boolean",
-        "label": "클라이언트 확장 목록",
-        "default": false,
-        "description": "앱에 설치된 클라이언트 확장과 켜기·끄기 상태. 이 서버에 접속한 앱이 같은 확장을 씁니다.",
+        "description": "확장들의 설정 값을 기준 서버와 맞춥니다. 토큰·비밀번호 같은 값은 가져오지 않고 이 서버 것을 그대로 둡니다. ‘설치된 확장’과 함께 켜면 확장과 설정이 함께 맞춰집니다.",
         "when": {
           "key": "role",
           "equals": "follower"
@@ -230,16 +219,11 @@
         "도구·도우미 설정": "Tools and helpers",
         "꺼 둔 도구와 도우미, 위임 정책.": "Disabled tools and helpers, delegation policy.",
         "대화 압축·보관 기간": "Compaction and retention",
-        "확장 설정": "Extension settings",
-        "설치된 확장들의 설정값. 토큰·비밀번호 같은 값은 가져오지 않고 이 서버 것을 그대로 둡니다.": "Settings of the installed extensions. Tokens, passwords and the like are never pulled; this server keeps its own.",
         "연결 링크": "Connection link",
         "기준 서버에 보일 이름": "Name shown on the primary",
         "기준 서버의 기기 탭에 이 이름으로 표시됩니다. 비우면 이 PC 이름과 주소를 씁니다. 연결할 때 적용됩니다.": "How the primary's Devices tab lists this server. Empty: this computer's name and address. Applied when connecting.",
         "예: 집 데스크톱": "e.g. Home desktop",
         "모델 (기본·시스템·이미지)": "Models (default, system, image)",
-        "서버 확장 설치": "Install server extensions",
-        "클라이언트 확장 목록": "Client extensions",
-        "앱에 설치된 클라이언트 확장과 켜기·끄기 상태. 이 서버에 접속한 앱이 같은 확장을 씁니다.": "The client extensions installed for the apps and whether each is on. Apps connected to this server get the same ones.",
         "스킬 파일": "Skill files",
         "~/.agents/skills의 스킬 폴더. 기준 서버에 있는 스킬은 내용을 똑같이 맞추고, 이 서버에만 있는 스킬은 그대로 둡니다.": "Skill folders in ~/.agents/skills. Skills on the primary are made identical; skills only here are kept.",
         "도우미 역할 파일": "Helper role files",
@@ -248,9 +232,12 @@
         "~/.agents/AGENTS.md. 모든 대화에 들어가는 기본 지침입니다.": "~/.agents/AGENTS.md, the instructions every conversation starts with.",
         "모델 연결 (사용자 지정 제공자)": "Model providers (custom)",
         "주소와 모델 목록만 가져옵니다. API 키는 각 서버에서 따로 넣으세요.": "Only the address and the model list. Enter the API key on each server.",
-        "마켓플레이스에 없는 확장도 복사": "Also copy extensions not in the marketplace",
-        "직접 만들었거나 마켓플레이스에 없는 서버 확장은 기준 서버의 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요.": "Server extensions you made yourself, or that are not in the marketplace, are copied from the primary as they are. It is code that runs inside this server: turn this on only if you trust the primary.",
-        "기준 서버에 설치된 서버 확장을 같은 버전으로 설치합니다(마켓플레이스에서 받음). 이 서버에만 있는 확장은 지우지 않습니다.": "Installs the primary's server extensions at the same version, from the marketplace. Extensions only on this server are kept."
+        "설치된 확장": "Installed extensions",
+        "기준 서버에 설치된 확장을 같은 버전으로 설치하고, 앱의 확장 목록과 켜기·끄기 상태도 맞춥니다(마켓플레이스에서 받음). 이 서버에만 있는 확장은 지우지 않습니다.": "Installs the primary's extensions at the same version and matches the apps' extension list and on/off states (from the marketplace). Extensions only on this server are kept.",
+        "직접 만든 확장도 복사": "Also copy extensions you made yourself",
+        "마켓플레이스에 없는 확장(직접 만들었거나 ~/.agents/extensions에 둔 것)은 기준 서버의 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요.": "Extensions that are not in the marketplace (made by you, or kept in ~/.agents/extensions) are copied from the primary as they are. It is code that runs inside this server: turn this on only if you trust the primary.",
+        "확장 설정 값": "Extension settings",
+        "확장들의 설정 값을 기준 서버와 맞춥니다. 토큰·비밀번호 같은 값은 가져오지 않고 이 서버 것을 그대로 둡니다. ‘설치된 확장’과 함께 켜면 확장과 설정이 함께 맞춰집니다.": "Matches the extensions' settings to the primary. Tokens, passwords and the like are never pulled; this server keeps its own. Turn it on with ‘Installed extensions’ to match both."
       }
     }
   },
