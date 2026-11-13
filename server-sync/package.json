@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Keeps two pipaya servers in step, both ways: app settings, extensions with their settings, skills/helpers/AGENTS.md, and model connections. The primary wins a conflict. Secrets only when both sides allow it.",
   "license": "MIT",
   "author": "dohwi",
@@ -72,7 +72,18 @@
           "key": "role",
           "equals": "follower"
         },
-        "description": "모델, 작업 디렉터리, MCP 서버, 스킬 켜기·끄기, 도구·도우미 설정, 대화 압축·보관 기간. 여기서 바꿔도 기준 서버에 반영됩니다."
+        "description": "모델, 작업 디렉터리, 스킬 켜기·끄기, 도구·도우미 설정, 대화 압축·보관 기간. 여기서 바꿔도 기준 서버에 반영됩니다. 작업 디렉터리는 그 폴더가 이 PC에도 있을 때만 맞춥니다."
+      },
+      {
+        "key": "syncMcpServers",
+        "type": "boolean",
+        "label": "MCP 서버도 맞추기",
+        "default": true,
+        "when": {
+          "key": "syncApp",
+          "equals": true
+        },
+        "description": "MCP 서버 목록도 맞춥니다. 이 PC에 설치된 프로그램으로 실행하는 MCP가 있어서 PC마다 다르게 두려면 끄세요."
       },
       {
         "key": "syncExtensions",
@@ -164,10 +175,12 @@
         "비밀값 내보내기 허용": "Allow secrets to leave",
         "켜면 팔로워가 요청할 때 이 서버의 모델 API 키와 확장 토큰을 건네줍니다(로그인으로 연결한 계정은 제외). 팔로워가 내 서버일 때만 켜세요. 끄면 비밀값은 절대 나가지 않습니다.": "When on, this server hands its model API keys and extension tokens to a follower that asks (accounts connected by login are excluded). Turn it on only when the follower is your own server. Off: no secret ever leaves.",
         "기준: 팔로워와 설정을 맞추고, 양쪽에서 같은 항목을 바꾸면 이 서버 값이 이깁니다. 팔로워: 아래에 체크한 항목을 기준 서버와 양방향으로 맞춥니다.": "Primary: keeps followers in step; when both changed the same item, this server wins. Follower: keeps the boxes checked below in step with the primary, both ways.",
-        "모델, 작업 디렉터리, MCP 서버, 스킬 켜기·끄기, 도구·도우미 설정, 대화 압축·보관 기간. 여기서 바꿔도 기준 서버에 반영됩니다.": "Models, working directory, MCP servers, skills on/off, tools and helpers, compaction and retention. A change made here reaches the primary too.",
         "기준 서버에 설치된 확장을 같은 버전으로 설치하고, 앱의 확장 목록·켜기 상태와 확장 설정 값을 맞춥니다. 확장 설정 값은 여기서 바꿔도 기준 서버에 반영됩니다(토큰·키 제외). 이 서버에만 있는 확장은 지우지 않습니다.": "Installs the primary's extensions at the same version and matches the apps' extension list, on/off states and extension settings. Settings changed here reach the primary too (never tokens or keys). An extension only here is never removed.",
         "~/.agents의 스킬 폴더, 도우미 역할(.md), 전역 AGENTS.md. 어느 쪽에서 고치거나 새로 만들어도 다른 쪽에 반영됩니다. 처음 연결할 때는 기준 서버 것으로 맞추고, 이 서버에만 있던 것은 그대로 둡니다.": "Skill folders, helper roles (.md) and the global AGENTS.md in ~/.agents. An edit or a new one on either side reaches the other. On the first sync the primary's are taken, and what was only here stays here.",
-        "사용자 지정 제공자의 주소와 모델 목록. 여기서 바꿔도 기준 서버에 반영됩니다(API 키 제외).": "Address and models of custom providers. A change made here reaches the primary too (never the API key)."
+        "사용자 지정 제공자의 주소와 모델 목록. 여기서 바꿔도 기준 서버에 반영됩니다(API 키 제외).": "Address and models of custom providers. A change made here reaches the primary too (never the API key).",
+        "모델, 작업 디렉터리, 스킬 켜기·끄기, 도구·도우미 설정, 대화 압축·보관 기간. 여기서 바꿔도 기준 서버에 반영됩니다. 작업 디렉터리는 그 폴더가 이 PC에도 있을 때만 맞춥니다.": "Models, working directory, skills on/off, tools and helpers, compaction and retention. A change made here reaches the primary too. The working directory is matched only when that folder exists on this PC.",
+        "MCP 서버도 맞추기": "Also match MCP servers",
+        "MCP 서버 목록도 맞춥니다. 이 PC에 설치된 프로그램으로 실행하는 MCP가 있어서 PC마다 다르게 두려면 끄세요.": "Matches the MCP server list too. Turn it off to keep a different list per PC (an MCP that runs a program installed on one PC only)."
       }
     }
   },
