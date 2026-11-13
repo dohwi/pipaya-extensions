@@ -72,7 +72,7 @@ unreviewed: check it only for a primary you trust. This extension is never insta
 extension only on the follower stays.
 
 The same box matches the apps' extension list and on/off states (`PUT /client-settings/:key`, so open apps reload them)
-and copies each extension's stored settings (`<dataDir>/extensions/<id>/settings.json`) through this server's own
+and copies each extension's stored settings (`GET /extensions/settings`) through this server's own
 `PUT /extensions/:id/settings`. Environment variables (`PIPAYA_FLAG_*`) are process environment, not settings: they are
 not synced. This extension's own settings are never copied.
 
@@ -103,11 +103,60 @@ lists those extensions and the values to type in once. Everything else about the
 
 ## What it reads, runs and sends
 
-- **Reads** the server's own SQLite database (`PIPAYA_DB`, or `<PIPAYA_DATA_DIR|~/.pipaya>/pipaya.db`): the `settings` table, and with the boxes above `client_settings` and `custom_providers` (and `credentials` only for the keys of the secrets option). On the primary it also reads `~/.agents/{skills,subagents,AGENTS.md}` and the extension folders when a follower asks for them.
-- **Writes** on the primary, only what a follower changed (`push`): settings rows, `~/.agents/{skills,subagents,AGENTS.md}`, extension settings and providers through its own routes.
-- **Writes** on the follower, only for checked boxes: settings rows, `~/.agents/{skills,subagents,AGENTS.md}`, and the rest through its own server's routes (install, `/extensions/:id/settings`, `/client-settings/:key`, `/configuration/providers/:id`).
-- **Network**: the follower talks to exactly one URL, the `remoteUrl` you configure: `POST /pairing/redeem` once to trade the code for a token, then `POST /server-extensions/server-sync/methods/snapshot` with that token, and `.../methods/push` with its own changes. With the boxes above it also calls its own server (at its bound address, `PIPAYA_HOST`/`PIPAYA_PORT`) to save what it pulled, and reads the marketplace index (`raw.githubusercontent.com/dohwi/pipaya-marketplace`) to find an extension's pinned source. The primary only answers its own `/pairing` when asked for a code. Nothing else is sent anywhere.
-- The device token is stored in the extension's own data folder (`extension-data/server-sync/peer.json`, mode 0600), not in its settings: the app's form saves only the fields it shows, so a token kept there was wiped by the next save. It is never logged and never appears in the status below. A token an older version kept in the settings moves there on load.
+It works through the server's own API (`pi.api.request` and `pi.server.info`, app 0.9.4+): the same routes, checks,
+reloads and events as the app's own screens, as the admin and in-process, with no token or address of its own. Each
+item below names the route.
+
+| What | Read through | Saved through |
+|---|---|---|
+| `default_model` | the `settings` table (see below) | `PUT /configuration/defaults` (`null` removes it) |
+| `default_workdir` | 〃 | `PUT /configuration/workdir` `{path}` (`null` removes it) |
+| `system_model`, `image_model` | 〃 | `PUT /system-model`, `PUT /image-model` `{model}` |
+| `compaction`, `retention` | 〃 | `PUT /compaction`, `PUT /retention` |
+| `mcp_servers` | 〃 | `PUT /mcp` `{servers}` |
+| `disabled_tools` | 〃 | `PUT /configuration/tools` `{disabled}` |
+| `delegate_policy` | 〃 | `PUT /configuration/delegate` |
+| `disabled_subagents` | 〃 | `PUT /configuration/subagents/:name/enabled` `{scope, enabled}`, one per role |
+| `skills` (on/off), keys added in `keys` | 〃 | **written to the table directly** (see below) |
+| Extension settings | `GET /extensions/settings` | `PUT /extensions/:id/settings` |
+| Installed server extensions | `GET /server-extensions` | `POST /server-extensions/install`, `POST /server-extensions/reload` |
+| The apps' extension list and on/off | `GET /client-settings/:key` | `PUT /client-settings/:key` |
+| Model connections | `GET /configuration` (`providers`) | `PUT /configuration/providers/:id` |
+| Model API keys | the `credentials` table (see below); which ones exist: `GET /providers` | `PUT /providers/:id/credential` |
+| Connection code, address | `POST /pairing`, `pi.server.info().urls` (a Tailscale address first) | |
+| `~/.agents/{skills,subagents,AGENTS.md}`, `~/.agents/extensions`, an unlisted extension's code | the files themselves | the files themselves |
+
+A route checks what it is given. A value this server's route refuses (a model it does not have, a folder outside its
+workspace) is not written: this server keeps its own value, the page says which item and why, and the next sync tries
+again. A route that cannot remove its row (`/system-model`, `/image-model`, `/compaction`, `/retention`, `/mcp`,
+`/configuration/tools`) is given its default instead, which is what a missing row means. A route that stores a value a
+little differently (`/compaction` fills in its threshold, `/configuration/delegate` its role policy) is not a change: each
+side's hash is kept as that side stores it.
+
+**What it still reads or writes past the API**, and why:
+
+- **The `settings` table, read** (`PIPAYA_DB`, or `<PIPAYA_DATA_DIR|~/.pipaya>/pipaya.db`): the routes answer the value
+  in effect (defaults filled in, a model that is gone left out), not the row as stored; mirroring rows needs what is
+  stored, and a missing row has to stay missing. Read-only.
+- **`skills`, `delegate_policy` removal and keys added in `keys`, written to the table**: the app has no route that takes
+  the whole skill on/off map (only one skill at a time, and only skills found on disk), none that removes the delegate
+  policy, and none for an arbitrary key. A helper role switched off that this server does not have yet has no switch
+  either: then `disabled_subagents` is written as a whole. Nothing reloads or hears about such a write.
+- **`credentials`, read** (only with the secrets option on both sides): no route hands a stored key back, by design.
+
+**An older server (0.9.3 and before) has no `pi.api`.** It is then reached the old way, all of it in one place in
+`index.ts` (`legacy`): its own HTTP API at `PIPAYA_HOST`/`PIPAYA_PORT` with the admin token (`PIPAYA_TOKEN`, else the
+data folder's `token` file), its address from the machine's first Tailscale/LAN address, extension settings and
+installs read from `<dataDir>/extensions`, and `client_settings`/`custom_providers` read from the database. Settings rows
+are then written to the table directly, as before 0.16.0.
+
+- **Network**: the follower talks to exactly one URL, the `remoteUrl` you configure: `POST /pairing/redeem` once to trade
+  the code for a token, then `POST /server-extensions/server-sync/methods/snapshot` with that token, and
+  `.../methods/push` with its own changes. It reads the marketplace index (`raw.githubusercontent.com/dohwi/pipaya-marketplace`)
+  to find an extension's pinned source. Nothing else is sent anywhere.
+- The device token is stored in the extension's own data folder (`extension-data/server-sync/peer.json`, mode 0600), not
+  in its settings: the app's form saves only the fields it shows, so a token kept there was wiped by the next save. It is
+  never logged and never appears in the status below. A token an older version kept in the settings moves there on load.
 
 ## Roles
 
@@ -146,6 +195,12 @@ Above the form, **현재 상태** is drawn by the extension (`pi.ui.setPanel`), 
 It refreshes after every pull and every 30 seconds. On an app older than 0.8.8 (no `pi.ui`) there is no page: the
 extension still works, and `POST .../methods/status` reports the same state. A `statusText` field left by an older
 version is removed from the settings on load.
+
+## Tests
+
+`bun test` in this folder. `api.test.ts` drives a server with `pi.api` (each side's routes stood in for); the other files
+a server without it (the old way). `server.test.ts` starts two real servers, each its own process, and runs only with a
+pipaya checkout: `PIPAYA_APP=/path/to/pipaya/server bun test`.
 
 ## Methods
 

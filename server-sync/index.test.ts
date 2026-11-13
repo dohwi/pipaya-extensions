@@ -52,18 +52,18 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 describe("snapshot", () => {
 	beforeEach(() => seed({ default_model: { provider: "a", model: "b" }, skills: { global: {} }, device_id: "x", unrelated: 1 }));
 
-	test("serves the mirror set with the keys it covers", () => {
+	test("serves the mirror set with the keys it covers", async () => {
 		const h = boot({ role: "primary" });
-		const snap = h.methods.get("snapshot")!() as { keys: string[]; settings: Record<string, unknown> };
+		const snap = await h.methods.get("snapshot")!() as { keys: string[]; settings: Record<string, unknown> };
 		expect(snap.keys).toContain("default_model");
 		expect(snap.keys).not.toContain("device_id");
 		expect(snap.settings).toEqual({ default_model: { provider: "a", model: "b" }, skills: { global: {} } });
 		h.unload();
 	});
 
-	test("extra keys from the settings form are mirrored too", () => {
+	test("extra keys from the settings form are mirrored too", async () => {
 		const h = boot({ role: "primary", keys: "unrelated" });
-		const snap = h.methods.get("snapshot")!() as { keys: string[]; settings: Record<string, unknown> };
+		const snap = await h.methods.get("snapshot")!() as { keys: string[]; settings: Record<string, unknown> };
 		expect(snap.keys).toContain("unrelated");
 		expect(snap.settings.unrelated).toBe(1);
 		h.unload();
@@ -238,14 +238,14 @@ describe("this extension's own settings", () => {
 		}
 	});
 
-	test("are never served to a follower", () => {
+	test("are never served to a follower", async () => {
 		const root = join(dir, "extensions");
 		mkdirSync(join(root, "server-sync"), { recursive: true });
 		writeFileSync(join(root, "server-sync", "settings.json"), JSON.stringify({ role: "primary" }));
 		mkdirSync(join(root, "guard"), { recursive: true });
 		writeFileSync(join(root, "guard", "settings.json"), JSON.stringify({ mode: "strict" }));
 		const h = boot({ role: "primary" });
-		const snap = h.methods.get("snapshot")!({ extensions: true }) as { extensions: Record<string, unknown> };
+		const snap = await h.methods.get("snapshot")!({ extensions: true }) as { extensions: Record<string, unknown> };
 		expect(Object.keys(snap.extensions)).toEqual(["guard"]);
 		h.unload();
 	});

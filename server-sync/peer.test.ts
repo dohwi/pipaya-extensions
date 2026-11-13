@@ -137,7 +137,7 @@ describe("connecting by address alone", () => {
 		expect(follower.token()).toBe("device-token-from-pairing");
 
 		// The extension keeps its own handle on the file; read through it rather than a second connection.
-		const snap = follower.methods.get("snapshot")!() as { settings: Record<string, unknown> };
+		const snap = await follower.methods.get("snapshot")!() as { settings: Record<string, unknown> };
 		expect(Object.keys(snap.settings).sort()).toEqual(["default_model", "skills"]);
 	});
 

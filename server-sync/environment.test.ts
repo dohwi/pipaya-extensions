@@ -65,12 +65,15 @@ beforeAll(() => {
 		async fetch(req) {
 			const body = await req.text();
 			const method = new URL(req.url).pathname.split("/").pop()!;
+			// The primary is its own process: its side stays in effect until its answer is ready (the follower waits on it).
 			process.env.PIPAYA_PORT = String(primarySelf.port);
+			use(P);
 			try {
-				return await as(P, async () => Response.json({ result: await primary.get(method)!(body ? JSON.parse(body) : null) }));
+				return Response.json({ result: await primary.get(method)!(body ? JSON.parse(body) : null) });
 			} catch (e) {
 				return new Response(e instanceof Error ? e.message : String(e), { status: 400 });
 			} finally {
+				use(F);
 				process.env.PIPAYA_PORT = String(self.port);
 			}
 		},

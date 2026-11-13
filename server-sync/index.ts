@@ -157,14 +157,18 @@ function readSettings(db: DatabaseLike, keys: readonly string[]): Record<string,
 	return out;
 }
 
-/** Writes the peer's rows over ours; a key the peer lacks is deleted. Returns the keys that changed. */
-function applySnapshot(db: DatabaseLike, keys: readonly string[], peer: Record<string, unknown>): string[] {
+/** One row as the server stored it (the raw JSON text), or null when there is none. */
+const rawRow = (db: DatabaseLike, key: string): string | null => (db.query("SELECT data FROM settings WHERE key = ?").get(key) as { data: string } | undefined)?.data ?? null;
+
+/**
+ * Writes the peer's rows over ours straight into the table; a key the peer lacks is deleted. Returns the keys that
+ * changed. Only for a row the app has no route for (`skills`, a key added in `keys`), or a server without `pi.api`.
+ */
+function writeRows(db: DatabaseLike, keys: readonly string[], peer: Record<string, unknown>): string[] {
 	const changed: string[] = [];
 	for (const key of keys) {
 		const value = key in peer ? JSON.stringify(peer[key]) : null;
-		const row = db.query("SELECT data FROM settings WHERE key = ?").get(key) as { data: string } | undefined;
-		const current = row?.data ?? null;
-		if (current === value) continue;
+		if (rawRow(db, key) === value) continue;
 		if (value === null) db.query("DELETE FROM settings WHERE key = ?").run(key);
 		else db.query("INSERT INTO settings (key, data) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET data = excluded.data").run(key, value);
 		changed.push(key);
@@ -175,25 +179,27 @@ function applySnapshot(db: DatabaseLike, keys: readonly string[], peer: Record<s
 const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const dataDir = () => process.env.PIPAYA_DATA_DIR ?? join(homedir(), ".pipaya");
 
-/** One extension's stored settings, or undefined when there are none (or they are damaged). */
-function readExtensionSettings(id: string): Record<string, unknown> | undefined {
-	try {
-		const value: unknown = JSON.parse(readFileSync(join(dataDir(), "extensions", id, "settings.json"), "utf8"));
-		return plain(value) ? value : undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-/** Every extension's settings on this server, credentials left out, this extension's own skipped. */
-function allExtensionSettings(withSecrets = false): Record<string, Record<string, unknown>> {
+/** Every extension's stored settings, read from its folder: how a server without `pi.api` (0.9.3 and older) is read. */
+function extensionSettingsFiles(): Record<string, Record<string, unknown>> {
 	const out: Record<string, Record<string, unknown>> = {};
 	const root = join(dataDir(), "extensions");
 	if (!existsSync(root)) return out;
 	for (const entry of readdirSync(root, { withFileTypes: true })) {
-		if (!entry.isDirectory() || entry.name === SELF_ID || !EXTENSION_ID.test(entry.name)) continue;
-		const value = readExtensionSettings(entry.name);
-		if (value) out[entry.name] = Object.fromEntries(Object.entries(value).filter(([k]) => withSecrets || !CREDENTIAL_KEY.test(k)));
+		if (!entry.isDirectory()) continue;
+		try {
+			const value: unknown = JSON.parse(readFileSync(join(root, entry.name, "settings.json"), "utf8"));
+			if (plain(value)) out[entry.name] = value;
+		} catch { /* none, or damaged: not ours to fix */ }
+	}
+	return out;
+}
+
+/** The extension settings that travel: credentials left out (unless asked for), this extension's own skipped. */
+function shareable(all: Record<string, Record<string, unknown>>, withSecrets = false): Record<string, Record<string, unknown>> {
+	const out: Record<string, Record<string, unknown>> = {};
+	for (const [id, value] of Object.entries(all)) {
+		if (id === SELF_ID || !EXTENSION_ID.test(id) || !plain(value)) continue;
+		out[id] = Object.fromEntries(Object.entries(value).filter(([k]) => withSecrets || !CREDENTIAL_KEY.test(k)));
 	}
 	return out;
 }
@@ -368,6 +374,8 @@ export default (pi: any) => {
 	let needsInput: { id: string; title: string; fields: string[] }[] = [];
 	/** Paths the primary uses that this PC does not have (the working directory): kept as this server's own. */
 	let skippedPaths: string[] = [];
+	/** Rows the primary has that this server's own routes refused (a model it lacks): kept as this server's own for now. */
+	let refusedRows: { key: string; reason: string }[] = [];
 	/** When the pull timer fires next, for the page. */
 	let nextPullAt = 0;
 	let busy = false;
@@ -471,6 +479,227 @@ export default (pi: any) => {
 	// `pi.log` already prefixes the extension name.
 	const log = (msg: string) => pi.log(msg);
 
+	// ---- this server itself: its own API (`pi.api`, `pi.server`, app 0.9.4+), else the old way (`legacy`) ----
+
+	/** What a call to this server's own route answered: the status and the parsed body (text when it is not JSON). */
+	type Answer = { ok: boolean; status: number; body: any; text: string };
+	const answer = (status: number, body: unknown): Answer =>
+		({ ok: status >= 200 && status < 300, status, body, text: typeof body === "string" ? body : body === null || body === undefined ? "" : JSON.stringify(body) });
+	const hasApi = typeof pi.api?.request === "function";
+	/**
+	 * Set once this instance is unloaded. Installing or copying an extension reloads every extension, this one too: the
+	 * new instance pulls again at once, and this one must not touch anything (its `pi.api` is closed, its page is not
+	 * its own any more).
+	 */
+	let gone = false;
+
+	/**
+	 * How a server without `pi.api` (0.9.3 and older) is reached, and everything here that leans on the app's insides
+	 * for it: the admin token from `PIPAYA_TOKEN` or the data folder's `token` file, this server's address guessed from
+	 * `PIPAYA_HOST`/`PIPAYA_PORT`, other extensions' settings and the apps' rows read from the data folder and the
+	 * database. Kept in one place so it can go once those servers are gone; nothing else in this file guesses.
+	 */
+	const legacy = {
+		/** Where this server listens. Not always loopback: the desktop app can bind it to one address only. */
+		url(): string {
+			const port = process.env.PIPAYA_PORT ?? "8787";
+			const bind = String(process.env.PIPAYA_HOST ?? "").trim();
+			const host = !bind || bind === "0.0.0.0" || bind === "::" || bind === "[::]" ? "127.0.0.1" : bind;
+			return `http://${host.includes(":") && !host.startsWith("[") ? `[${host}]` : host}:${port}`;
+		},
+		token(): string {
+			const fromEnv = process.env.PIPAYA_TOKEN;
+			if (fromEnv) return fromEnv.trim();
+			try { return readFileSync(join(dataDir(), "token"), "utf8").trim(); } catch { return ""; }
+		},
+		/** This server's address as a peer should reach it: the first Tailscale/LAN address of this box. */
+		publicUrl(): string {
+			const host = firstAddress();
+			return host ? `http://${host}:${process.env.PIPAYA_PORT ?? "8787"}` : "";
+		},
+		async request(method: string, path: string, body?: unknown, base = legacy.url(), timeoutMs = 60_000): Promise<Answer> {
+			let res: Response;
+			try {
+				res = await fetch(`${base}${path}`, {
+					method,
+					headers: { authorization: `Bearer ${legacy.token()}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+					...(body === undefined ? {} : { body: JSON.stringify(body) }),
+					signal: AbortSignal.timeout(timeoutMs),
+				});
+			} catch (e) {
+				throw new Error(`could not reach this server itself (${base}): ${e instanceof Error ? e.message : String(e)}`);
+			}
+			const text = await res.text();
+			let parsed: unknown = text;
+			try { parsed = text ? JSON.parse(text) : null; } catch { /* not JSON: the text */ }
+			return { ...answer(res.status, parsed), text };
+		},
+		clientSetting(key: string): unknown {
+			const r = dbo().query("SELECT data FROM client_settings WHERE key = ?").get(key) as { data: string } | undefined;
+			try { return r ? JSON.parse(r.data) : null; } catch { return null; }
+		},
+		providers(): Record<string, Record<string, unknown>> {
+			const out: Record<string, Record<string, unknown>> = {};
+			for (const r of dbo().query("SELECT id, data FROM custom_providers").all() as { id: string; data: string }[]) {
+				try { const v: unknown = JSON.parse(r.data); if (plain(v)) out[r.id] = v; } catch { /* a damaged row is not ours to fix */ }
+			}
+			return out;
+		},
+		storedKeys(): Set<string> {
+			return new Set((dbo().query("SELECT provider_id FROM credentials").all() as { provider_id: string }[]).map((r) => r.provider_id));
+		},
+	};
+
+	/** One call to this server's own route, as the admin: what every apply goes through so the app hears about it. */
+	const own = async (method: string, path: string, body?: unknown): Promise<Answer> => {
+		if (gone) throw new Error("this server reloaded its extensions; the new instance syncs again now");
+		if (!hasApi) return legacy.request(method, path, body);
+		let r: { status: number; body: unknown };
+		try {
+			r = await pi.api.request(method, path, body);
+		} catch (e) {
+			if (gone) throw new Error("this server reloaded its extensions; the new instance syncs again now");
+			throw new Error(`could not reach this server itself (${method} ${path}): ${e instanceof Error ? e.message : String(e)}`);
+		}
+		return answer(r.status, r.body);
+	};
+	/** A read that must work: its body, or an error naming the route. */
+	const ownRead = async (path: string): Promise<any> => {
+		const res = await own("GET", path);
+		if (!res.ok) throw new Error(`this server answered ${res.status} to GET ${path}`);
+		return res.body;
+	};
+
+	/** This server's address as a peer should reach it (`pi.server.info`), a Tailscale address first. */
+	const publicUrl = (): string => {
+		if (typeof pi.server?.info !== "function") return legacy.publicUrl();
+		try {
+			const urls = (pi.server.info() as { urls?: unknown }).urls;
+			const list = Array.isArray(urls) ? urls.filter((u): u is string => typeof u === "string") : [];
+			return list.find((u) => /^http:\/\/100\./.test(u)) ?? list[0] ?? "";
+		} catch {
+			return legacy.publicUrl();
+		}
+	};
+
+	/** Every extension's settings on this server, by id (`GET /extensions/settings`). */
+	const extensionSettings = async (): Promise<Record<string, Record<string, unknown>>> => {
+		if (!hasApi) return extensionSettingsFiles();
+		const body = await ownRead("/extensions/settings");
+		const out: Record<string, Record<string, unknown>> = {};
+		for (const [id, stored] of Object.entries(plain(body?.settings) ? body.settings : {})) if (plain(stored) && plain(stored.value)) out[id] = stored.value;
+		return out;
+	};
+	/** One row of the apps' settings (`GET /client-settings/:key`), null when there is none. */
+	const clientSetting = async (key: string): Promise<unknown> => {
+		if (!hasApi) return legacy.clientSetting(key);
+		const res = await own("GET", `/client-settings/${key}`);
+		if (res.status === 404) return null;
+		if (!res.ok) throw new Error(`this server answered ${res.status} to GET /client-settings/${key}`);
+		return plain(res.body) ? (res.body.value ?? null) : null;
+	};
+	/**
+	 * Custom model providers as the server stores them (`GET /configuration`), without what the route adds to describe
+	 * them, so a server read through its API and one read from its database hash the same connection the same.
+	 */
+	const storedProviders = async (): Promise<Record<string, Record<string, unknown>>> => {
+		if (!hasApi) return legacy.providers();
+		const body = await ownRead("/configuration");
+		const out: Record<string, Record<string, unknown>> = {};
+		for (const p of Array.isArray(body?.providers) ? body.providers : []) {
+			if (!plain(p) || typeof p.id !== "string") continue;
+			const { configured: _c, hasStoredKey: _k, ...rest } = p;
+			const models = Array.isArray(rest.models) ? rest.models.map((m: unknown) => {
+				if (!plain(m)) return m;
+				const { thinkingSource: _t, unavailable: _u, ...model } = m;
+				return model;
+			}) : rest.models;
+			out[p.id] = { ...rest, models };
+		}
+		return out;
+	};
+	/** Providers this server holds a credential for (`GET /providers`): never the credential itself. */
+	const storedKeys = async (): Promise<Set<string>> => {
+		if (!hasApi) return legacy.storedKeys();
+		const body = await ownRead("/providers");
+		return new Set((Array.isArray(body?.providers) ? body.providers : []).filter((p: any) => plain(p) && typeof p.id === "string" && p.storedCredential).map((p: any) => p.id as string));
+	};
+
+	/**
+	 * Settings rows the app has a route for: the request that saves a value, and the one that clears it (a route that
+	 * cannot delete its row gets the route's own default, which is what a missing row means). null: no route (`skills`,
+	 * a key added in `keys`), or nothing that clears it (`delegate_policy`): the row is written directly.
+	 */
+	const DEFAULTS_OF: Record<string, string> = { system_model: "/system-model", image_model: "/image-model", compaction: "/compaction", retention: "/retention" };
+	const rowRequest = async (key: string, value: unknown): Promise<[string, unknown] | null> => {
+		const gone = value === undefined;
+		if (key === "default_model") return ["/configuration/defaults", gone ? null : value];
+		if (key === "default_workdir") return ["/configuration/workdir", { path: gone ? null : value }];
+		if (key === "mcp_servers") return ["/mcp", { servers: gone ? [] : value }];
+		if (key === "disabled_tools") return ["/configuration/tools", { disabled: gone ? [] : value }];
+		if (key === "delegate_policy") return gone ? null : ["/configuration/delegate", value];
+		const path = DEFAULTS_OF[key];
+		if (!path) return null;
+		if (!gone) return [path, value];
+		const defaults = (await ownRead(path))?.defaults;
+		return plain(defaults) ? [path, defaults] : null;
+	};
+	/** What the server said when it refused a value (its own words), short. */
+	const reason = (res: Answer): string => String((plain(res.body) && plain(res.body.error) && typeof res.body.error.message === "string" ? res.body.error.message : res.text) || res.status).slice(0, 200);
+	/**
+	 * Helper roles switched off: one switch per role (`PUT /configuration/subagents/:name/enabled`). A role this server
+	 * does not have (yet: its file comes with 스킬·도우미, after the rows) has no switch to flip; then the list is written
+	 * as a whole, directly, so the role starts off once its file arrives.
+	 */
+	const writeDisabledSubagents = async (value: unknown): Promise<"done" | "direct" | { refused: string }> => {
+		const list = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+		let current: string[] = [];
+		try { const raw = rawRow(dbo(), "disabled_subagents"); current = raw === null ? [] : list(JSON.parse(raw)); } catch { /* damaged: start from none */ }
+		const target = list(value);
+		let missing = false;
+		for (const k of [...new Set([...current, ...target])]) {
+			if (current.includes(k) === target.includes(k)) continue;
+			const slash = k.indexOf("/");
+			const scope = k.slice(0, slash);
+			if (slash < 1 || (scope !== "global" && scope !== "project")) { missing = true; continue; }
+			const res = await own("PUT", `/configuration/subagents/${encodeURIComponent(k.slice(slash + 1))}/enabled`, { scope, enabled: !target.includes(k) });
+			if (res.status === 404) missing = true;
+			else if (!res.ok) return { refused: reason(res) };
+		}
+		return missing ? "direct" : "done";
+	};
+	/**
+	 * Make this server's rows the given ones (a key missing from `values` is removed), through the app's routes where it
+	 * has them. A value a route refuses (a model this server does not have, a folder outside its workspace) is not
+	 * written: this server keeps its own and the key is listed in `refused`, tried again on the next sync.
+	 */
+	const applyRows = async (keys: readonly string[], values: Record<string, unknown>): Promise<{ changed: string[]; refused: { key: string; reason: string }[] }> => {
+		const changed: string[] = [];
+		const refused: { key: string; reason: string }[] = [];
+		const direct: string[] = [];
+		for (const key of keys) {
+			const value = key in values ? values[key] : undefined;
+			if (rawRow(dbo(), key) === (value === undefined ? null : JSON.stringify(value))) continue;
+			if (!hasApi) { direct.push(key); continue; }
+			if (key === "disabled_subagents") {
+				const r = await writeDisabledSubagents(value);
+				if (r === "direct") direct.push(key);
+				else if (r === "done") changed.push(key);
+				else refused.push({ key, reason: r.refused });
+				continue;
+			}
+			const req = await rowRequest(key, value);
+			if (!req) { direct.push(key); continue; }
+			const res = await own("PUT", req[0], req[1]);
+			if (res.ok) changed.push(key);
+			else if (res.status === 400 || res.status === 404 || res.status === 409) refused.push({ key, reason: reason(res) });
+			else throw new Error(`could not save ${key} on this server (${res.status}: ${reason(res)})`);
+		}
+		if (direct.length) changed.push(...writeRows(dbo(), direct, values));
+		if (refused.length) log(`this server refused: ${refused.map((r) => `${r.key} (${r.reason})`).join(", ")}`);
+		return { changed, refused };
+	};
+
 	/** "3분 전" / "3 min ago": the page shows this instead of a timestamp the reader has to decode. */
 	const ago = (at: number): Text => {
 		const s = Math.max(0, Math.round((Date.now() - at) / 1000));
@@ -515,7 +744,7 @@ export default (pi: any) => {
 	let writing = false;
 	const hasPanel = typeof pi.ui?.setPanel === "function";
 	const showStatus = () => {
-		if (writing) return;
+		if (writing || gone) return;
 		if ("statusText" in settings()) {
 			writing = true;
 			try { const { statusText: _, ...rest } = settings(); pi.settings.set(rest); } finally { writing = false; }
@@ -630,6 +859,11 @@ export default (pi: any) => {
 		}
 		if (token && skippedPaths.length) children.push({ type: "text", id: "paths", size: "small", tone: "neutral",
 			text: { ko: `기준 서버의 작업 디렉터리(${skippedPaths.join(", ")})가 이 PC에 없어서, 이 서버의 작업 디렉터리를 그대로 씁니다.`, en: `The primary's working directory (${skippedPaths.join(", ")}) does not exist on this PC, so this server keeps its own.` } });
+		if (token && refusedRows.length) children.push({ type: "text", id: "refused", size: "small", tone: "neutral",
+			text: {
+				ko: `이 서버가 받아들이지 않은 항목이 있어 이 서버 값을 그대로 둡니다: ${refusedRows.map((r) => `${keyLabel(r.key).ko} (${r.reason})`).join(", ")}. 기준 서버의 모델 연결 등을 이 서버에도 맞추면 다음 동기화 때 다시 가져옵니다.`,
+				en: `This server did not accept some items and keeps its own: ${refusedRows.map((r) => `${keyLabel(r.key).en} (${r.reason})`).join(", ")}. Once it has what they need (a model connection, say), the next sync takes them.`,
+			} });
 		if (token && unlisted.length && settings().syncExtensions === true) children.push({ type: "alert", id: "unlisted", tone: "warning",
 			title: { ko: "마켓플레이스에 없는 확장은 설치하지 않았습니다", en: "Extensions not in the marketplace were not installed" },
 			text: { ko: `${unlisted.join(", ")} — 기준 서버에서 복사하려면 아래 ‘직접 만든 확장도 복사’를 켜세요.`, en: `${unlisted.join(", ")} — to copy them from the primary, turn on ‘Also copy extensions you made yourself’ below.` } });
@@ -660,36 +894,36 @@ export default (pi: any) => {
 
 	// ---- what a peer reads: the rows this server mirrors and the keys they cover ----
 
-	pi.registerMethod("snapshot", (params: unknown): Snapshot => {
+	pi.registerMethod("snapshot", async (params: unknown): Promise<Snapshot> => {
 		const list = keys();
 		const snap: Snapshot = { keys: list, settings: readSettings(dbo(), list), push: 1 };
 		// Only when the follower asks: most never want them, and they are the bulkiest part.
 		// Secrets of extensions (their own settings file) go only when this server's owner allows it AND the follower asked.
-		if (plain(params) && params.extensions === true) snap.extensions = allExtensionSettings(settings().shareSecrets === true && params.secrets === true);
+		if (plain(params) && params.extensions === true) snap.extensions = shareable(await extensionSettings(), settings().shareSecrets === true && params.secrets === true);
 		const asked = plain(params) && Array.isArray(params.parts) ? params.parts.filter((p): p is Part => typeof p === "string" && p in PARTS) : [];
 		// The code of extensions, for those the follower cannot get from the marketplace: only the ids it names.
 		const codeOf = plain(params) && Array.isArray(params.codeOf) ? params.codeOf.filter((x): x is string => typeof x === "string" && EXTENSION_ID.test(x) && x !== SELF_ID).slice(0, 50) : [];
-		if (asked.length) snap.environment = readEnvironment(asked);
+		if (asked.length) snap.environment = await readEnvironment(asked);
 		if (codeOf.length) {
 			const env = (snap.environment ??= {});
-			const list = env.serverExtensions ?? installedServerExtensions();
+			const list = env.serverExtensions ?? (await installedServerExtensions());
 			env.serverExtensions = list.map((e) => (codeOf.includes(e.id) ? { ...e, files: extensionFiles(e.id) } : e));
 		}
 		return snap;
 	});
 
 	/** This server's environment parts, as a follower asked for them. */
-	const readEnvironment = (parts: readonly Part[]): Environment => {
+	const readEnvironment = async (parts: readonly Part[]): Promise<Environment> => {
 		const env: Environment = {};
 		const home = typeof pi.home === "string" && pi.home ? pi.home : homedir();
 		for (const part of parts) {
 			try {
-				if (part === "serverExtensions") env.serverExtensions = installedServerExtensions();
-				else if (part === "clientExtensions") env.clientExtensions = clientExtensionRows();
+				if (part === "serverExtensions") env.serverExtensions = await installedServerExtensions();
+				else if (part === "clientExtensions") env.clientExtensions = await clientExtensionRows();
 				else if (part === "skills") env.skills = readFolders(join(home, ".agents", "skills"));
 				else if (part === "subagents") env.subagents = readFiles(join(home, ".agents", "subagents"), /\.md$/);
 				else if (part === "agentsMd") env.agentsMd = readText(join(home, ".agents", "AGENTS.md"));
-				else if (part === "providers") env.providers = providerRows();
+				else if (part === "providers") env.providers = await providerRows();
 				else if (part === "apiKeys") env.apiKeys = apiKeyRows();
 				else if (part === "agentExtensions") {
 					const dir = join(home, ".agents", "extensions");
@@ -702,8 +936,23 @@ export default (pi: any) => {
 		return env;
 	};
 
-	/** Server extensions installed in the data folder (not `~/.agents/extensions`, which are the owner's own files), with their versions. */
-	const installedServerExtensions = (): InstalledExtension[] => {
+	/**
+	 * Server extensions installed in the server's extensions folder (not `~/.agents/extensions`, which are the owner's own
+	 * files), with their versions: `GET /server-extensions`, else read from the data folder.
+	 */
+	const installedServerExtensions = async (): Promise<InstalledExtension[]> => {
+		if (hasApi) {
+			const body = await ownRead("/server-extensions");
+			const mineDir = join(agentsHome(), ".agents", "extensions") + sep;
+			const out = new Map<string, InstalledExtension>();
+			for (const e of Array.isArray(body?.extensions) ? body.extensions : []) {
+				if (!plain(e) || typeof e.name !== "string" || typeof e.version !== "string") continue;
+				const id = e.name.split("/")[0]!;
+				if (id === SELF_ID || !EXTENSION_ID.test(id) || (typeof e.path === "string" && e.path.startsWith(mineDir))) continue;
+				if (!out.has(id)) out.set(id, { id, version: e.version });
+			}
+			return [...out.values()];
+		}
 		const root = join(dataDir(), "extensions");
 		if (!existsSync(root)) return [];
 		const out: InstalledExtension[] = [];
@@ -723,19 +972,14 @@ export default (pi: any) => {
 		return Object.fromEntries(Object.entries(all).filter(([path]) => !EXTENSION_RUNTIME.has(path)));
 	};
 
-	/** The extensions this server keeps for its apps (`client_settings`): the list and which are on. */
-	const clientExtensionRows = () => {
-		const row = (key: string) => {
-			const r = dbo().query("SELECT data FROM client_settings WHERE key = ?").get(key) as { data: string } | undefined;
-			try { return r ? JSON.parse(r.data) : null; } catch { return null; }
-		};
-		return { list: row("extensions"), states: row("extensionStates") };
-	};
+	/** The extensions this server keeps for its apps (`/client-settings`): the list and which are on. */
+	const clientExtensionRows = async () => ({ list: await clientSetting("extensions"), states: await clientSetting("extensionStates") });
 
 	/**
 	 * Model API keys of this server (credentials of type api_key; a login (oauth) is tied to this server and never copied).
 	 * Served only when the owner of THIS server allows it (`shareSecrets`): the follower asking is not enough, because
 	 * a key leaves the machine. The link is the Tailscale address and a revocable device token, but it is still a key.
+	 * Read from the database on every server: the app has no route that hands a stored key back, by design.
 	 */
 	const apiKeyRows = (): Record<string, string> => {
 		if (settings().shareSecrets !== true) return {};
@@ -751,27 +995,18 @@ export default (pi: any) => {
 		return out;
 	};
 
-	/** Custom model providers without anything secret: the key is in the credentials table, which is never read. */
-	const providerRows = (): Record<string, Record<string, unknown>> => {
-		const out: Record<string, Record<string, unknown>> = {};
-		const rows = dbo().query("SELECT id, data FROM custom_providers").all() as { id: string; data: string }[];
-		for (const r of rows) {
-			try {
-				const v: unknown = JSON.parse(r.data);
-				if (plain(v)) out[r.id] = Object.fromEntries(Object.entries(v).filter(([k]) => !CREDENTIAL_KEY.test(k)));
-			} catch { /* a damaged row is not ours to fix */ }
-		}
-		return out;
-	};
+	/** Custom model providers without anything secret (the key is a credential, kept apart). */
+	const providerRows = async (): Promise<Record<string, Record<string, unknown>>> =>
+		Object.fromEntries(Object.entries(await storedProviders()).map(([id, v]) => [id, publicOf(v)]));
 
 	pi.registerMethod("status", () => status());
 
 	const agentsHome = () => (typeof pi.home === "string" && pi.home ? pi.home : homedir());
 	/** This server's items of one two-way kind, by id (rows: the mirrored keys; agentsMd: the one id "AGENTS.md"). */
-	const localItems = (kind: Kind, list: readonly string[]): Record<string, unknown> => {
+	const localItems = async (kind: Kind, list: readonly string[]): Promise<Record<string, unknown>> => {
 		const home = agentsHome();
 		if (kind === "rows") return readSettings(dbo(), list);
-		if (kind === "ext") return allExtensionSettings(false);
+		if (kind === "ext") return shareable(await extensionSettings());
 		if (kind === "skill") return readFolders(join(home, ".agents", "skills"));
 		if (kind === "helper") return readFiles(join(home, ".agents", "subagents"), /\.md$/);
 		if (kind === "agentsMd") { const t = readText(join(home, ".agents", "AGENTS.md")); return t === null ? {} : { "AGENTS.md": t }; }
@@ -794,6 +1029,7 @@ export default (pi: any) => {
 		if (!plain(params)) throw new Error("nothing to push");
 		const changed: string[] = [];
 		const list = keys();
+		let refused: string[] = [];
 		if (plain(params.settings) || Array.isArray(params.deleted)) {
 			const rows = plain(params.settings) ? params.settings : {};
 			const gone = Array.isArray(params.deleted) ? params.deleted.filter((k): k is string => typeof k === "string") : [];
@@ -801,12 +1037,19 @@ export default (pi: any) => {
 			const next: Record<string, unknown> = { ...readSettings(dbo(), touched) };
 			for (const k of touched) if (k in rows && fitsHere(k, rows[k])) next[k] = rows[k];
 			for (const k of gone) if (list.includes(k)) delete next[k];
-			changed.push(...applySnapshot(dbo(), touched, next));
+			// A value this server refuses (a model it does not have) stays its own, and the primary wins it back on the
+			// next pull: its hash below is one that matches nothing, so the follower sees the primary's value as changed.
+			const res = await applyRows(touched, next);
+			changed.push(...res.changed);
+			refused = res.refused.map((r) => r.key);
 		}
 		if (plain(params.extensions)) {
+			const all = await extensionSettings();
+			// Only for an extension this server has (installed, or with settings already): never a new one from a follower.
+			const installed = new Set((await installedServerExtensions()).map((e) => e.id));
 			for (const [id, value] of Object.entries(params.extensions)) {
-				if (id === SELF_ID || !EXTENSION_ID.test(id) || !plain(value) || !existsSync(join(dataDir(), "extensions", id))) continue;
-				const current = readExtensionSettings(id) ?? {};
+				if (id === SELF_ID || !EXTENSION_ID.test(id) || !plain(value) || !(id in all || installed.has(id))) continue;
+				const current = all[id] ?? {};
 				// never a secret from the follower, and this server's own secrets stay
 				const next = { ...publicOf(value), ...Object.fromEntries(Object.entries(current).filter(([k]) => CREDENTIAL_KEY.test(k))) };
 				if (sameObject(current, next)) continue;
@@ -840,47 +1083,18 @@ export default (pi: any) => {
 		const hashes: Partial<Record<Kind, Record<string, string>>> = {};
 		for (const [kind, ids] of Object.entries(sent) as [Kind, string[]][]) {
 			if (!ids.length) continue;
-			const now = localItems(kind, kind === "rows" ? ids.filter((k) => list.includes(k)) : []);
-			hashes[kind] = Object.fromEntries(ids.map((id) => [id, hashOfItem(kind, now[id])]));
+			const now = await localItems(kind, kind === "rows" ? ids.filter((k) => list.includes(k)) : []);
+			hashes[kind] = Object.fromEntries(ids.map((id) => [id, kind === "rows" && refused.includes(id) ? "refused" : hashOfItem(kind, now[id])]));
 		}
 		return { applied: changed, hashes };
 	});
-
-	/** This server's address as a peer should reach it: the Tailscale/LAN address of this box. */
-	const publicUrl = (): string => {
-		const port = process.env.PIPAYA_PORT ?? "8787";
-		const host = firstAddress();
-		return host ? `http://${host}:${port}` : "";
-	};
-
-	/**
-	 * Where this server itself listens, for the calls it makes to its own routes. Not always loopback: the desktop app
-	 * can bind its bundled server to one address only (e.g. the Tailscale one), and then 127.0.0.1 refuses the call.
-	 */
-	const ownUrl = (): string => {
-		const port = process.env.PIPAYA_PORT ?? "8787";
-		const bind = String(process.env.PIPAYA_HOST ?? "").trim();
-		const host = !bind || bind === "0.0.0.0" || bind === "::" || bind === "[::]" ? "127.0.0.1" : bind;
-		return `http://${host.includes(":") && !host.startsWith("[") ? `[${host}]` : host}:${port}`;
-	};
 
 	/** How the primary's Devices tab names this follower: the name it gave itself, else this machine and its address. */
 	const followerLabel = (): string => {
 		const given = String(settings().followerName ?? "").trim();
 		if (given) return given.slice(0, 60);
-		const ip = firstAddress();
+		const ip = publicUrl().replace(/^https?:\/\//, "").replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
 		return `Server Sync · ${hostname()}${ip ? ` (${ip})` : ""}`.slice(0, 60);
-	};
-
-	/** The admin token of this server (`PIPAYA_TOKEN`, else the `token` file in the data dir). */
-	const adminToken = (): string => {
-		const fromEnv = process.env.PIPAYA_TOKEN;
-		if (fromEnv) return fromEnv.trim();
-		try {
-			return readFileSync(join(dataDir(), "token"), "utf8").trim();
-		} catch {
-			return "";
-		}
 	};
 
 	/**
@@ -891,15 +1105,10 @@ export default (pi: any) => {
 	pi.registerMethod("code", async () => {
 		const url = publicUrl();
 		if (!url) throw new Error("this server has no address to share");
-		const res = await fetch(`${url}/pairing`, {
-			method: "POST",
-			headers: { authorization: `Bearer ${adminToken()}`, "content-type": "application/json" },
-			body: "null",
-			signal: AbortSignal.timeout(5_000),
-		});
+		// An older server is asked at the address it hands out: that is the one known to answer.
+		const res = hasApi ? await own("POST", "/pairing") : await legacy.request("POST", "/pairing", null, url, 5_000);
 		if (!res.ok) throw new Error(`could not make a code (${res.status})`);
-		const body = (await res.json()) as { code?: unknown };
-		const code = typeof body.code === "string" ? body.code : "";
+		const code = plain(res.body) && typeof res.body.code === "string" ? res.body.code : "";
 		if (!code) throw new Error("the server returned no code");
 		return { url, code };
 	});
@@ -972,9 +1181,9 @@ export default (pi: any) => {
 		const base = readBase(url);
 		const planned: Kind[] = [];
 		/** Decide every item of one kind: what comes down, what goes up; the items already equal are recorded at once. */
-		const plan = (kind: Kind, theirs: Record<string, unknown>, ids?: readonly string[]) => {
+		const plan = async (kind: Kind, theirs: Record<string, unknown>, ids?: readonly string[]) => {
 			planned.push(kind);
-			const mine = localItems(kind, list);
+			const mine = await localItems(kind, list);
 			const items = (base.items[kind] ??= {});
 			const p = hashesOf(kind, theirs);
 			const f = hashesOf(kind, mine);
@@ -996,9 +1205,9 @@ export default (pi: any) => {
 			return out;
 		};
 		/** After pulling: both sides now hold the primary's value, hashed as each stores it. */
-		const settle = (kind: Kind, ids: readonly string[], p: Record<string, string>) => {
+		const settle = async (kind: Kind, ids: readonly string[], p: Record<string, string>) => {
 			if (!ids.length) return;
-			const now = hashesOf(kind, localItems(kind, list));
+			const now = hashesOf(kind, await localItems(kind, list));
 			const items = (base.items[kind] ??= {});
 			for (const id of ids) {
 				const hp = p[id] ?? "";
@@ -1012,15 +1221,19 @@ export default (pi: any) => {
 		const peerRows = Object.fromEntries(list.filter((k) => k in peer).map((k) => [k, (peer as Record<string, unknown>)[k]]));
 		// A row whose box is off forgets its history: turned on again, it starts by pulling (its first sync again).
 		for (const k of Object.keys(base.items.rows ?? {})) if (!list.includes(k)) delete base.items.rows![k];
-		const rows = plan("rows", peerRows, list);
+		const rows = await plan("rows", peerRows, list);
 		const unfit = rows.pull.filter((k) => !fitsHere(k, peerRows[k]));
 		if (unfit.length) {
 			rows.pull = rows.pull.filter((k) => !unfit.includes(k));
 			for (const k of unfit) (base.items.rows ??= {})[k] = "local";
 			skippedPaths = unfit.map((k) => String(peerRows[k]));
 		} else skippedPaths = [];
-		if (rows.pull.length) changed.push(...applySnapshot(dbo(), rows.pull, peer as Record<string, unknown>));
-		settle("rows", rows.pull, rows.p);
+		// A value this server's route refuses (a model it does not have) is not taken and not settled: it is tried again
+		// on the next sync, and this server keeps its own until then.
+		const applied = rows.pull.length ? await applyRows(rows.pull, peer as Record<string, unknown>) : { changed: [], refused: [] };
+		changed.push(...applied.changed);
+		refusedRows = applied.refused;
+		await settle("rows", rows.pull.filter((k) => !applied.refused.some((r) => r.key === k)), rows.p);
 		up.push({ kind: "rows", ids: rows.push, mine: rows.mine });
 		// Server extensions first: a pulled extension's settings need the extension installed to mean anything.
 		// A primary older than 0.10.0 sends no environment: nothing to do, not an error.
@@ -1043,50 +1256,51 @@ export default (pi: any) => {
 		// A primary older than 0.8.0 sends no extensions: nothing to do, not an error.
 		if (withExtensions && plain(body.result?.extensions)) {
 			const theirs = body.result.extensions as Record<string, Record<string, unknown>>;
-			const ext = plan("ext", theirs);
+			const ext = await plan("ext", theirs);
 			changed.push(...(await applyExtensions(pick(theirs, ext.pull))));
 			// A secret the primary sent (비밀값 on both sides) fills a gap here even when nothing else differs.
 			if (wantSecrets()) {
 				const fill: Record<string, Record<string, unknown>> = {};
+				const all = await extensionSettings();
 				for (const [id, v] of Object.entries(theirs)) {
 					if (ext.pull.includes(id) || !plain(v)) continue;
-					const cur = readExtensionSettings(id) ?? {};
+					const cur = all[id] ?? {};
 					const lacking = Object.entries(v).filter(([k, x]) => CREDENTIAL_KEY.test(k) && x !== "" && x !== null && x !== undefined && (cur[k] === undefined || cur[k] === null || cur[k] === ""));
 					if (lacking.length) fill[id] = { ...cur, ...Object.fromEntries(lacking) };
 				}
 				changed.push(...(await applyExtensions(fill)));
 			}
-			settle("ext", ext.pull, ext.p);
+			await settle("ext", ext.pull, ext.p);
 			up.push({ kind: "ext", ids: ext.push, mine: ext.mine });
 		}
 		const home = agentsHome();
 		if (parts.includes("clientExtensions") && plain(env.clientExtensions)) changed.push(...(await applyClientExtensions(env.clientExtensions)));
 		if (parts.includes("skills") && plain(env.skills)) {
 			const theirs = env.skills as Record<string, FileSet>;
-			const r = plan("skill", theirs);
+			const r = await plan("skill", theirs);
 			changed.push(...applyFolders(join(home, ".agents", "skills"), pick(theirs, r.pull), "skill"));
-			settle("skill", r.pull, r.p);
+			await settle("skill", r.pull, r.p);
 			up.push({ kind: "skill", ids: r.push, mine: r.mine });
 		}
 		if (parts.includes("subagents") && plain(env.subagents)) {
 			const theirs = env.subagents as FileSet;
-			const r = plan("helper", theirs);
+			const r = await plan("helper", theirs);
 			changed.push(...applyFiles(join(home, ".agents", "subagents"), pick(theirs, r.pull), /\.md$/, "helper"));
-			settle("helper", r.pull, r.p);
+			await settle("helper", r.pull, r.p);
 			up.push({ kind: "helper", ids: r.push, mine: r.mine });
 		}
 		if (parts.includes("agentsMd") && "agentsMd" in env) {
 			const theirs: Record<string, string> = typeof env.agentsMd === "string" ? { "AGENTS.md": env.agentsMd } : {};
-			const r = plan("agentsMd", theirs, ["AGENTS.md"]);
+			const r = await plan("agentsMd", theirs, ["AGENTS.md"]);
 			if (r.pull.length) changed.push(...applyText(join(home, ".agents", "AGENTS.md"), theirs["AGENTS.md"] ?? null, "agents-md"));
-			settle("agentsMd", r.pull, r.p);
+			await settle("agentsMd", r.pull, r.p);
 			up.push({ kind: "agentsMd", ids: r.push, mine: r.mine });
 		}
 		if (parts.includes("providers") && plain(env.providers)) {
 			const theirs = env.providers as Record<string, Record<string, unknown>>;
-			const r = plan("provider", theirs);
+			const r = await plan("provider", theirs);
 			changed.push(...(await applyProviders(pick(theirs, r.pull))));
-			settle("provider", r.pull, r.p);
+			await settle("provider", r.pull, r.p);
 			up.push({ kind: "provider", ids: r.push, mine: r.mine });
 		}
 		// A kind no longer synced forgets its history: turned on again later, it starts by pulling, like the first time.
@@ -1157,26 +1371,12 @@ export default (pi: any) => {
 		return changed;
 	};
 
-	/** This server's own route, as the admin: what every apply below goes through so the app hears about it. */
-	const own = async (method: string, path: string, body?: unknown): Promise<Response> => {
-		try {
-			return await fetch(`${ownUrl()}${path}`, {
-				method,
-				headers: { authorization: `Bearer ${adminToken()}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
-				...(body === undefined ? {} : { body: JSON.stringify(body) }),
-				signal: AbortSignal.timeout(60_000),
-			});
-		} catch (e) {
-			throw new Error(`could not reach this server itself (${ownUrl()}): ${e instanceof Error ? e.message : String(e)}`);
-		}
-	};
-
 	/**
 	 * Install what the primary has and this server lacks (or has at another version), from the marketplace's pinned git
 	 * source, through this server's own install route. Never removes one: an extension only here stays.
 	 */
 	const applyServerExtensions = async (theirs: InstalledExtension[], fetchCode: (ids: string[]) => Promise<InstalledExtension[]>): Promise<string[]> => {
-		const mineList = installedServerExtensions();
+		const mineList = await installedServerExtensions();
 		const mine = new Map(mineList.map((e) => [e.id, e.version]));
 		const wanted = theirs.filter((e) => plain(e) && typeof e.id === "string" && EXTENSION_ID.test(e.id) && e.id !== SELF_ID && typeof e.version === "string" && mine.get(e.id) !== e.version);
 		if (!wanted.length) { unlisted = []; return []; }
@@ -1189,7 +1389,7 @@ export default (pi: any) => {
 			if (!entry) { missing.push(e); continue; }
 			const { repo, dir, ref, commit, host } = entry.source as Record<string, string>;
 			const res = await own("POST", "/server-extensions/install", { id: e.id, repo, ref, commit, ...(dir ? { dir } : {}), ...(host ? { host } : {}) });
-			if (!res.ok) throw new Error(`pulled from the primary, but could not install ${e.id} ${e.version} on this server (${res.status}: ${(await res.text()).slice(0, 200)})`);
+			if (!res.ok) throw new Error(`pulled from the primary, but could not install ${e.id} ${e.version} on this server (${res.status}: ${reason(res)})`);
 			changed.push(`srv:${e.id}`);
 		}
 		// Not in the marketplace at that version (a hand-made or newer local build): its code comes from the primary, but
@@ -1250,14 +1450,14 @@ export default (pi: any) => {
 	 * key) never leaves the primary, so after a pull the follower has the extension and its address but not the key:
 	 * the apps then keep it off with "required". Saying so here tells the person what to type and where.
 	 */
-	const findNeedsInput = (list: unknown, states: unknown): { id: string; title: string; fields: string[] }[] => {
+	const findNeedsInput = (list: unknown, states: unknown, all: Record<string, Record<string, unknown>>): { id: string; title: string; fields: string[] }[] => {
 		if (!Array.isArray(list)) return [];
 		const on = plain(states) ? states : {};
 		const out: { id: string; title: string; fields: string[] }[] = [];
 		for (const item of list) {
 			const m = plain(item) && plain(item.manifest) ? item.manifest : null;
 			if (!m || typeof m.id !== "string" || !Array.isArray(m.settings) || on[m.id] !== true) continue;
-			const have = readExtensionSettings(m.id) ?? {};
+			const have = all[m.id] ?? {};
 			const lacking = (m.settings as unknown[]).filter(plain)
 				.filter((f) => f.required === true && f.readonly !== true && typeof f.key === "string" && (f.secret === true || CREDENTIAL_KEY.test(f.key)))
 				.filter((f) => { const v = have[f.key as string]; return v === undefined || v === null || v === ""; })
@@ -1269,9 +1469,9 @@ export default (pi: any) => {
 
 	/** The apps' extension list and on/off states, through `/client-settings` so open apps reload them. */
 	const applyClientExtensions = async (theirs: { list?: unknown; states?: unknown }): Promise<string[]> => {
-		const current = clientExtensionRows();
+		const current = await clientExtensionRows();
 		const changed: string[] = [];
-		needsInput = findNeedsInput(theirs.list ?? current.list, theirs.states ?? current.states);
+		needsInput = findNeedsInput(theirs.list ?? current.list, theirs.states ?? current.states, await extensionSettings());
 		for (const [key, value] of [["extensions", theirs.list], ["extensionStates", theirs.states]] as const) {
 			if (value === null || value === undefined) continue;
 			if (JSON.stringify(current[key === "extensions" ? "list" : "states"]) === JSON.stringify(value)) continue;
@@ -1288,7 +1488,7 @@ export default (pi: any) => {
 	 */
 	/** A key is set only where this server has none: a key typed here is never replaced by the primary's. */
 	const applyApiKeys = async (theirs: Record<string, string>): Promise<string[]> => {
-		const have = new Set((dbo().query("SELECT provider_id FROM credentials").all() as { provider_id: string }[]).map((r) => r.provider_id));
+		const have = await storedKeys();
 		const changed: string[] = [];
 		for (const [id, key] of Object.entries(theirs)) {
 			if (!/^[a-z][a-z0-9_-]{0,63}$/.test(id) || typeof key !== "string" || !key || have.has(id) || id === "voice_input") continue;
@@ -1302,7 +1502,7 @@ export default (pi: any) => {
 	};
 
 	const applyProviders = async (theirs: Record<string, Record<string, unknown>>): Promise<string[]> => {
-		const mine = providerRows();
+		const mine = await providerRows();
 		const changed: string[] = [];
 		for (const [id, value] of Object.entries(theirs)) {
 			if (!/^[a-z][a-z0-9_-]{0,63}$/.test(id) || !plain(value)) continue;
@@ -1310,7 +1510,7 @@ export default (pi: any) => {
 			const { id: __, ...current } = mine[id] ?? {};
 			if (mine[id] && JSON.stringify(Object.keys(current).sort().map((k) => [k, current[k]])) === JSON.stringify(Object.keys(body).sort().map((k) => [k, body[k]]))) continue;
 			const res = await own("PUT", `/configuration/providers/${id}`, body);
-			if (!res.ok) throw new Error(`pulled from the primary, but could not save the provider ${id} on this server (${res.status}: ${(await res.text()).slice(0, 200)})`);
+			if (!res.ok) throw new Error(`pulled from the primary, but could not save the provider ${id} on this server (${res.status}: ${reason(res)})`);
 			changed.push(`provider:${id}`);
 		}
 		return changed;
@@ -1322,26 +1522,23 @@ export default (pi: any) => {
 	 */
 	const applyExtensions = async (peer: Record<string, unknown>): Promise<string[]> => {
 		const changed: string[] = [];
-		for (const [id, value] of Object.entries(peer)) {
-			if (id === SELF_ID || !EXTENSION_ID.test(id) || !plain(value)) continue;
-			const current = readExtensionSettings(id);
+		const entries = Object.entries(peer).filter(([id, value]) => id !== SELF_ID && EXTENSION_ID.test(id) && plain(value));
+		if (!entries.length) return changed;
+		const all = await extensionSettings();
+		for (const [id, value] of entries as [string, Record<string, unknown>][]) {
+			const current = all[id];
 			// This server's own secrets win: a value typed here is never replaced. A key it lacks comes from the primary
 			// only when 비밀값 is on (the primary then sent them).
-			const own = Object.fromEntries(Object.entries(current ?? {}).filter(([k, v]) => CREDENTIAL_KEY.test(k) && v !== "" && v !== null && v !== undefined));
+			const mine = Object.fromEntries(Object.entries(current ?? {}).filter(([k, v]) => CREDENTIAL_KEY.test(k) && v !== "" && v !== null && v !== undefined));
 			const theirs = Object.fromEntries(Object.entries(value).filter(([k]) => wantSecrets() || !CREDENTIAL_KEY.test(k)));
-			const next = { ...theirs, ...own };
+			const next = { ...theirs, ...mine };
 			if (sameObject(current, next)) continue;
-			let res: Response;
+			let res: Answer;
 			try {
-				res = await fetch(`${ownUrl()}/extensions/${id}/settings`, {
-				method: "PUT",
-				headers: { authorization: `Bearer ${adminToken()}`, "content-type": "application/json" },
-				body: JSON.stringify({ settings: next }),
-				signal: AbortSignal.timeout(5_000),
-				});
+				res = await own("PUT", `/extensions/${id}/settings`, { settings: next });
 			} catch (e) {
 				// Not the primary's fault: say it is this server, so the page does not read "cannot connect" to the peer.
-				throw new Error(`pulled from the primary, but could not save the settings of ${id} on this server (${ownUrl()}): ${e instanceof Error ? e.message : String(e)}`);
+				throw new Error(`pulled from the primary, but could not save the settings of ${id} on this server: ${e instanceof Error ? e.message : String(e)}`);
 			}
 			if (!res.ok) throw new Error(`pulled from the primary, but could not save the settings of ${id} on this server (${res.status})`);
 			changed.push(`ext:${id}`);
@@ -1403,7 +1600,7 @@ export default (pi: any) => {
 				.finally(() => { busy = false; schedule(); showStatus(); });
 		};
 		const schedule = () => {
-			if (timer) return;
+			if (timer || gone) return;
 			// Right after a (re)start nothing has been checked yet: do it within seconds, not one interval later.
 			const wait = lastSyncAt === null && failures === 0 ? 3 : Math.min(interval * 2 ** Math.min(failures, 4), interval * MAX_BACKOFF);
 			timer = setTimeout(tick, wait * 1000);
@@ -1551,6 +1748,7 @@ export default (pi: any) => {
 	pi.on("extension_unload", () => clearInterval(tick));
 	pi.settings.onChange(refresh);
 	pi.on("extension_unload", () => {
+		gone = true;
 		if (timer) clearTimeout(timer);
 		timer = undefined;
 		try { db?.close(); } catch { /* already closed */ }
