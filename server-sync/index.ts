@@ -1,8 +1,9 @@
 // server-sync: mirrors the pipaya `settings` table of a primary server onto this one.
 //
 // Roles (chosen in the settings form):
-//   - "primary": serves its settings to the peer (the `snapshot` method below) and changes nothing itself.
-//   - "follower": polls the primary and applies what it sees. Its own conflicting edits are overwritten.
+//   - "primary": serves its settings to the peer (`snapshot`) and takes the follower's own edits (`push`).
+//   - "follower": polls the primary. What changed on one side goes to the other; when both changed the same item
+//     since the last sync, the primary wins. Installs, the apps' extension list and API keys only come down.
 //
 // One file on purpose. A server from before 0.8.4 busts the module cache for the entry file alone, so a folder
 // extension (`index.ts` + `store.ts`) kept running its old helper after a reload and failed with "Export named X not
@@ -64,6 +65,8 @@ interface Snapshot {
 	extensions?: Record<string, Record<string, unknown>>;
 	/** The rest of the environment, each part only when the follower asked for it (0.10.0+). */
 	environment?: Environment;
+	/** 1 when this primary takes a follower's own changes (`push`, 0.14.0+) */
+	push?: 1;
 }
 
 /** One installed extension that runs inside the server: enough for the follower to install the same version from the marketplace. */
@@ -307,9 +310,40 @@ function applyText(file: string, text: string | null, label: string): string[] {
 const sameObject = (a: Record<string, unknown> | undefined, b: Record<string, unknown>) =>
 	!!a && JSON.stringify(Object.keys(a).sort().map((k) => [k, a[k]])) === JSON.stringify(Object.keys(b).sort().map((k) => [k, b[k]]));
 
-/** Order-independent hash so a no-op sync is cheap to detect. */
-const hashOf = (settings: Record<string, unknown>) =>
-	createHash("sha256").update(JSON.stringify(Object.keys(settings).sort().map((k) => [k, settings[k]]))).digest("hex");
+/** Any JSON value as text with object keys sorted, so the same value always reads the same. */
+const stable = (v: unknown): string =>
+	JSON.stringify(v, (_k, x) => (plain(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
+/** Hash of one synced item; "" for an item that is not there. */
+const itemHash = (v: unknown): string => (v === undefined || v === null ? "" : createHash("sha256").update(stable(v)).digest("hex").slice(0, 32));
+/** An extension's settings without anything that looks like a credential: what travels both ways. */
+const publicOf = (o: Record<string, unknown> | undefined): Record<string, unknown> =>
+	Object.fromEntries(Object.entries(o ?? {}).filter(([k]) => !CREDENTIAL_KEY.test(k)));
+
+/** What both sides had at the last sync: each side's own hash (the two may store one value a little differently). */
+export type SyncBase = { p: string; f: string } | "local";
+
+/**
+ * One item of a two-way sync. `p` and `f` are its hash on the primary and here ("" = not there), `b` what both had at
+ * the last sync ("local" = it was only here then and stays here, undefined = never seen). What changed on one side goes
+ * to the other; when both changed, the primary wins. `first`: the first sync of this kind of item only pulls, as before
+ * (an item only here stays). `deletes`: a removal travels too (settings rows); a removed file never does, it comes back.
+ */
+export function decide(p: string, f: string, b: SyncBase | undefined, o: { first: boolean; deletes: boolean }): "same" | "pull" | "push" | "keep" {
+	if (p === f) return "same";
+	const pullOrKeep = p || o.deletes ? "pull" : "keep";
+	if (o.first) return pullOrKeep;
+	if (b === "local") return p ? "pull" : "keep";
+	if (b === undefined) return p ? "pull" : "push"; // never seen: made here goes up, otherwise the primary's wins
+	const primaryChanged = p !== b.p;
+	const hereChanged = f !== b.f;
+	if (!primaryChanged && !hereChanged) return "same"; // the two only store it differently: nothing to do
+	if (hereChanged && !primaryChanged) return f || o.deletes ? "push" : "pull";
+	return pullOrKeep; // changed on the primary, or on both: the primary wins
+}
+
+/** The kinds of item that sync both ways, and how each is hashed the same way on both servers. */
+type Kind = "rows" | "ext" | "skill" | "helper" | "agentsMd" | "provider";
+const providerHash = (row: Record<string, unknown> | undefined) => itemHash(row ? Object.fromEntries(Object.entries(publicOf(row)).filter(([k]) => k !== "id")) : undefined);
 
 export default (pi: any) => {
 	let db: Database | undefined;
@@ -352,6 +386,27 @@ export default (pi: any) => {
 		const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
 		writeFileSync(tmp, JSON.stringify(peer), { mode: 0o600 });
 		chmodSync(tmp, 0o600);
+		renameSync(tmp, file);
+	};
+	/**
+	 * What both servers had at the last sync, per two-way item (hashes only, never values), next to the peer file. It
+	 * belongs to one primary: another address starts over, and so does a kind whose box was turned off.
+	 */
+	type BaseFile = { url: string; seen: Kind[]; items: Partial<Record<Kind, Record<string, SyncBase>>> };
+	const baseFile = () => join(dirname(peerFile()), "sync-base.json");
+	const readBase = (url: string): BaseFile => {
+		try {
+			const v: unknown = JSON.parse(readFileSync(baseFile(), "utf8"));
+			if (plain(v) && v.url === url && Array.isArray(v.seen) && plain(v.items)) return v as unknown as BaseFile;
+		} catch { /* none yet */ }
+		return { url, seen: [], items: {} };
+	};
+	const writeBase = (b: BaseFile | null) => {
+		const file = baseFile();
+		if (!b) return rmSync(file, { force: true });
+		mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+		const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
+		writeFileSync(tmp, JSON.stringify(b), { mode: 0o600 });
 		renameSync(tmp, file);
 	};
 	/** Only a digest of the redeemed code is kept: enough to tell "the same link pasted again" from a new one. */
@@ -433,7 +488,7 @@ export default (pi: any) => {
 		const n = lastApplied.length;
 		const when = ago(lastSyncAt);
 		return n
-			? { ko: `● 연결됨 — ${when.ko} 확인, ${n}개 항목 가져옴`, en: `● Connected — checked ${when.en}, pulled ${n} item${n === 1 ? "" : "s"}` }
+			? { ko: `● 연결됨 — ${when.ko} 확인, ${n}개 항목 맞춤`, en: `● Connected — checked ${when.en}, ${n} item${n === 1 ? "" : "s"} matched` }
 			: { ko: `● 연결됨 — ${when.ko} 확인, 바뀐 것 없음`, en: `● Connected — checked ${when.en}, nothing changed` };
 	};
 
@@ -463,6 +518,7 @@ export default (pi: any) => {
 		retention: { ko: "보관 기간", en: "Retention" },
 	};
 	const keyLabel = (k: string): Text => {
+		if (k.startsWith("up:")) { const t = keyLabel(k.slice(3)); return { ko: `↑ 기준 서버에 반영: ${t.ko}`, en: `↑ Sent to the primary: ${t.en}` }; }
 		const [kind, rest = ""] = k.includes(":") ? [k.slice(0, k.indexOf(":")), k.slice(k.indexOf(":") + 1)] : ["", k];
 		if (kind === "ext") return { ko: `확장 설정: ${rest}`, en: `Extension settings: ${rest}` };
 		if (kind === "srv") return { ko: `확장 설치: ${rest}`, en: `Extension installed: ${rest}` };
@@ -502,10 +558,10 @@ export default (pi: any) => {
 			return {
 				type: "stack", id: "status", gap: "medium", children: [
 					{ type: "badge", id: "state", tone: "info", text: { ko: "기준 서버", en: "Primary" } },
-					{ type: "text", id: "what", text: { ko: "팔로워 서버가 이 서버의 설정을 가져갑니다.", en: "Follower servers pull this server's settings." } },
+					{ type: "text", id: "what", text: { ko: "팔로워 서버와 설정을 맞춥니다. 한쪽에서 바꾼 것은 다른 쪽에도 반영되고, 양쪽에서 같은 항목을 바꾸면 이 서버(기준) 값이 이깁니다.", en: "Keeps follower servers in step with this one. A change on either side reaches the other; when both changed the same item, this server (the primary) wins." } },
 					...(url ? [{ type: "stat", id: "address", label: { ko: "이 서버 주소", en: "This server's address" }, value: hostOf(url) }] : []),
 					{ type: "text", id: "how", size: "small", text: { ko: "팔로워를 연결하려면: 이 서버의 기기 탭 → [연결 링크 복사] → 팔로워의 연결 링크 칸에 붙여넣기", en: "To connect a follower: this server's Devices tab → [Copy connection link] → paste it into the follower's link field" } },
-					{ type: "text", id: "pick", size: "small", text: { ko: "무엇을 가져갈지(앱 설정·확장·스킬 등)는 팔로워 서버의 이 화면에서 고릅니다.", en: "What to pull (app settings, extensions, skills, …) is picked on the follower's own page." } },
+					{ type: "text", id: "pick", size: "small", text: { ko: "무엇을 맞출지(앱 설정·확장·스킬 등)는 팔로워 서버의 이 화면에서 고릅니다. 확장 설치, 앱의 확장 목록, API 키는 이 서버에서 팔로워로만 갑니다.", en: "What to keep in step (app settings, extensions, skills, …) is picked on the follower's page. Installs, the apps' extension list and API keys only go from here to followers." } },
 					settings().shareSecrets === true
 						? { type: "alert", id: "secrets-on", tone: "warning", text: { ko: "비밀값 내보내기가 켜져 있습니다. 팔로워가 요청하면 이 서버의 모델 API 키와 확장 토큰을 건네줍니다. 내 서버가 아니면 끄세요.", en: "Sharing secrets is on. A follower that asks gets this server's model API keys and extension tokens. Turn it off unless the follower is yours." } }
 						: { type: "text", id: "secrets-off", size: "small", text: { ko: "API 키·토큰은 나가지 않습니다(비밀값 내보내기 꺼짐).", en: "API keys and tokens do not leave (sharing secrets is off)." } },
@@ -535,7 +591,7 @@ export default (pi: any) => {
 		} else {
 			children.push({ type: "grid", id: "numbers", columns: 3, children: [
 				{ type: "stat", id: "peer", label: { ko: "기준 서버", en: "Primary" }, value: hostOf(url) },
-				{ type: "stat", id: "pulled", label: { ko: "지난번 가져온 항목", en: "Pulled last time" }, value: lastSyncAt === null ? "—" : lastApplied.length ? { ko: `${lastApplied.length}개`, en: String(lastApplied.length) } : { ko: "변경 없음", en: "No changes" } },
+				{ type: "stat", id: "pulled", label: { ko: "지난번 맞춘 항목", en: "Matched last time" }, value: lastSyncAt === null ? "—" : lastApplied.length ? { ko: `${lastApplied.length}개`, en: String(lastApplied.length) } : { ko: "변경 없음", en: "No changes" } },
 				{ type: "stat", id: "next", label: { ko: "다음 동기화", en: "Next sync" }, value: pulling || busy ? { ko: "지금", en: "now" } : next ?? { ko: "곧", en: "soon" } },
 			] });
 		}
@@ -588,7 +644,7 @@ export default (pi: any) => {
 
 	pi.registerMethod("snapshot", (params: unknown): Snapshot => {
 		const list = keys();
-		const snap: Snapshot = { keys: list, settings: readSettings(dbo(), list) };
+		const snap: Snapshot = { keys: list, settings: readSettings(dbo(), list), push: 1 };
 		// Only when the follower asks: most never want them, and they are the bulkiest part.
 		// Secrets of extensions (their own settings file) go only when this server's owner allows it AND the follower asked.
 		if (plain(params) && params.extensions === true) snap.extensions = allExtensionSettings(settings().shareSecrets === true && params.secrets === true);
@@ -691,6 +747,86 @@ export default (pi: any) => {
 	};
 
 	pi.registerMethod("status", () => status());
+
+	const agentsHome = () => (typeof pi.home === "string" && pi.home ? pi.home : homedir());
+	/** This server's items of one two-way kind, by id (rows: the mirrored keys; agentsMd: the one id "AGENTS.md"). */
+	const localItems = (kind: Kind, list: readonly string[]): Record<string, unknown> => {
+		const home = agentsHome();
+		if (kind === "rows") return readSettings(dbo(), list);
+		if (kind === "ext") return allExtensionSettings(false);
+		if (kind === "skill") return readFolders(join(home, ".agents", "skills"));
+		if (kind === "helper") return readFiles(join(home, ".agents", "subagents"), /\.md$/);
+		if (kind === "agentsMd") { const t = readText(join(home, ".agents", "AGENTS.md")); return t === null ? {} : { "AGENTS.md": t }; }
+		return providerRows();
+	};
+	const hashOfItem = (kind: Kind, v: unknown): string =>
+		kind === "ext" ? itemHash(plain(v) ? publicOf(v) : undefined) : kind === "provider" ? providerHash(plain(v) ? v : undefined) : itemHash(v);
+	const hashesOf = (kind: Kind, items: Record<string, unknown>): Record<string, string> =>
+		Object.fromEntries(Object.entries(items).map(([id, v]) => [id, hashOfItem(kind, v)]));
+
+	/**
+	 * A follower's own changes, made there since the last sync (it decided that; the primary wins a conflict by sending
+	 * its value back on the next pull). Taken only on the primary, only for what this server mirrors anyway, and never a
+	 * secret, an install or code: settings rows, the public settings of extensions installed here, skill/helper/AGENTS.md
+	 * text and model connections. Each goes through this server's own route or the same writes a pull does, so this
+	 * server's apps hear about it. The caller is a paired device (the follower's token), like any client of this server.
+	 */
+	pi.registerMethod("push", async (params: unknown) => {
+		if (role() !== "primary") throw new Error("this server is not a primary");
+		if (!plain(params)) throw new Error("nothing to push");
+		const changed: string[] = [];
+		const list = keys();
+		if (plain(params.settings) || Array.isArray(params.deleted)) {
+			const rows = plain(params.settings) ? params.settings : {};
+			const gone = Array.isArray(params.deleted) ? params.deleted.filter((k): k is string => typeof k === "string") : [];
+			const touched = [...Object.keys(rows), ...gone].filter((k) => list.includes(k));
+			const next: Record<string, unknown> = { ...readSettings(dbo(), touched) };
+			for (const k of touched) if (k in rows) next[k] = rows[k];
+			for (const k of gone) if (list.includes(k)) delete next[k];
+			changed.push(...applySnapshot(dbo(), touched, next));
+		}
+		if (plain(params.extensions)) {
+			for (const [id, value] of Object.entries(params.extensions)) {
+				if (id === SELF_ID || !EXTENSION_ID.test(id) || !plain(value) || !existsSync(join(dataDir(), "extensions", id))) continue;
+				const current = readExtensionSettings(id) ?? {};
+				// never a secret from the follower, and this server's own secrets stay
+				const next = { ...publicOf(value), ...Object.fromEntries(Object.entries(current).filter(([k]) => CREDENTIAL_KEY.test(k))) };
+				if (sameObject(current, next)) continue;
+				const res = await own("PUT", `/extensions/${id}/settings`, { settings: next });
+				if (!res.ok) throw new Error(`could not save the settings of ${id} (${res.status})`);
+				changed.push(`ext:${id}`);
+			}
+		}
+		const home = agentsHome();
+		if (plain(params.skills)) changed.push(...applyFolders(join(home, ".agents", "skills"), params.skills as Record<string, FileSet>, "skill"));
+		if (plain(params.subagents)) changed.push(...applyFiles(join(home, ".agents", "subagents"), params.subagents as FileSet, /\.md$/, "helper"));
+		if (typeof params.agentsMd === "string") changed.push(...applyText(join(home, ".agents", "AGENTS.md"), params.agentsMd, "agents-md"));
+		if (plain(params.providers)) {
+			const clean = Object.fromEntries(Object.entries(params.providers).filter(([, v]) => plain(v)).map(([id, v]) => [id, publicOf(v as Record<string, unknown>)]));
+			changed.push(...(await applyProviders(clean)));
+		}
+		if (changed.length) {
+			log(`took from a follower: ${changed.join(", ")}`);
+			pi.emit(null, "synced", { keys: changed, at: Date.now(), from: "follower" }, { ephemeral: true });
+		}
+		// What this server holds now for every item it was sent, hashed as a follower hashes it: the follower's next
+		// comparison starts from there, so a value this server stores a little differently is not a change.
+		const sent: Partial<Record<Kind, string[]>> = {
+			rows: [...Object.keys(plain(params.settings) ? params.settings : {}), ...(Array.isArray(params.deleted) ? params.deleted.filter((k): k is string => typeof k === "string") : [])],
+			ext: Object.keys(plain(params.extensions) ? params.extensions : {}),
+			skill: Object.keys(plain(params.skills) ? params.skills : {}),
+			helper: Object.keys(plain(params.subagents) ? params.subagents : {}),
+			agentsMd: typeof params.agentsMd === "string" ? ["AGENTS.md"] : [],
+			provider: Object.keys(plain(params.providers) ? params.providers : {}),
+		};
+		const hashes: Partial<Record<Kind, Record<string, string>>> = {};
+		for (const [kind, ids] of Object.entries(sent) as [Kind, string[]][]) {
+			if (!ids.length) continue;
+			const now = localItems(kind, kind === "rows" ? ids.filter((k) => list.includes(k)) : []);
+			hashes[kind] = Object.fromEntries(ids.map((id) => [id, hashOfItem(kind, now[id])]));
+		}
+		return { applied: changed, hashes };
+	});
 
 	/** This server's address as a peer should reach it: the Tailscale/LAN address of this box. */
 	const publicUrl = (): string => {
@@ -808,13 +944,60 @@ export default (pi: any) => {
 		});
 		if (res.status === 401 || res.status === 403) throw new Error(`the peer refused the token (${res.status})`);
 		if (!res.ok) throw new Error(`the peer answered ${res.status}`);
-		const body = (await res.json()) as { result?: { keys?: unknown; settings?: unknown; extensions?: unknown; environment?: unknown } };
+		const body = (await res.json()) as { result?: { keys?: unknown; settings?: unknown; extensions?: unknown; environment?: unknown; push?: unknown } };
 		const peer = body.result?.settings;
 		if (!peer || typeof peer !== "object" || Array.isArray(peer)) throw new Error("the peer returned no settings");
 		const list = pickedKeys(mirrorKeys(body.result?.keys, keys()));
-		const mine = readSettings(dbo(), list);
-		const theirs = Object.fromEntries(list.filter((k) => k in peer).map((k) => [k, (peer as Record<string, unknown>)[k]]));
-		const changed = hashOf(theirs) === hashOf(mine) ? [] : applySnapshot(dbo(), list, peer as Record<string, unknown>);
+		const changed: string[] = [];
+		// Two ways only with a primary that takes changes (0.14.0+); an older one is pulled from, as before.
+		const twoWay = body.result?.push === 1;
+		const base = readBase(url);
+		const planned: Kind[] = [];
+		/** Decide every item of one kind: what comes down, what goes up; the items already equal are recorded at once. */
+		const plan = (kind: Kind, theirs: Record<string, unknown>, ids?: readonly string[]) => {
+			planned.push(kind);
+			const mine = localItems(kind, list);
+			const items = (base.items[kind] ??= {});
+			const p = hashesOf(kind, theirs);
+			const f = hashesOf(kind, mine);
+			const first = !twoWay || !base.seen.includes(kind);
+			const known = base.items[kind] ?? {};
+			const out = { pull: [] as string[], push: [] as string[], mine, p };
+			for (const id of ids ?? [...new Set([...Object.keys(theirs), ...Object.keys(mine)])]) {
+				const hp = p[id] ?? "";
+				const hf = f[id] ?? "";
+				// a row never seen while its box was on (just turned on again) also starts by pulling
+				const fresh = kind === "rows" && base.seen.includes("rows") && !(id in known) && (hp !== "" || hf === "");
+				const d = decide(hp, hf, items[id], { first: first || fresh, deletes: kind === "rows" });
+				if (d === "pull") out.pull.push(id);
+				else if (d === "push" && twoWay) out.push.push(id);
+				else if (d === "keep") items[id] = "local";
+				else if (!hp && !hf) delete items[id];
+				else if (d === "same") items[id] = { p: hp, f: hf };
+			}
+			return out;
+		};
+		/** After pulling: both sides now hold the primary's value, hashed as each stores it. */
+		const settle = (kind: Kind, ids: readonly string[], p: Record<string, string>) => {
+			if (!ids.length) return;
+			const now = hashesOf(kind, localItems(kind, list));
+			const items = (base.items[kind] ??= {});
+			for (const id of ids) {
+				const hp = p[id] ?? "";
+				const hf = now[id] ?? "";
+				if (!hp && !hf) delete items[id];
+				else items[id] = { p: hp, f: hf };
+			}
+		};
+		/** What goes up, gathered over every kind and sent once the pulls are done. */
+		const up: { kind: Kind; ids: string[]; mine: Record<string, unknown> }[] = [];
+		const peerRows = Object.fromEntries(list.filter((k) => k in peer).map((k) => [k, (peer as Record<string, unknown>)[k]]));
+		// A row whose box is off forgets its history: turned on again, it starts by pulling (its first sync again).
+		for (const k of Object.keys(base.items.rows ?? {})) if (!list.includes(k)) delete base.items.rows![k];
+		const rows = plan("rows", peerRows, list);
+		if (rows.pull.length) changed.push(...applySnapshot(dbo(), rows.pull, peer as Record<string, unknown>));
+		settle("rows", rows.pull, rows.p);
+		up.push({ kind: "rows", ids: rows.push, mine: rows.mine });
 		// Server extensions first: a pulled extension's settings need the extension installed to mean anything.
 		// A primary older than 0.10.0 sends no environment: nothing to do, not an error.
 		const env = plain(body.result?.environment) ? (body.result.environment as Environment) : {};
@@ -832,14 +1015,107 @@ export default (pi: any) => {
 			};
 			changed.push(...(await applyServerExtensions(env.serverExtensions, fetchCode)));
 		}
+		const pick = <T,>(from: Record<string, T>, ids: readonly string[]) => Object.fromEntries(ids.filter((id) => id in from).map((id) => [id, from[id]!]));
 		// A primary older than 0.8.0 sends no extensions: nothing to do, not an error.
-		if (withExtensions && plain(body.result?.extensions)) changed.push(...(await applyExtensions(body.result.extensions)));
-		const home = typeof pi.home === "string" && pi.home ? pi.home : homedir();
+		if (withExtensions && plain(body.result?.extensions)) {
+			const theirs = body.result.extensions as Record<string, Record<string, unknown>>;
+			const ext = plan("ext", theirs);
+			changed.push(...(await applyExtensions(pick(theirs, ext.pull))));
+			// A secret the primary sent (비밀값 on both sides) fills a gap here even when nothing else differs.
+			if (wantSecrets()) {
+				const fill: Record<string, Record<string, unknown>> = {};
+				for (const [id, v] of Object.entries(theirs)) {
+					if (ext.pull.includes(id) || !plain(v)) continue;
+					const cur = readExtensionSettings(id) ?? {};
+					const lacking = Object.entries(v).filter(([k, x]) => CREDENTIAL_KEY.test(k) && x !== "" && x !== null && x !== undefined && (cur[k] === undefined || cur[k] === null || cur[k] === ""));
+					if (lacking.length) fill[id] = { ...cur, ...Object.fromEntries(lacking) };
+				}
+				changed.push(...(await applyExtensions(fill)));
+			}
+			settle("ext", ext.pull, ext.p);
+			up.push({ kind: "ext", ids: ext.push, mine: ext.mine });
+		}
+		const home = agentsHome();
 		if (parts.includes("clientExtensions") && plain(env.clientExtensions)) changed.push(...(await applyClientExtensions(env.clientExtensions)));
-		if (parts.includes("skills") && plain(env.skills)) changed.push(...applyFolders(join(home, ".agents", "skills"), env.skills as Record<string, FileSet>, "skill"));
-		if (parts.includes("subagents") && plain(env.subagents)) changed.push(...applyFiles(join(home, ".agents", "subagents"), env.subagents as FileSet, /\.md$/, "helper"));
-		if (parts.includes("agentsMd") && "agentsMd" in env) changed.push(...applyText(join(home, ".agents", "AGENTS.md"), env.agentsMd ?? null, "agents-md"));
-		if (parts.includes("providers") && plain(env.providers)) changed.push(...(await applyProviders(env.providers as Record<string, Record<string, unknown>>)));
+		if (parts.includes("skills") && plain(env.skills)) {
+			const theirs = env.skills as Record<string, FileSet>;
+			const r = plan("skill", theirs);
+			changed.push(...applyFolders(join(home, ".agents", "skills"), pick(theirs, r.pull), "skill"));
+			settle("skill", r.pull, r.p);
+			up.push({ kind: "skill", ids: r.push, mine: r.mine });
+		}
+		if (parts.includes("subagents") && plain(env.subagents)) {
+			const theirs = env.subagents as FileSet;
+			const r = plan("helper", theirs);
+			changed.push(...applyFiles(join(home, ".agents", "subagents"), pick(theirs, r.pull), /\.md$/, "helper"));
+			settle("helper", r.pull, r.p);
+			up.push({ kind: "helper", ids: r.push, mine: r.mine });
+		}
+		if (parts.includes("agentsMd") && "agentsMd" in env) {
+			const theirs: Record<string, string> = typeof env.agentsMd === "string" ? { "AGENTS.md": env.agentsMd } : {};
+			const r = plan("agentsMd", theirs, ["AGENTS.md"]);
+			if (r.pull.length) changed.push(...applyText(join(home, ".agents", "AGENTS.md"), theirs["AGENTS.md"] ?? null, "agents-md"));
+			settle("agentsMd", r.pull, r.p);
+			up.push({ kind: "agentsMd", ids: r.push, mine: r.mine });
+		}
+		if (parts.includes("providers") && plain(env.providers)) {
+			const theirs = env.providers as Record<string, Record<string, unknown>>;
+			const r = plan("provider", theirs);
+			changed.push(...(await applyProviders(pick(theirs, r.pull))));
+			settle("provider", r.pull, r.p);
+			up.push({ kind: "provider", ids: r.push, mine: r.mine });
+		}
+		// A kind no longer synced forgets its history: turned on again later, it starts by pulling, like the first time.
+		for (const kind of Object.keys(base.items) as Kind[]) if (!planned.includes(kind)) delete base.items[kind];
+		base.seen = twoWay ? [...planned] : base.seen.filter((k) => planned.includes(k));
+		writeBase(base);
+		// Then what changed here goes up. A failure leaves the history as it was, so the next sync tries again.
+		const sendUp = async (params: Record<string, unknown>): Promise<{ applied: string[]; hashes: Partial<Record<Kind, Record<string, string>>> }> => {
+			const r = await fetch(`${url}/server-extensions/server-sync/methods/push`, {
+				method: "POST",
+				headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+				body: JSON.stringify(params),
+				signal: AbortSignal.timeout(30_000),
+			});
+			if (!r.ok) throw new Error(`could not send this server's changes to the primary (${r.status}: ${(await r.text()).slice(0, 200)})`);
+			const b = (await r.json()) as { result?: { applied?: unknown; hashes?: unknown } };
+			return {
+				applied: Array.isArray(b.result?.applied) ? b.result.applied.filter((x): x is string => typeof x === "string") : [],
+				hashes: plain(b.result?.hashes) ? (b.result.hashes as Partial<Record<Kind, Record<string, string>>>) : {},
+			};
+		};
+		const batches: Record<string, unknown>[] = [];
+		const main: Record<string, unknown> = {};
+		for (const { kind, ids, mine } of up) {
+			if (!ids.length) continue;
+			if (kind === "rows") {
+				main.settings = pick(mine, ids);
+				main.deleted = ids.filter((id) => !(id in mine));
+			} else if (kind === "ext") main.extensions = Object.fromEntries(ids.filter((id) => id in mine).map((id) => [id, publicOf(mine[id] as Record<string, unknown>)]));
+			else if (kind === "helper") main.subagents = pick(mine, ids);
+			else if (kind === "agentsMd") { if (typeof mine["AGENTS.md"] === "string") main.agentsMd = mine["AGENTS.md"]; }
+			else if (kind === "provider") main.providers = Object.fromEntries(ids.filter((id) => id in mine).map((id) => [id, publicOf(mine[id] as Record<string, unknown>)]));
+			// a skill can be up to 2 MB: one request each, under the server's body limit
+			else if (kind === "skill") for (const id of ids) if (id in mine) batches.push({ skills: { [id]: mine[id] } });
+		}
+		if (Object.keys(main).length) batches.unshift(main);
+		for (const params of batches) {
+			const res = await sendUp(params);
+			changed.push(...res.applied.map((k) => `up:${k}`));
+			for (const { kind, ids, mine } of up) {
+				const got = res.hashes[kind];
+				if (!got) continue;
+				const items = (base.items[kind] ??= {});
+				const f = hashesOf(kind, mine);
+				for (const id of ids) {
+					if (!(id in got)) continue;
+					const hp = typeof got[id] === "string" ? got[id]! : "";
+					if (!hp && !f[id]) delete items[id];
+					else items[id] = { p: hp, f: f[id] ?? "" };
+				}
+			}
+			writeBase(base);
+		}
 		if (parts.includes("apiKeys") && plain(env.apiKeys)) changed.push(...(await applyApiKeys(env.apiKeys as Record<string, string>)));
 		if (parts.includes("agentExtensions") && plain(env.agentExtensions)) {
 			const dir = join(home, ".agents", "extensions");
@@ -867,7 +1143,7 @@ export default (pi: any) => {
 				signal: AbortSignal.timeout(60_000),
 			});
 		} catch (e) {
-			throw new Error(`pulled from the primary, but could not reach this server (${ownUrl()}): ${e instanceof Error ? e.message : String(e)}`);
+			throw new Error(`could not reach this server itself (${ownUrl()}): ${e instanceof Error ? e.message : String(e)}`);
 		}
 	};
 
@@ -1227,6 +1503,7 @@ export default (pi: any) => {
 			} else if (e.id === "disconnect") {
 				// Forget the token and the address; the primary can revoke the token in its Devices tab.
 				writePeer(null);
+				writeBase(null);
 				lastSyncAt = null;
 				lastApplied = [];
 				lastError = null;

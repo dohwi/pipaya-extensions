@@ -4,7 +4,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import factory from "./index.ts";
+import factory, { decide } from "./index.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "server-sync-"));
 const file = join(dir, "pipaya.db");
@@ -354,5 +354,36 @@ describe("the page after a pull", () => {
 		const last = panels.at(-1)!;
 		expect(last).not.toContain('"value":{"ko":"지금"');
 		expect(last).toContain("연결 실패");
+	});
+});
+
+describe("decide: one item of a two-way sync", () => {
+	const b = (p: string, f = p) => ({ p, f });
+	const later = { first: false, deletes: true };
+	const files = { first: false, deletes: false };
+	test("equal, or only stored differently: nothing to do", () => {
+		expect(decide("x", "x", b("x"), later)).toBe("same");
+		expect(decide("px", "fx", b("px", "fx"), later)).toBe("same");
+	});
+	test("changed on one side goes to the other", () => {
+		expect(decide("x", "y", b("x"), later)).toBe("push");
+		expect(decide("y", "x", b("x"), later)).toBe("pull");
+	});
+	test("changed on both: the primary wins", () => {
+		expect(decide("p2", "f2", b("x"), later)).toBe("pull");
+	});
+	test("the first sync only pulls; an item only here stays", () => {
+		expect(decide("x", "y", undefined, { first: true, deletes: true })).toBe("pull");
+		expect(decide("", "y", undefined, { first: true, deletes: false })).toBe("keep");
+	});
+	test("made here after the first sync goes up; one marked 'only here' stays", () => {
+		expect(decide("", "y", undefined, later)).toBe("push");
+		expect(decide("", "y", "local", later)).toBe("keep");
+	});
+	test("a removed row travels; a removed file comes back, and one removed on the primary stays here", () => {
+		expect(decide("x", "", b("x"), later)).toBe("push");
+		expect(decide("", "x", b("x"), later)).toBe("pull");
+		expect(decide("x", "", b("x"), files)).toBe("pull");
+		expect(decide("", "x", b("x"), files)).toBe("keep");
 	});
 });

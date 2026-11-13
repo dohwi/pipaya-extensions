@@ -1,6 +1,6 @@
 # server-sync
 
-An extension that makes one pipaya server (the **follower**) match another (the **primary**): its settings and, box by box, what is installed there — extensions, their settings, skill files, helper roles, the global AGENTS.md and model providers — so two servers you use behave the same without configuring each by hand.
+An extension that keeps one pipaya server (the **follower**) and another (the **primary**) in step, both ways,: its settings and, box by box, what is installed there — extensions, their settings, skill files, helper roles, the global AGENTS.md and model providers — so two servers you use behave the same without configuring each by hand.
 
 The settings page is in Korean: `pipaya.settings` labels are plain strings with no per-language form, and the author's servers are Korean.
 
@@ -18,6 +18,28 @@ Extra keys can be added in the settings form (`keys`, comma separated). Keys tha
 **The primary decides the list.** The follower asks for exactly the keys the primary says it mirrors, so a row that is missing on the primary means "deleted there" and is deleted here too — it never means "this side happens to mirror one more key".
 
 **Never synced:** conversations, sessions, events, logins (oauth), and this extension's own settings. Those stay per-server. API keys and tokens only with the option in "Secrets" below.
+
+## Both ways, the primary wins
+
+A follower and its primary are kept in step **both ways**. What was changed on one side since the last sync goes to the
+other; when both changed the same item, the primary's value wins. The follower keeps what both had at the last sync
+(hashes only, never values) in `extension-data/server-sync/sync-base.json` to tell "changed here" from "changed there".
+
+| Item | Both ways | Only primary → follower |
+|---|---|---|
+| Settings rows (앱 설정) | yes, removals too | |
+| Extension settings values | yes, without tokens or keys | tokens/keys with the secrets option |
+| Skill folders, helper roles, AGENTS.md | yes, new and edited ones (a removed file comes back) | |
+| Model connections | yes, without the API key | API keys with the secrets option |
+| Extension installs and code, the apps' extension list and on/off | | yes |
+
+- The **first sync** of each box (a new connection, a box just turned on) only pulls, as before: the primary's values
+  are taken, and what was only on the follower stays there and is not sent up.
+- A follower's change is sent to the primary's `push` method, which saves it through the primary's own routes (so its
+  apps hear about it). It takes only what it mirrors anyway, never a secret, an install or code, and only while its
+  role is primary. The primary keeps its own secrets when it takes extension settings.
+- A primary older than 0.14.0 has no `push`: the follower then only pulls, as before.
+- Turning a box off forgets its history; turned on again it starts by pulling.
 
 ## What a follower picks
 
@@ -80,8 +102,9 @@ lists those extensions and the values to type in once. Everything else about the
 ## What it reads, runs and sends
 
 - **Reads** the server's own SQLite database (`PIPAYA_DB`, or `<PIPAYA_DATA_DIR|~/.pipaya>/pipaya.db`): the `settings` table, and with the boxes above `client_settings` and `custom_providers` (and `credentials` only for the keys of the secrets option). On the primary it also reads `~/.agents/{skills,subagents,AGENTS.md}` and the extension folders when a follower asks for them.
+- **Writes** on the primary, only what a follower changed (`push`): settings rows, `~/.agents/{skills,subagents,AGENTS.md}`, extension settings and providers through its own routes.
 - **Writes** on the follower, only for checked boxes: settings rows, `~/.agents/{skills,subagents,AGENTS.md}`, and the rest through its own server's routes (install, `/extensions/:id/settings`, `/client-settings/:key`, `/configuration/providers/:id`).
-- **Network**: the follower talks to exactly one URL, the `remoteUrl` you configure: `POST /pairing/redeem` once to trade the code for a token, then `POST /server-extensions/server-sync/methods/snapshot` with that token. With the boxes above it also calls its own server (at its bound address, `PIPAYA_HOST`/`PIPAYA_PORT`) to save what it pulled, and reads the marketplace index (`raw.githubusercontent.com/dohwi/pipaya-marketplace`) to find an extension's pinned source. The primary only answers its own `/pairing` when asked for a code. Nothing else is sent anywhere.
+- **Network**: the follower talks to exactly one URL, the `remoteUrl` you configure: `POST /pairing/redeem` once to trade the code for a token, then `POST /server-extensions/server-sync/methods/snapshot` with that token, and `.../methods/push` with its own changes. With the boxes above it also calls its own server (at its bound address, `PIPAYA_HOST`/`PIPAYA_PORT`) to save what it pulled, and reads the marketplace index (`raw.githubusercontent.com/dohwi/pipaya-marketplace`) to find an extension's pinned source. The primary only answers its own `/pairing` when asked for a code. Nothing else is sent anywhere.
 - The device token is stored in the extension's own data folder (`extension-data/server-sync/peer.json`, mode 0600), not in its settings: the app's form saves only the fields it shows, so a token kept there was wiped by the next save. It is never logged and never appears in the status below. A token an older version kept in the settings moves there on load.
 
 ## Roles

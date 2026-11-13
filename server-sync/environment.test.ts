@@ -54,6 +54,7 @@ const boot = (s: typeof P, settings: Record<string, unknown>) => {
 let primary: Map<string, (p?: unknown) => unknown>;
 let peer: ReturnType<typeof Bun.serve>;
 let self: ReturnType<typeof Bun.serve>;
+let primarySelf: ReturnType<typeof Bun.serve>;
 const calls: { method: string; path: string; body: unknown }[] = [];
 const realFetch = globalThis.fetch;
 
@@ -63,7 +64,15 @@ beforeAll(() => {
 		port: 0,
 		async fetch(req) {
 			const body = await req.text();
-			return as(P, async () => Response.json({ result: await primary.get("snapshot")!(body ? JSON.parse(body) : null) }));
+			const method = new URL(req.url).pathname.split("/").pop()!;
+			process.env.PIPAYA_PORT = String(primarySelf.port);
+			try {
+				return await as(P, async () => Response.json({ result: await primary.get(method)!(body ? JSON.parse(body) : null) }));
+			} catch (e) {
+				return new Response(e instanceof Error ? e.message : String(e), { status: 400 });
+			} finally {
+				process.env.PIPAYA_PORT = String(self.port);
+			}
 		},
 	});
 	// The follower's own server: the routes server-sync calls to apply what it pulled.
@@ -97,6 +106,22 @@ beforeAll(() => {
 			return new Response("no", { status: 404 });
 		},
 	});
+	// The primary's own server: what `push` saves goes through its routes.
+	primarySelf = Bun.serve({
+		port: 0,
+		async fetch(req) {
+			const url = new URL(req.url);
+			const body = req.method === "GET" ? null : await req.json();
+			const settingsOf = url.pathname.match(/^\/extensions\/([a-z0-9-]+)\/settings$/)?.[1];
+			if (settingsOf && req.method === "PUT") {
+				write(join(P.data, "extensions", settingsOf, "settings.json"), JSON.stringify((body as { settings: unknown }).settings));
+				return Response.json({ applied: true });
+			}
+			const provider = url.pathname.match(/^\/configuration\/providers\/([a-z0-9_-]+)$/)?.[1];
+			if (provider) { sql(P.db, "INSERT OR REPLACE INTO custom_providers (id, data) VALUES (?, ?)", provider, JSON.stringify({ ...(body as object), id: provider })); return Response.json({}); }
+			return new Response("no", { status: 404 });
+		},
+	});
 	// The marketplace, as the follower reads it.
 	globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
 		const url = String(input instanceof Request ? input.url : input);
@@ -113,6 +138,7 @@ afterAll(() => {
 	delete process.env.PIPAYA_PORT;
 	peer.stop(true);
 	self.stop(true);
+	primarySelf.stop(true);
 	rmSync(root, { recursive: true, force: true });
 });
 
@@ -388,5 +414,129 @@ describe("secrets: only when both sides allow it", () => {
 		await follower({ syncProviders: true, syncSecrets: true, syncExtensions: true }).sync();
 		expect(JSON.parse(rows(F.db, "SELECT data FROM credentials WHERE provider_id = 'cliproxy'")[0]!.data as string).key).toBe("sk-mine");
 		expect(JSON.parse(readFileSync(join(F.data, "extensions", "quota-monitor", "settings.json"), "utf8")).httpToken).toBe("tok-mine");
+	});
+});
+
+describe("two ways: what changed on one side goes to the other, the primary wins a conflict", () => {
+	const row = (file: string, key: string) => {
+		const r = rows(file, `SELECT data FROM settings WHERE key = '${key}'`)[0];
+		return r ? JSON.parse(r.data as string) : undefined;
+	};
+	const setRow = (file: string, key: string, v: unknown) => sql(file, "INSERT OR REPLACE INTO settings (key, data) VALUES (?, ?)", key, JSON.stringify(v));
+	const dropRow = (file: string, key: string) => sql(file, "DELETE FROM settings WHERE key = ?", key);
+	const extOf = (s: typeof P, id: string) => JSON.parse(readFileSync(join(s.data, "extensions", id, "settings.json"), "utf8"));
+	let f: ReturnType<typeof follower>;
+	const dataDir = mkdtempSync(join(root, "two-way-"));
+
+	test("the first sync only pulls, as before: a follower's own value does not overwrite the primary", async () => {
+		primary = boot(P, { role: "primary" });
+		setRow(P.db, "default_model", { provider: "a", model: "primary" });
+		setRow(F.db, "default_model", { provider: "a", model: "follower-old" });
+		// one follower, one history file, through the whole describe
+		const settings: Record<string, unknown> = { role: "follower", remoteUrl: `http://127.0.0.1:${peer.port}`, remoteToken: "t", syncApp: true, syncExtensions: true, syncAgent: true, syncProviders: true };
+		const methods = new Map<string, (p?: unknown) => unknown>();
+		as(F, () => factory({
+			home: F.home, dataDir,
+			settings: { get: () => settings, set: (n: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, n); return settings; }, onChange: () => () => {} },
+			log: () => {}, registerMethod: (n: string, fn: (p?: unknown) => unknown) => void methods.set(n, fn), emit: () => {}, on: () => {},
+		}));
+		f = { methods, settings, sync: () => as(F, () => methods.get("sync")!()) as Promise<{ applied: string[] }> };
+		await f.sync();
+		expect(row(F.db, "default_model").model).toBe("primary");
+		expect(row(P.db, "default_model").model).toBe("primary");
+	});
+
+	test("a change made on the follower goes up to the primary and stays on both", async () => {
+		setRow(F.db, "default_model", { provider: "a", model: "follower-new" });
+		const res = await f.sync();
+		expect(res.applied).toContain("up:default_model");
+		expect(row(P.db, "default_model").model).toBe("follower-new");
+		await f.sync(); // nothing flips back
+		expect(row(F.db, "default_model").model).toBe("follower-new");
+		expect(row(P.db, "default_model").model).toBe("follower-new");
+	});
+
+	test("a change made on the primary still comes down", async () => {
+		setRow(P.db, "default_model", { provider: "a", model: "primary-2" });
+		await f.sync();
+		expect(row(F.db, "default_model").model).toBe("primary-2");
+	});
+
+	test("both changed the same item: the primary wins", async () => {
+		setRow(P.db, "default_model", { provider: "a", model: "primary-3" });
+		setRow(F.db, "default_model", { provider: "a", model: "follower-3" });
+		await f.sync();
+		expect(row(F.db, "default_model").model).toBe("primary-3");
+		expect(row(P.db, "default_model").model).toBe("primary-3");
+	});
+
+	test("a row removed on the follower is removed on the primary; one removed on the primary goes here", async () => {
+		setRow(P.db, "image_model", { provider: "a", model: "img" });
+		await f.sync();
+		expect(row(F.db, "image_model")).toBeDefined();
+		dropRow(F.db, "image_model");
+		await f.sync();
+		expect(row(P.db, "image_model")).toBeUndefined();
+		setRow(P.db, "system_model", { provider: "a", model: "sys" });
+		await f.sync();
+		dropRow(P.db, "system_model");
+		await f.sync();
+		expect(row(F.db, "system_model")).toBeUndefined();
+	});
+
+	test("an unchecked box neither pulls nor pushes", async () => {
+		f.settings.syncApp = false;
+		setRow(F.db, "default_model", { provider: "a", model: "only-here" });
+		await f.sync();
+		expect(row(P.db, "default_model").model).toBe("primary-3");
+		f.settings.syncApp = true;
+		await f.sync(); // turned on again: starts by pulling, like the first time
+		expect(row(F.db, "default_model").model).toBe("primary-3");
+	});
+
+	test("extension settings go up without any secret, and the primary's own secret stays", async () => {
+		write(join(P.data, "extensions", "quota-monitor", "settings.json"), JSON.stringify({ httpOrigin: "http://p", httpToken: "tok-primary" }));
+		write(join(F.data, "extensions", "quota-monitor", "settings.json"), JSON.stringify({ httpOrigin: "http://p" }));
+		await f.sync();
+		write(join(F.data, "extensions", "quota-monitor", "settings.json"), JSON.stringify({ httpOrigin: "http://changed-here", httpToken: "tok-follower" }));
+		const res = await f.sync();
+		expect(res.applied).toContain("up:ext:quota-monitor");
+		expect(extOf(P, "quota-monitor")).toEqual({ httpOrigin: "http://changed-here", httpToken: "tok-primary" });
+		expect(extOf(F, "quota-monitor").httpToken).toBe("tok-follower");
+	});
+
+	test("a skill made or edited on the follower goes up; a skill only on the follower from before stays there", async () => {
+		write(join(F.home, ".agents", "skills", "new-here", "SKILL.md"), "made on the follower");
+		await f.sync();
+		expect(readFileSync(join(P.home, ".agents", "skills", "new-here", "SKILL.md"), "utf8")).toBe("made on the follower");
+		write(join(F.home, ".agents", "skills", "new-here", "SKILL.md"), "edited on the follower");
+		await f.sync();
+		expect(readFileSync(join(P.home, ".agents", "skills", "new-here", "SKILL.md"), "utf8")).toBe("edited on the follower");
+	});
+
+	test("AGENTS.md and helper roles edited on the follower go up", async () => {
+		write(join(P.home, ".agents", "AGENTS.md"), "rules v1");
+		await f.sync();
+		write(join(F.home, ".agents", "AGENTS.md"), "rules v2 from the follower");
+		write(join(F.home, ".agents", "subagents", "fresh.md"), "a helper made on the follower");
+		await f.sync();
+		expect(readFileSync(join(P.home, ".agents", "AGENTS.md"), "utf8")).toBe("rules v2 from the follower");
+		expect(readFileSync(join(P.home, ".agents", "subagents", "fresh.md"), "utf8")).toBe("a helper made on the follower");
+	});
+
+	test("a model connection changed on the follower goes up, without a key", async () => {
+		sql(P.db, "INSERT OR REPLACE INTO custom_providers (id, data) VALUES ('mine', ?)", JSON.stringify({ id: "mine", name: "Mine", baseUrl: "http://a/v1", models: [] }));
+		await f.sync();
+		sql(F.db, "INSERT OR REPLACE INTO custom_providers (id, data) VALUES ('mine', ?)", JSON.stringify({ id: "mine", name: "Mine", baseUrl: "http://b/v1", models: [], apiKey: "sk-leak" }));
+		await f.sync();
+		const there = JSON.parse(rows(P.db, "SELECT data FROM custom_providers WHERE id = 'mine'")[0]!.data as string);
+		expect(there.baseUrl).toBe("http://b/v1");
+		expect(there.apiKey).toBeUndefined();
+	});
+
+	test("the primary takes nothing while it is not a primary", async () => {
+		const other = boot(P, { role: "follower" });
+		await expect(Promise.resolve(as(P, () => other.get("push")!({ settings: { default_model: 1 } })))).rejects.toThrow(/not a primary/);
+		primary = boot(P, { role: "primary" });
 	});
 });
