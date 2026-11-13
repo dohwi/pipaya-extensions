@@ -40,6 +40,7 @@ other; when both changed the same item, the primary's value wins. The follower k
   role is primary. The primary keeps its own secrets when it takes extension settings.
 - A primary older than 0.14.0 has no `push`: the follower then only pulls, as before.
 - Turning a box off forgets its history; turned on again it starts by pulling.
+- **Per-PC values.** The working directory is taken only when that folder exists on the receiving PC (both ways); otherwise each server keeps its own, and the follower's page says so. MCP servers have their own sub-box for a PC that runs a different set.
 
 ## What a follower picks
 
@@ -47,7 +48,8 @@ A follower's form has a few boxes; an unchecked box keeps this server's own valu
 
 | Box | What it matches | Default |
 |---|---|---|
-| 앱 설정 | `default_model`, `system_model`, `image_model`, `default_workdir`, `mcp_servers`, `skills` (on/off), `disabled_tools`, `disabled_subagents`, `delegate_policy`, `compaction`, `retention` | on |
+| 앱 설정 | `default_model`, `system_model`, `image_model`, `default_workdir` (only when that folder exists on the other PC), `skills` (on/off), `disabled_tools`, `disabled_subagents`, `delegate_policy`, `compaction`, `retention` | on |
+| └ MCP 서버도 맞추기 | `mcp_servers` (off: each PC keeps its own list, for an MCP that runs a program installed on one PC) | on |
 | 확장 | extensions installed at the primary's version, the apps' extension list and on/off states, and every extension's settings values | **off** |
 | └ 직접 만든 확장도 복사 | the code of extensions not in the marketplace, and `~/.agents/extensions` (needs 확장) | **off** |
 | 스킬·도우미·AGENTS.md | `~/.agents/skills` folders, `~/.agents/subagents/*.md`, `~/.agents/AGENTS.md` | **off** |

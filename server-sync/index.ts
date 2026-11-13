@@ -12,7 +12,7 @@ import { Database } from "bun:sqlite";
 import { createHash, randomBytes } from "node:crypto";
 import { homedir, hostname, networkInterfaces } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 
 /** How often a failing pull is retried at most (the base interval is multiplied by 2 per miss, up to this). */
 const MAX_BACKOFF = 8;
@@ -32,7 +32,9 @@ const SYNCED_KEYS = [
  * The six groups of 0.8–0.12 are one box ("앱 설정", `syncApp`) now; they were nearly always checked together.
  */
 const GROUPS = [
-	{ field: "syncApp", keys: ["default_model", "system_model", "image_model", "default_workdir", "mcp_servers", "skills", "disabled_tools", "disabled_subagents", "delegate_policy", "compaction", "retention"] },
+	{ field: "syncApp", keys: ["default_model", "system_model", "image_model", "default_workdir", "skills", "disabled_tools", "disabled_subagents", "delegate_policy", "compaction", "retention"] },
+	// MCP servers often run a program installed on one PC only: a sub-box of 앱 설정 (on by default, off on its own).
+	{ field: "syncMcpServers", keys: ["mcp_servers"], within: "syncApp" },
 ] as const;
 const GROUPED = new Set<string>(GROUPS.flatMap((g) => g.keys));
 
@@ -310,6 +312,18 @@ function applyText(file: string, text: string | null, label: string): string[] {
 const sameObject = (a: Record<string, unknown> | undefined, b: Record<string, unknown>) =>
 	!!a && JSON.stringify(Object.keys(a).sort().map((k) => [k, a[k]])) === JSON.stringify(Object.keys(b).sort().map((k) => [k, b[k]]));
 
+/**
+ * A row that names a place on this PC (the default working directory) is taken only when that folder exists here:
+ * two PCs often keep their work in different places, and a missing folder would start new chats in the wrong one.
+ * Not taken = this server keeps its own value, and the item counts as "only here" until the paths agree again.
+ */
+const PATH_ROWS = new Set(["default_workdir"]);
+const fitsHere = (key: string, value: unknown): boolean => {
+	if (!PATH_ROWS.has(key) || value === null || value === undefined) return true;
+	if (typeof value !== "string" || !value.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(value)) return false;
+	try { return statSync(value).isDirectory(); } catch { return false; }
+};
+
 /** Any JSON value as text with object keys sorted, so the same value always reads the same. */
 const stable = (v: unknown): string =>
 	JSON.stringify(v, (_k, x) => (plain(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
@@ -352,6 +366,8 @@ export default (pi: any) => {
 	let unlisted: string[] = [];
 	/** Pulled extensions that cannot run here until a secret is typed in on this server: name -> the settings they lack. */
 	let needsInput: { id: string; title: string; fields: string[] }[] = [];
+	/** Paths the primary uses that this PC does not have (the working directory): kept as this server's own. */
+	let skippedPaths: string[] = [];
 	/** When the pull timer fires next, for the page. */
 	let nextPullAt = 0;
 	let busy = false;
@@ -430,7 +446,7 @@ export default (pi: any) => {
 	const picked = (field: string) => settings()[field] !== false;
 	/** Of the keys the primary mirrors, the ones this follower picked. A key in no group (a listed extra) always comes along. */
 	const pickedKeys = (list: readonly string[]): string[] =>
-		list.filter((k) => !GROUPED.has(k) || GROUPS.some((g) => (g.keys as readonly string[]).includes(k) && picked(g.field)));
+		list.filter((k) => !GROUPED.has(k) || GROUPS.some((g) => (g.keys as readonly string[]).includes(k) && picked(g.field) && (!("within" in g) || picked(g.within))));
 	/** Pull secrets too (a model API key, an extension's own token): its own box, off, and the primary must allow it. */
 	const wantSecrets = () => settings().syncSecrets === true;
 	/** Extension settings values travel with the extensions: one box, "확장". */
@@ -612,6 +628,8 @@ export default (pi: any) => {
 				description: { ko: `입력할 값: ${n.fields.join(" · ")}`, en: `To enter: ${n.fields.join(" · ")}` },
 			})) });
 		}
+		if (token && skippedPaths.length) children.push({ type: "text", id: "paths", size: "small", tone: "neutral",
+			text: { ko: `기준 서버의 작업 디렉터리(${skippedPaths.join(", ")})가 이 PC에 없어서, 이 서버의 작업 디렉터리를 그대로 씁니다.`, en: `The primary's working directory (${skippedPaths.join(", ")}) does not exist on this PC, so this server keeps its own.` } });
 		if (token && unlisted.length && settings().syncExtensions === true) children.push({ type: "alert", id: "unlisted", tone: "warning",
 			title: { ko: "마켓플레이스에 없는 확장은 설치하지 않았습니다", en: "Extensions not in the marketplace were not installed" },
 			text: { ko: `${unlisted.join(", ")} — 기준 서버에서 복사하려면 아래 ‘직접 만든 확장도 복사’를 켜세요.`, en: `${unlisted.join(", ")} — to copy them from the primary, turn on ‘Also copy extensions you made yourself’ below.` } });
@@ -781,7 +799,7 @@ export default (pi: any) => {
 			const gone = Array.isArray(params.deleted) ? params.deleted.filter((k): k is string => typeof k === "string") : [];
 			const touched = [...Object.keys(rows), ...gone].filter((k) => list.includes(k));
 			const next: Record<string, unknown> = { ...readSettings(dbo(), touched) };
-			for (const k of touched) if (k in rows) next[k] = rows[k];
+			for (const k of touched) if (k in rows && fitsHere(k, rows[k])) next[k] = rows[k];
 			for (const k of gone) if (list.includes(k)) delete next[k];
 			changed.push(...applySnapshot(dbo(), touched, next));
 		}
@@ -995,6 +1013,12 @@ export default (pi: any) => {
 		// A row whose box is off forgets its history: turned on again, it starts by pulling (its first sync again).
 		for (const k of Object.keys(base.items.rows ?? {})) if (!list.includes(k)) delete base.items.rows![k];
 		const rows = plan("rows", peerRows, list);
+		const unfit = rows.pull.filter((k) => !fitsHere(k, peerRows[k]));
+		if (unfit.length) {
+			rows.pull = rows.pull.filter((k) => !unfit.includes(k));
+			for (const k of unfit) (base.items.rows ??= {})[k] = "local";
+			skippedPaths = unfit.map((k) => String(peerRows[k]));
+		} else skippedPaths = [];
 		if (rows.pull.length) changed.push(...applySnapshot(dbo(), rows.pull, peer as Record<string, unknown>));
 		settle("rows", rows.pull, rows.p);
 		up.push({ kind: "rows", ids: rows.push, mine: rows.mine });

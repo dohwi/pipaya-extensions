@@ -540,3 +540,51 @@ describe("two ways: what changed on one side goes to the other, the primary wins
 		primary = boot(P, { role: "primary" });
 	});
 });
+
+describe("what belongs to one PC", () => {
+	const row = (file: string, key: string) => {
+		const r = rows(file, `SELECT data FROM settings WHERE key = '${key}'`)[0];
+		return r ? JSON.parse(r.data as string) : undefined;
+	};
+	const setRow = (file: string, key: string, v: unknown) => sql(file, "INSERT OR REPLACE INTO settings (key, data) VALUES (?, ?)", key, JSON.stringify(v));
+	const here = mkdtempSync(join(root, "wd-here-"));
+	const there = join(root, "only-on-the-primary", "work");
+
+	test("a working directory this PC does not have is not taken, and the page says so", async () => {
+		primary = boot(P, { role: "primary" });
+		setRow(P.db, "default_workdir", there);
+		setRow(F.db, "default_workdir", here);
+		const panels: string[] = [];
+		const settings: Record<string, unknown> = { role: "follower", remoteUrl: `http://127.0.0.1:${peer.port}`, remoteToken: "t", syncApp: true };
+		const methods = new Map<string, (p?: unknown) => unknown>();
+		as(F, () => factory({
+			home: F.home, dataDir: mkdtempSync(join(root, "pc-")),
+			settings: { get: () => settings, set: (n: Record<string, unknown>) => { Object.assign(settings, n); return settings; }, onChange: () => () => {} },
+			ui: { setPanel: (n: unknown) => void panels.push(JSON.stringify(n)), onEvent: () => {} },
+			log: () => {}, registerMethod: (n: string, fn: (p?: unknown) => unknown) => void methods.set(n, fn), emit: () => {}, on: () => {},
+		}));
+		const sync = () => as(F, () => methods.get("sync")!()) as Promise<{ applied: string[] }>;
+		await sync();
+		expect(row(F.db, "default_workdir")).toBe(here);
+		expect(panels.at(-1)).toContain("이 PC에 없어서");
+		await sync(); // and it does not go up either: the primary keeps its own
+		expect(row(P.db, "default_workdir")).toBe(there);
+		// once the folder exists here too, the primary's comes down
+		mkdirSync(there, { recursive: true });
+		setRow(P.db, "default_workdir", there);
+		await sync();
+		expect(row(F.db, "default_workdir")).toBe(there);
+	});
+
+	test("MCP servers stay this PC's own when their box is off, and come along by default", async () => {
+		primary = boot(P, { role: "primary" });
+		setRow(P.db, "mcp_servers", [{ name: "remote", url: "http://mcp" }]);
+		setRow(F.db, "mcp_servers", [{ name: "local", command: "my-tool" }]);
+		const off = follower({ syncApp: true, syncMcpServers: false });
+		await off.sync();
+		expect(row(F.db, "mcp_servers")).toEqual([{ name: "local", command: "my-tool" }]);
+		const on = follower({ syncApp: true });
+		await on.sync();
+		expect(row(F.db, "mcp_servers")).toEqual([{ name: "remote", url: "http://mcp" }]);
+	});
+});
