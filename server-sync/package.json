@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "description": "Keeps two pipaya servers in step, both ways: app settings, extensions with their settings, skills/helpers/AGENTS.md, and model connections. The primary wins a conflict. Secrets only when both sides allow it.",
   "license": "MIT",
   "author": "dohwi",
@@ -80,10 +80,10 @@
         "label": "MCP 서버도 맞추기",
         "default": true,
         "when": {
-          "key": "syncApp",
-          "equals": true
+          "key": "role",
+          "equals": "follower"
         },
-        "description": "MCP 서버 목록도 맞춥니다. 이 PC에 설치된 프로그램으로 실행하는 MCP가 있어서 PC마다 다르게 두려면 끄세요."
+        "description": "‘앱 설정’이 켜져 있을 때 MCP 서버 목록도 맞춥니다. 이 PC에 설치된 프로그램으로 실행하는 MCP가 있어서 PC마다 다르게 두려면 끄세요."
       },
       {
         "key": "syncExtensions",
@@ -102,10 +102,10 @@
         "label": "직접 만든 확장도 복사",
         "default": false,
         "when": {
-          "key": "syncExtensions",
-          "equals": true
+          "key": "role",
+          "equals": "follower"
         },
-        "description": "마켓플레이스에 없는 확장(직접 만들었거나 ~/.agents/extensions에 둔 것)은 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요."
+        "description": "‘확장’이 켜져 있을 때, 마켓플레이스에 없는 확장(직접 만들었거나 ~/.agents/extensions에 둔 것)도 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요."
       },
       {
         "key": "syncAgent",
@@ -167,7 +167,6 @@
         "앱 설정": "App settings",
         "확장": "Extensions",
         "직접 만든 확장도 복사": "Also copy extensions you made yourself",
-        "마켓플레이스에 없는 확장(직접 만들었거나 ~/.agents/extensions에 둔 것)은 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요.": "Extensions not in the marketplace (made by you, or kept in ~/.agents/extensions) are copied as they are. It is code that runs inside this server: turn this on only if you trust the primary.",
         "스킬·도우미·AGENTS.md": "Skills, helpers and AGENTS.md",
         "모델 연결": "Model connections",
         "API 키·토큰도 가져오기": "Also pull API keys and tokens",
@@ -180,7 +179,8 @@
         "사용자 지정 제공자의 주소와 모델 목록. 여기서 바꿔도 기준 서버에 반영됩니다(API 키 제외).": "Address and models of custom providers. A change made here reaches the primary too (never the API key).",
         "모델, 작업 디렉터리, 스킬 켜기·끄기, 도구·도우미 설정, 대화 압축·보관 기간. 여기서 바꿔도 기준 서버에 반영됩니다. 작업 디렉터리는 그 폴더가 이 PC에도 있을 때만 맞춥니다.": "Models, working directory, skills on/off, tools and helpers, compaction and retention. A change made here reaches the primary too. The working directory is matched only when that folder exists on this PC.",
         "MCP 서버도 맞추기": "Also match MCP servers",
-        "MCP 서버 목록도 맞춥니다. 이 PC에 설치된 프로그램으로 실행하는 MCP가 있어서 PC마다 다르게 두려면 끄세요.": "Matches the MCP server list too. Turn it off to keep a different list per PC (an MCP that runs a program installed on one PC only)."
+        "‘앱 설정’이 켜져 있을 때 MCP 서버 목록도 맞춥니다. 이 PC에 설치된 프로그램으로 실행하는 MCP가 있어서 PC마다 다르게 두려면 끄세요.": "With ‘App settings’ on, matches the MCP server list too. Turn it off to keep a different list per PC (an MCP that runs a program installed on one PC only).",
+        "‘확장’이 켜져 있을 때, 마켓플레이스에 없는 확장(직접 만들었거나 ~/.agents/extensions에 둔 것)도 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요.": "With ‘Extensions’ on, also copies the code of extensions not in the marketplace (your own, or in ~/.agents/extensions). It runs inside this server: turn it on only for a primary you trust."
       }
     }
   },
