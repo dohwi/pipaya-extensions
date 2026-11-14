@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "description": "Keeps two pipaya servers in step, both ways: app settings, extensions with their settings, skills/helpers/AGENTS.md, and model connections. The primary wins a conflict. Secrets only when both sides allow it.",
   "license": "MIT",
   "author": "dohwi",
