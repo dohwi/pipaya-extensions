@@ -47,7 +47,7 @@
 
 The gauges appear in the header within a few seconds.
 
-> Settings are stored on the pipaya server and shared by all your devices. Enabling the extension and approving permissions must be done on each device.
+> Settings (the management key included) and the on/off switch are stored on the pipaya server. Turn it on once and every device connected to that server runs it.
 >
 > To update, import the new `quota-monitor.json` again (same ID) and approve any new permissions.
 
@@ -88,7 +88,7 @@ The gauges appear in the header within a few seconds.
 - Polling runs in pipaya's sandboxed Worker, which cannot touch the page or the app's auth token. The gauges are drawn by two Svelte components that run in the app itself (`ui-components`); they only receive plain data from the worker.
 - It only sends `GET <httpOrigin>/v0/management/plugins/quota-monitor/data/accounts`. The host adds the `Authorization: Bearer` header itself, so the key never appears in the URL or in extension code. Cookies are not sent and redirects are rejected.
 - `http-write` is requested only because the SDK requires it for authenticated requests. This extension never sends anything but GET.
-- **The management key stays on this device.** It is a `secret` field, so pipaya never uploads it: the app keeps it in the device's storage, per server. With several pipaya servers or a new device, enter it once on each; a server-sync extension cannot carry it either. The address, language and the other settings are stored on the server and shared between devices. It is left out of configuration exports. If you lose a device, rotate the management key.
+- **The management key is stored on the pipaya server.** Like every other setting, so all devices connected to that server use the same key. As a `secret` field it is masked in the form and left out of configuration exports. With several pipaya servers, enter it once on each. If the key may have leaked, rotate the management key.
 - Only overall percentages are used. Account names, emails and per-account limits are never displayed.
 
 ## How it works

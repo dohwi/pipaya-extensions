@@ -2,7 +2,7 @@
   "manifest": {
     "id": "quota-monitor",
     "name": "Quota Monitor",
-    "version": "0.6.3",
+    "version": "0.6.4",
     "sdkVersion": 1,
     "description": "Claude · GPT · Antigravity의 upstream 전체 잔량을 상단 바 원형 게이지와 팝오버로 표시합니다. Antigravity는 바깥 Gemini · 안쪽 Claude/GPT 잔량입니다.",
     "permissions": [
@@ -25,7 +25,7 @@
         "key": "httpToken",
         "type": "string",
         "label": "관리 키 (Management Key)",
-        "description": "CLIProxyAPI 관리 키입니다. 비밀값이라 서버에 올라가지 않고 이 기기에만 저장됩니다. 그래서 pipaya 서버마다, 기기마다 한 번씩 입력해야 합니다. 쿼터 데이터는 관리 인증이 필요합니다.",
+        "description": "CLIProxyAPI 관리 키입니다. pipaya 서버에 저장되어 이 서버에 연결한 모든 기기가 함께 씁니다. 설정 내보내기에서는 빠집니다. 쿼터 데이터는 관리 인증이 필요합니다.",
         "required": true,
         "secret": true
       },
