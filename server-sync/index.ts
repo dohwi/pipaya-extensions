@@ -128,7 +128,39 @@ interface Status {
 	lastError: string | null;
 	/** The status line of the page, in Korean and English. */
 	status: Text;
+	/** Followers that pulled from this server, newest first (primary only). */
+	followers?: { name: string; url: string; lastSyncAt: number }[];
 }
+
+/** What a follower says about itself when it pulls, so the primary's page can list it. */
+export type FollowerInfo = { id: string; name: string; url: string; interval: number };
+/** A follower as the primary keeps it: what it said on its last pull, and when. */
+export type FollowerRecord = FollowerInfo & { firstAt: number; lastAt: number };
+const FOLLOWER_ID = /^[a-f0-9]{16,64}$/;
+/** At most this many followers are kept; the one silent longest goes first. */
+const MAX_FOLLOWERS = 20;
+/** A follower silent this long is forgotten (disconnected, revoked or gone for good). */
+const FORGET_FOLLOWER_MS = 30 * 86_400_000;
+
+/**
+ * A follower's `from` field, cleaned: null when there is none (a follower older than 0.17.0) or it is not usable. Any
+ * paired device may call `snapshot`, so the name and address are only text to show: short, single-line, http(s) only.
+ */
+export function followerFrom(v: unknown): FollowerInfo | null {
+	if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+	const o = v as Record<string, unknown>;
+	if (typeof o.id !== "string" || !FOLLOWER_ID.test(o.id)) return null;
+	const url = typeof o.url === "string" && /^https?:\/\/[^\s/?#]{1,120}$/.test(o.url) ? o.url : "";
+	const name = (typeof o.name === "string" ? o.name : "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60)
+		|| url.replace(/^https?:\/\//, "") || "Server Sync";
+	const n = Number(o.interval);
+	const interval = Number.isFinite(n) && n >= 15 && n <= 86_400 ? Math.floor(n) : 60;
+	return { id: o.id, name, url, interval };
+}
+
+/** Whether a follower has missed its pulls: three intervals (at least three minutes) without one. */
+export const followerSilent = (f: Pick<FollowerRecord, "interval" | "lastAt">, now = Date.now()): boolean =>
+	now - f.lastAt > Math.max(f.interval * 3, 180) * 1000;
 
 /** The effective key list: the built-ins plus the user's extras, minus the never-synced. */
 function effectiveKeys(extra: string | undefined): string[] {
@@ -433,6 +465,77 @@ export default (pi: any) => {
 		writeFileSync(tmp, JSON.stringify(b), { mode: 0o600 });
 		renameSync(tmp, file);
 	};
+	/**
+	 * This follower's own id, made once and kept next to the peer file: how the primary tells two followers apart and
+	 * one follower's pulls from another's. A random value, not derived from the token, so it says nothing about it.
+	 */
+	const selfId = (): string => {
+		const file = join(dirname(peerFile()), "follower-id");
+		try { const v = readFileSync(file, "utf8").trim(); if (FOLLOWER_ID.test(v)) return v; } catch { /* none yet */ }
+		const id = randomBytes(16).toString("hex");
+		try { mkdirSync(dirname(file), { recursive: true, mode: 0o700 }); writeFileSync(file, id, { mode: 0o600 }); } catch { /* used for this run only */ }
+		return id;
+	};
+
+	/**
+	 * On the primary: the followers that pulled from it, by their id, for the page. Kept in a file next to the peer file
+	 * so a restart keeps the list; written when one is new or changed, else at most every five minutes per follower.
+	 */
+	const followersFile = () => join(dirname(peerFile()), "followers.json");
+	let followers: Map<string, FollowerRecord> | null = null;
+	const savedAt = new Map<string, number>();
+	const loadFollowers = (): Map<string, FollowerRecord> => {
+		if (followers) return followers;
+		followers = new Map();
+		try {
+			const v: unknown = JSON.parse(readFileSync(followersFile(), "utf8"));
+			for (const raw of Array.isArray(v) ? v : []) {
+				const f = followerFrom(raw);
+				const r = raw as Record<string, unknown>;
+				if (f && typeof r.lastAt === "number" && typeof r.firstAt === "number") {
+					followers.set(f.id, { ...f, firstAt: r.firstAt, lastAt: r.lastAt });
+					savedAt.set(f.id, r.lastAt);
+				}
+			}
+		} catch { /* none yet */ }
+		return followers;
+	};
+	const saveFollowers = () => {
+		const file = followersFile();
+		try {
+			mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+			const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
+			writeFileSync(tmp, JSON.stringify([...loadFollowers().values()]), { mode: 0o600 });
+			renameSync(tmp, file);
+		} catch (e) {
+			log(`followers: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	};
+	/** The followers to show, newest pull first; the ones silent for a month are dropped. */
+	const followerList = (now = Date.now()): FollowerRecord[] => {
+		const all = loadFollowers();
+		let dropped = false;
+		for (const [id, f] of all) if (now - f.lastAt > FORGET_FOLLOWER_MS) { all.delete(id); dropped = true; }
+		if (dropped) saveFollowers();
+		return [...all.values()].sort((a, b) => b.lastAt - a.lastAt);
+	};
+	/** A follower pulled: remember it, and redraw the page when the list changes (a new one, or one back from silence). */
+	const sawFollower = (info: FollowerInfo, now = Date.now()) => {
+		const all = loadFollowers();
+		const old = all.get(info.id);
+		all.set(info.id, { ...info, firstAt: old?.firstAt ?? now, lastAt: now });
+		while (all.size > MAX_FOLLOWERS) {
+			const oldest = [...all.values()].sort((a, b) => a.lastAt - b.lastAt)[0]!;
+			all.delete(oldest.id);
+		}
+		const changed = !old || old.name !== info.name || old.url !== info.url || old.interval !== info.interval;
+		if (changed || now - (savedAt.get(info.id) ?? 0) >= 5 * 60_000) {
+			savedAt.set(info.id, now);
+			saveFollowers();
+		}
+		if (changed || followerSilent(old!, now)) showStatus();
+	};
+
 	/** Only a digest of the redeemed code is kept: enough to tell "the same link pasted again" from a new one. */
 	const codeDigest = (code: string) => createHash("sha256").update(code).digest("hex");
 
@@ -805,6 +908,17 @@ export default (pi: any) => {
 					{ type: "badge", id: "state", tone: "info", text: { ko: "기준 서버", en: "Primary" } },
 					{ type: "text", id: "what", text: { ko: "팔로워 서버와 설정을 맞춥니다. 한쪽에서 바꾼 것은 다른 쪽에도 반영되고, 양쪽에서 같은 항목을 바꾸면 이 서버(기준) 값이 이깁니다.", en: "Keeps follower servers in step with this one. A change on either side reaches the other; when both changed the same item, this server (the primary) wins." } },
 					...(url ? [{ type: "stat", id: "address", label: { ko: "이 서버 주소", en: "This server's address" }, value: hostOf(url) }] : []),
+					{ type: "text", id: "followers-title", size: "small", text: { ko: "연결된 팔로워", en: "Connected followers" } },
+					{ type: "list", id: "followers", items: followerList().map((f, i) => {
+						const when = ago(f.lastAt);
+						const where = f.url ? `${hostOf(f.url)} · ` : "";
+						return {
+							id: `f${i}`, title: f.name,
+							description: { ko: `${where}마지막 동기화 ${when.ko}`, en: `${where}last synced ${when.en}` },
+							...(followerSilent(f) ? { badge: { ko: "동기화 멈춤", en: "Not syncing" } } : {}),
+						};
+					}),
+					emptyText: { ko: "연결된 팔로워가 없습니다. 팔로워가 처음 동기화하면 여기에 나타납니다(팔로워의 Server Sync 0.17.0 이상).", en: "No followers yet. A follower shows up here after its first sync (Server Sync 0.17.0 or later on the follower)." } },
 					{ type: "text", id: "how", size: "small", text: { ko: "팔로워를 연결하려면: 이 서버의 기기 탭 → [연결 링크 복사] → 팔로워의 연결 링크 칸에 붙여넣기", en: "To connect a follower: this server's Devices tab → [Copy connection link] → paste it into the follower's link field" } },
 					{ type: "text", id: "pick", size: "small", text: { ko: "무엇을 맞출지(앱 설정·확장·스킬 등)는 팔로워 서버의 이 화면에서 고릅니다. 확장 설치, 앱의 확장 목록, API 키는 이 서버에서 팔로워로만 갑니다.", en: "What to keep in step (app settings, extensions, skills, …) is picked on the follower's page. Installs, the apps' extension list and API keys only go from here to followers." } },
 					settings().shareSecrets === true
@@ -890,6 +1004,7 @@ export default (pi: any) => {
 		lastApplied,
 		lastError,
 		status: statusText(),
+		...(role() === "primary" ? { followers: followerList().map((f) => ({ name: f.name, url: f.url, lastSyncAt: f.lastAt })) } : {}),
 	});
 
 	// ---- what a peer reads: the rows this server mirrors and the keys they cover ----
@@ -897,6 +1012,9 @@ export default (pi: any) => {
 	pi.registerMethod("snapshot", async (params: unknown): Promise<Snapshot> => {
 		const list = keys();
 		const snap: Snapshot = { keys: list, settings: readSettings(dbo(), list), push: 1 };
+		// A follower (0.17.0+) says who it is: the page lists it. Only on a primary; a code fetch (`codeOf`) sends nothing.
+		const from = role() === "primary" && plain(params) ? followerFrom(params.from) : null;
+		if (from) sawFollower(from);
 		// Only when the follower asks: most never want them, and they are the bulkiest part.
 		// Secrets of extensions (their own settings file) go only when this server's owner allows it AND the follower asked.
 		if (plain(params) && params.extensions === true) snap.extensions = shareable(await extensionSettings(), settings().shareSecrets === true && params.secrets === true);
@@ -1166,7 +1284,12 @@ export default (pi: any) => {
 		const res = await fetch(`${url}/server-extensions/server-sync/methods/snapshot`, {
 			method: "POST",
 			headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-			body: withExtensions || parts.length ? JSON.stringify({ ...(withExtensions ? { extensions: true, ...(wantSecrets() ? { secrets: true } : {}) } : {}), ...(parts.length ? { parts } : {}) }) : "null",
+			body: JSON.stringify({
+				...(withExtensions ? { extensions: true, ...(wantSecrets() ? { secrets: true } : {}) } : {}),
+				...(parts.length ? { parts } : {}),
+				// who is pulling, for the primary's page: never the token or anything secret
+				from: { id: selfId(), name: followerLabel(), url: publicUrl(), interval: cfg().interval },
+			}),
 			signal: AbortSignal.timeout(10_000),
 		});
 		if (res.status === 401 || res.status === 403) throw new Error(`the peer refused the token (${res.status})`);

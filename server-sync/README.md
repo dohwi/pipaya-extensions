@@ -151,7 +151,8 @@ installs read from `<dataDir>/extensions`, and `client_settings`/`custom_provide
 are then written to the table directly, as before 0.16.0.
 
 - **Network**: the follower talks to exactly one URL, the `remoteUrl` you configure: `POST /pairing/redeem` once to trade
-  the code for a token, then `POST /server-extensions/server-sync/methods/snapshot` with that token, and
+  the code for a token, then `POST /server-extensions/server-sync/methods/snapshot` with that token (and its own id, name, address and
+  interval, for the primary's list of followers), and
   `.../methods/push` with its own changes. It reads the marketplace index (`raw.githubusercontent.com/dohwi/pipaya-marketplace`)
   to find an extension's pinned source. Nothing else is sent anywhere.
 - The device token is stored in the extension's own data folder (`extension-data/server-sync/peer.json`, mode 0600), not
@@ -186,7 +187,11 @@ and what to pull. The app's link (Devices tab → [연결 링크 복사], app 0.
 
 Above the form, **현재 상태** is drawn by the extension (`pi.ui.setPanel`), not stored in its settings:
 
-- **Primary**: a `기준 서버` badge, this server's address and where to get a link for a follower.
+- **Primary**: a `기준 서버` badge, this server's address, **연결된 팔로워** (each follower that pulled from it: its
+  name, address and when it last synced, `동기화 멈춤` once it missed three pulls; forgotten after 30 days of silence)
+  and where to get a link for a follower. A follower is listed after its first pull with server-sync 0.17.0 or later:
+  with each `snapshot` it sends a random id of its own (`extension-data/server-sync/follower-id`), the name it gave the
+  primary, its address and its interval — never its token. The primary keeps them in `extension-data/server-sync/followers.json`.
 - **Follower**: `연결됨` / `연결 중` / `연결 실패` / `연결 안 됨` with when it last checked; the primary's address, how many
   items the last pull changed and when the next one runs; what it pulled; the last error, if any; and two buttons:
   **지금 동기화** (pull now) and **연결 해제** (forget the address and the token; revoke the token on the primary's

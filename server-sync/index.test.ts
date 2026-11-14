@@ -4,7 +4,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import factory, { decide } from "./index.ts";
+import factory, { decide, followerFrom, followerSilent } from "./index.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "server-sync-"));
 const file = join(dir, "pipaya.db");
@@ -327,6 +327,74 @@ describe("the primary's page says whether secrets can leave", () => {
 		expect(page({})).not.toContain("secrets-on");
 		expect(page({ shareSecrets: true })).toContain("secrets-on");
 		expect(page({ shareSecrets: true })).toContain("모델 API 키");
+	});
+});
+
+describe("the primary's page lists its followers", () => {
+	const primaryPage = (dataDir: string) => {
+		const panels: string[] = [];
+		const methods = new Map<string, (p?: unknown) => unknown>();
+		const hooks: (() => void)[] = [];
+		factory({
+			dataDir,
+			settings: { get: () => ({ role: "primary" }), set: () => ({}), onChange: () => () => {} },
+			ui: { setPanel: (n: unknown) => void panels.push(JSON.stringify(n)), onEvent: () => {} },
+			log: () => {}, registerMethod: (n: string, f: (p?: unknown) => unknown) => void methods.set(n, f), emit: () => {},
+			on: (ev: string, fn: () => void) => { if (ev === "extension_unload") hooks.push(fn); },
+		});
+		const list = () => (JSON.parse(panels.at(-1)!).children as any[]).find((c) => c.id === "followers");
+		return { methods, list, unload: () => hooks.forEach((f) => f()) };
+	};
+	const id = (n: number) => String(n).repeat(32);
+
+	test("empty at first, then each follower that pulled, newest first, kept across a restart", async () => {
+		seed({});
+		const data = mkdtempSync(join(dir, "followers-"));
+		const p = primaryPage(data);
+		expect(p.list().items).toEqual([]);
+		expect(p.list().emptyText.ko).toContain("연결된 팔로워가 없습니다");
+		await p.methods.get("snapshot")!({ from: { id: id(1), name: "노트북", url: "http://100.64.0.9:8787", interval: 60 } });
+		await Bun.sleep(5);
+		await p.methods.get("snapshot")!({ from: { id: id(2), name: "집 데스크톱", url: "http://100.64.0.8:8787", interval: 60 } });
+		const items = p.list().items;
+		expect(items.map((i: any) => i.title)).toEqual(["집 데스크톱", "노트북"]);
+		expect(items[0].description.ko).toBe("100.64.0.8:8787 · 마지막 동기화 방금");
+		expect(items[0].description.en).toBe("100.64.0.8:8787 · last synced just now");
+		expect(items[0].badge).toBeUndefined();
+		p.unload();
+		// a restart keeps the list
+		const again = primaryPage(data);
+		expect(again.list().items.length).toBe(2);
+		again.unload();
+	});
+
+	test("a pull without a usable 'from' (an older follower, junk) lists nothing; a follower's page has no list", async () => {
+		seed({});
+		const p = primaryPage(mkdtempSync(join(dir, "followers-")));
+		await p.methods.get("snapshot")!(null);
+		await p.methods.get("snapshot")!({ from: { id: "../x", name: "bad" } });
+		await p.methods.get("snapshot")!({ from: "x" });
+		expect(p.list().items).toEqual([]);
+		p.unload();
+	});
+});
+
+describe("followerFrom / followerSilent", () => {
+	test("cleans what a follower says: one line, short, http(s) address only", () => {
+		expect(followerFrom({ id: "a".repeat(32), name: " a\n\tb ", url: "http://100.1.2.3:8787", interval: 30 }))
+			.toEqual({ id: "a".repeat(32), name: "a b", url: "http://100.1.2.3:8787", interval: 30 });
+		expect(followerFrom({ id: "a".repeat(32), name: "x".repeat(200), url: "javascript:alert(1)", interval: 1 }))
+			.toEqual({ id: "a".repeat(32), name: "x".repeat(60), url: "", interval: 60 });
+		expect(followerFrom({ id: "a".repeat(32), url: "http://h:1" })!.name).toBe("h:1");
+		expect(followerFrom({ id: "short" })).toBeNull();
+		expect(followerFrom(null)).toBeNull();
+	});
+
+	test("silent after three missed pulls, at least three minutes", () => {
+		const now = 10_000_000;
+		expect(followerSilent({ interval: 60, lastAt: now - 170_000 }, now)).toBe(false);
+		expect(followerSilent({ interval: 60, lastAt: now - 190_000 }, now)).toBe(true);
+		expect(followerSilent({ interval: 600, lastAt: now - 1_000_000 }, now)).toBe(false);
 	});
 });
 

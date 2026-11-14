@@ -437,3 +437,25 @@ describe("the rest through pi.api", () => {
 		expect(panels.length).toBe(before);
 	});
 });
+
+describe("the primary lists the followers that pull from it", () => {
+	test("a pull says who is pulling (name, address, interval; never the token), and the primary keeps it", async () => {
+		const f = follower({ syncApp: false, followerName: "  집\n데스크톱  " });
+		await f.sync();
+		use(P);
+		const list = ((primary.methods.get("status")!()) as { followers: { name: string; url: string; lastSyncAt: number }[] }).followers;
+		const mine = list.find((x) => x.name === "집 데스크톱");
+		expect(mine).toBeDefined();
+		expect(mine!.url).toBe("http://100.64.0.7:8787");
+		expect(Date.now() - mine!.lastSyncAt).toBeLessThan(5_000);
+		expect(JSON.stringify(list)).not.toContain("\"t\"");
+		// the same follower pulling again is one entry, not two
+		await f.sync();
+		use(P);
+		const again = ((primary.methods.get("status")!()) as { followers: { name: string }[] }).followers;
+		expect(again.filter((x) => x.name === "집 데스크톱").length).toBe(1);
+		// a follower never lists anyone
+		expect("followers" in (f.methods.get("status")!() as object)).toBe(false);
+		f.unload();
+	});
+});
