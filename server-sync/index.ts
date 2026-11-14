@@ -958,14 +958,14 @@ export default (pi: any) => {
 		if (token && needsInput.length && settings().syncExtensions === true) {
 			// The alert carries the sentence; the list under it names each extension and what it lacks (an alert's text
 			// is one paragraph, so a list inside it would run together).
-			// What is true depends on the box: with 비밀값 on, the server-side secrets already came; what is left is a value an
-			// app keeps only on the device (a `secret` field of an extension's settings), which never reaches any server.
+			// What is true depends on the box: with 비밀값 on, whatever the primary holds already came, so the primary has no
+			// value either (an app from before 0.9.5 kept a `secret` field on the device, and uploads it once when updated).
 			const asked = settings().syncSecrets === true;
 			children.push({ type: "alert", id: "needs-input", tone: "warning",
 				title: { ko: "이 서버(기기)에서 직접 입력해야 하는 값이 있습니다", en: "Some values must be entered here" },
 				text: asked
-					? { ko: "아래 값은 앱이 기기에만 저장해서 어느 서버에도 없습니다. 그래서 ‘API 키·토큰도 가져오기’로도 옮길 수 없습니다. 설정 → 확장에서 해당 확장을 열면, 이 기기의 다른 서버에 입력해 둔 값이 있을 때 [그 값 쓰기]로 한 번에 채울 수 있습니다(앱 0.9.2+). 주소 같은 나머지 값은 이미 맞춰져 있습니다.", en: "The values below are kept by the app on the device only, so no server has them and ‘Also pull API keys and tokens’ cannot move them. Open the extension under Settings → Extensions: when this device has a value for another server, [Use that value] fills it in (app 0.9.2+). Addresses and the other values are already matched." }
-					: { ko: "비밀값(토큰·키)은 기본으로 기준 서버에서 가져오지 않습니다. 설정 → 확장에서 해당 확장을 열어 한 번만 입력하면 켜집니다. 주소 같은 나머지 값은 이미 맞춰져 있습니다. (서버에 저장된 키는 ‘API 키·토큰도 가져오기’로 가져올 수 있지만, 앱이 기기에만 저장하는 값은 가져올 수 없습니다.)", en: "Secrets (tokens, keys) are not pulled by default. Open the extension under Settings → Extensions and enter them once; then it turns on. Addresses and the other values are already matched. (‘Also pull API keys and tokens’ brings keys stored on a server, but not values an app keeps on the device only.)" } });
+					? { ko: "아래 값은 기준 서버에도 아직 없습니다. 이 값을 입력해 둔 기기에서 앱(0.9.5 이상)을 한 번 열면 기준 서버에 올라가고, 다음 동기화 때 이 서버로 옵니다. 바로 쓰려면 설정 → 확장에서 해당 확장을 열어 입력하세요. 주소 같은 나머지 값은 이미 맞춰져 있습니다.", en: "The primary does not have the values below yet. Open the app (0.9.5 or later) once on a device where they were entered: they go up to the primary and come here with the next sync. To use the extension now, open it under Settings → Extensions and enter them. Addresses and the other values are already matched." }
+					: { ko: "비밀값(토큰·키)은 기본으로 기준 서버에서 가져오지 않습니다. ‘API 키·토큰도 가져오기’를 켜거나(기준 서버도 허용해야 합니다), 설정 → 확장에서 해당 확장을 열어 한 번만 입력하세요. 주소 같은 나머지 값은 이미 맞춰져 있습니다.", en: "Secrets (tokens, keys) are not pulled by default. Turn on ‘Also pull API keys and tokens’ (the primary has to allow it too), or open the extension under Settings → Extensions and enter them once. Addresses and the other values are already matched." } });
 			children.push({ type: "list", id: "needs-input-list", items: needsInput.slice(0, 20).map((n, i) => ({
 				id: `n${i}`, title: n.title,
 				description: { ko: `입력할 값: ${n.fields.join(" · ")}`, en: `To enter: ${n.fields.join(" · ")}` },

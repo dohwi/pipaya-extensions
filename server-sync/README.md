@@ -97,9 +97,10 @@ Then it carries the model API keys (credentials of type `api_key`, set on the fo
 `password`, `apiKey`, …). **A value this server already has is never replaced**, so a key typed here wins. A login
 (`oauth`) is tied to the server it was made on and is never copied, nor is the voice-input key.
 
-What it cannot copy: a secret an app keeps only on the device (a field marked `secret` in a client extension's settings,
-such as Quota Monitor's management key) never reaches the server, so there is nothing on the primary to read. The page
-lists those extensions and the values to type in once. Everything else about them (address, language) is matched.
+A client extension's secrets (a field marked `secret`, such as Quota Monitor's management key) are kept on the server
+since pipaya 0.9.5, so they come over like the others. An app from before that kept them on the device only: such a value
+reaches the primary once that device opens an updated app. Until then the page lists the extensions that are switched on
+but lack a required secret, and the values to type in once. Everything else about them (address, language) is matched.
 
 ## What it reads, runs and sends
 
