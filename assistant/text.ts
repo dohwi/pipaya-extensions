@@ -9,16 +9,18 @@ export interface StoredLike {
 
 /** Blocks the server adds to a user message for the model (`<pipaya-...>`) are not something the user wrote. */
 const hidden = (text: string) => text.trimStart().startsWith("<pipaya-");
+/** Server blocks (`<pipaya-hint>…</pipaya-hint>`) inside a text are cut out too. */
+const scrub = (text: string) => text.replace(/<(pipaya-[a-z-]+)>[\s\S]*?<\/\1>/g, "").trim();
 
 /** The words of a message: user and assistant text only (no thinking, no tool calls). */
 export function plainText(message: any): string {
 	if (!message || (message.role !== "user" && message.role !== "assistant")) return "";
 	const c = message.content;
-	if (typeof c === "string") return hidden(c) ? "" : c.trim();
+	if (typeof c === "string") return hidden(c) ? "" : scrub(c);
 	if (!Array.isArray(c)) return "";
 	return c
 		.filter((b: any) => b?.type === "text" && typeof b.text === "string" && !hidden(b.text))
-		.map((b: any) => b.text.trim())
+		.map((b: any) => scrub(b.text))
 		.filter(Boolean)
 		.join("\n");
 }
@@ -51,8 +53,8 @@ export function describe(m: StoredLike, opts: { toolChars?: number; textChars?: 
 }
 
 /** A transcript that fits in `max` characters; when too long, the newest part is kept. */
-export function transcriptOf(messages: StoredLike[], max: number): string {
-	const lines = messages.map((m) => describe(m)).filter(Boolean);
+export function transcriptOf(messages: StoredLike[], max: number, opts: { toolChars?: number; textChars?: number } = {}): string {
+	const lines = messages.map((m) => describe(m, opts)).filter(Boolean);
 	const out: string[] = [];
 	let size = 0;
 	for (let i = lines.length - 1; i >= 0; i--) {
