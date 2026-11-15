@@ -19,6 +19,7 @@
 | 폴더 | 종류 | 설명 |
 |---|---|---|
 | [guard](guard) | server | 위험한 셸 명령(`rm -rf /`, `mkfs`, 포크 폭탄)을 실행 전에 차단 |
+| [memory](memory) | server | 사용자를 기억하고 과거 대화를 찾으며 다른 세션에 일을 맡기는 메인 세션 |
 | [prompt-templates](prompt-templates) | server | 긴 프롬프트를 Markdown 파일로 저장해 `/prompt:이름`으로 호출 |
 | [quota-monitor](quota-monitor) | client | Claude, GPT, Antigravity 잔량 게이지를 상단 바에 표시 |
 

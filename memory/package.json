@@ -1,0 +1,76 @@
+{
+  "name": "pipaya-extension-memory",
+  "version": "0.1.0",
+  "description": "A main session that remembers you, searches your past conversations and hands work to other sessions, at little token cost.",
+  "license": "MIT",
+  "author": "dohwi",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dohwi/pipaya-extensions.git",
+    "directory": "memory"
+  },
+  "pipaya": {
+    "title": "Memory",
+    "descriptions": {
+      "en": "One main session to talk to: it keeps a short memory of you and your setup, searches every past conversation, and hands longer work to other sessions. Only that session carries the memory and its tools; other sessions are left as they are.",
+      "ko": "대화 상대가 되는 메인 세션 하나를 만듭니다. 사용자와 작업 환경을 짧게 기억하고, 모든 과거 대화를 검색하며, 긴 작업은 다른 세션에 맡깁니다. 메모리와 도구는 이 세션에만 들어가고 다른 세션은 그대로 둡니다."
+    },
+    "settings": [
+      {
+        "key": "review",
+        "type": "boolean",
+        "label": "Learn from conversations automatically",
+        "description": "Every few messages, a model reads the new part of the main session's conversation and updates the memory.",
+        "default": true
+      },
+      {
+        "key": "reviewTurns",
+        "type": "number",
+        "label": "Messages between reviews",
+        "description": "How many of your messages the main session needs since the last review before the next one.",
+        "default": 8,
+        "min": 1,
+        "max": 100
+      },
+      {
+        "key": "role",
+        "type": "string",
+        "label": "Model role for reviews",
+        "description": "A model role from Settings > Models. Map it to a cheap model; without a mapping the default model is used.",
+        "default": "memory"
+      },
+      {
+        "key": "profileLimit",
+        "type": "number",
+        "label": "Profile limit (characters)",
+        "default": 1500,
+        "min": 200,
+        "max": 20000
+      },
+      {
+        "key": "noteLimit",
+        "type": "number",
+        "label": "Notes limit (characters)",
+        "default": 2500,
+        "min": 200,
+        "max": 20000
+      }
+    ],
+    "translations": {
+      "ko": {
+        "Learn from conversations automatically": "대화에서 자동으로 배우기",
+        "Every few messages, a model reads the new part of the main session's conversation and updates the memory.": "메시지가 몇 개 쌓일 때마다 모델이 메인 세션 대화의 새 부분만 읽고 메모리를 갱신합니다.",
+        "Messages between reviews": "복기 간격(메시지 수)",
+        "How many of your messages the main session needs since the last review before the next one.": "지난 복기 이후 사용자 메시지가 이만큼 쌓이면 다시 복기합니다.",
+        "Model role for reviews": "복기에 쓸 모델 역할",
+        "A model role from Settings > Models. Map it to a cheap model; without a mapping the default model is used.": "설정 > 모델의 모델 역할 이름입니다. 저렴한 모델을 연결해 두세요. 연결이 없으면 기본 모델을 씁니다.",
+        "Profile limit (characters)": "프로필 한도(글자 수)",
+        "Notes limit (characters)": "메모 한도(글자 수)"
+      }
+    }
+  },
+  "scripts": {
+    "test": "bun test"
+  }
+}

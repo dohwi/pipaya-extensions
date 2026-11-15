@@ -19,6 +19,7 @@
 | Folder | Kind | What it does |
 |---|---|---|
 | [guard](guard) | server | Blocks destructive shell commands (`rm -rf /`, `mkfs`, fork bombs) before they run |
+| [memory](memory) | server | A main session that remembers you, searches past chats and hands work to other sessions |
 | [prompt-templates](prompt-templates) | server | Save a long prompt as a Markdown file and call it with `/prompt:name` |
 | [quota-monitor](quota-monitor) | client | Claude, GPT and Antigravity quota gauges in the header |
 
