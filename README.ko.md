@@ -19,6 +19,7 @@
 | 폴더 | 종류 | 설명 |
 |---|---|---|
 | [guard](guard) | server | 위험한 셸 명령(`rm -rf /`, `mkfs`, 포크 폭탄)을 실행 전에 차단 |
+| [hermes](hermes) | server | Hermes Agent의 학습 루프: 사용자 기억, 과거 대화 검색, 스스로 쓰는 스킬, 오케스트레이터 세션 |
 | [prompt-templates](prompt-templates) | server | 긴 프롬프트를 Markdown 파일로 저장해 `/prompt:이름`으로 호출 |
 | [quota-monitor](quota-monitor) | client | Claude, GPT, Antigravity 잔량 게이지를 상단 바에 표시 |
 

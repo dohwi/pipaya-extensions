@@ -19,6 +19,7 @@
 | Folder | Kind | What it does |
 |---|---|---|
 | [guard](guard) | server | Blocks destructive shell commands (`rm -rf /`, `mkfs`, fork bombs) before they run |
+| [hermes](hermes) | server | Hermes Agent's learning loop: memory of you, search over past chats, self-written skills, an orchestrator session |
 | [prompt-templates](prompt-templates) | server | Save a long prompt as a Markdown file and call it with `/prompt:name` |
 | [quota-monitor](quota-monitor) | client | Claude, GPT and Antigravity quota gauges in the header |
 
