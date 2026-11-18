@@ -139,11 +139,9 @@
 	<div class="circle">
 		<svg class="rings" viewBox="0 0 36 36" aria-hidden="true" focusable="false">
 			{#each rings as ring}
-				<circle class="track" cx="18" cy="18" r={ring.radius} />
+				<circle class="track" class:unknown={!ring.known} cx="18" cy="18" r={ring.radius} />
 				{#if ring.known}
 					<circle class="arc {ring.named}" cx="18" cy="18" r={ring.radius} pathLength="100" style:stroke={ring.hex} stroke-dasharray={ring.dash} />
-				{:else}
-					<circle class="unknown" cx="18" cy="18" r={ring.radius} />
 				{/if}
 			{/each}
 			{#if gauge.icon}
@@ -196,7 +194,8 @@
 	.arc.ok { stroke: var(--ok); }
 	.arc.warn { stroke: var(--warn); }
 	.arc.danger { stroke: var(--danger); }
-	.unknown { stroke: var(--text-faint); stroke-dasharray: 2 4; }
+	/* Unknown: just a dimmed empty track, no dashes (dashes on tiny concentric rings look jagged). */
+	.track.unknown { opacity: 0.45; }
 	.glyph { color: var(--text-dim); overflow: hidden; }
 	.badge { position: absolute; right: 0; top: 0; width: 9px; height: 9px; line-height: 9px; text-align: center; border-radius: 50%; font-size: 7px; overflow: hidden; color: var(--bg); background: var(--warn); }
 	.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -226,7 +225,7 @@
 	:global(.qm-pop .pop-value) { flex: none; font-variant-numeric: tabular-nums; color: var(--text-dim); text-align: right; }
 	:global(.qm-pop .pop-value.unknown) { color: var(--text-faint); }
 	:global(.qm-pop .pop-track) { height: 6px; border-radius: var(--radius-pill); overflow: hidden; background: var(--border-strong); }
-	:global(.qm-pop .pop-track.unknown) { background: transparent; border: 1px dashed var(--text-faint); opacity: 0.6; box-sizing: border-box; }
+	:global(.qm-pop .pop-track.unknown) { opacity: 0.45; }
 	:global(.qm-pop .pop-fill) { height: 100%; border-radius: var(--radius-pill); background: var(--accent); transition: width var(--motion-normal) var(--ease-std); }
 	:global(.qm-pop .pop-fill.ok) { background: var(--ok); }
 	:global(.qm-pop .pop-fill.warn) { background: var(--warn); }
