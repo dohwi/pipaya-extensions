@@ -55,7 +55,7 @@ export function gaugesFromSnapshot(snapshot) {
   const gauges = [gauge('claude', 'Claude', 'claude', byProvider('claude'))];
   if (gpt.length) gauges.push(gauge('gpt', 'GPT', 'gpt', gpt, 'codex'));
   if (gemini.length) gauges.push(gauge('gemini', 'Gemini', 'gemini', gemini));
-  const antigravityGauge = (id, label, brand, group, geminiKey, claudeKey, tag = '') => {
+  const antigravityGauge = (id, label, brand, group, geminiKey, claudeKey) => {
     const outer = gauge(id, label, brand, group, geminiKey);
     const inner = fleetSummary(claudeKey, group);
     outer.innerRemainingPercent = inner.remaining;
@@ -63,7 +63,6 @@ export function gaugesFromSnapshot(snapshot) {
     outer.stale ||= inner.stale;
     outer.updatedAt = Math.max(outer.updatedAt ?? 0, inner.updatedAt ?? 0) || null;
     outer.hint = [outer.hint ? `Gemini: ${outer.hint}` : '', inner.hint ? `Claude/GPT: ${inner.hint}` : ''].filter(Boolean).join(' · ');
-    if (tag) outer.tag = tag;
     return outer;
   };
   const ag4 = ag.filter(account => normalizeModelTier(account.model_tier) === '4');
@@ -74,8 +73,8 @@ export function gaugesFromSnapshot(snapshot) {
   const has38 = ag38.length > 0 || hasKey('antigravity_3_8_gemini') || hasKey('antigravity_3_8_claude');
   const hasLegacy = agLegacy.length > 0 || hasKey('antigravity_gemini') || hasKey('antigravity_claude');
   if (has4 || has38) {
-    if (has4) gauges.push(antigravityGauge('antigravity_4', 'AGY (4)', 'antigravity_4', ag4, 'antigravity_4_gemini', 'antigravity_4_claude', '4'));
-    if (has38) gauges.push(antigravityGauge('antigravity_3_8', 'AGY (3.8)', 'antigravity_3_8', ag38, 'antigravity_3_8_gemini', 'antigravity_3_8_claude', '3.8'));
+    if (has4) gauges.push(antigravityGauge('antigravity_4', 'AGY (4)', 'antigravity_4', ag4, 'antigravity_4_gemini', 'antigravity_4_claude'));
+    if (has38) gauges.push(antigravityGauge('antigravity_3_8', 'AGY (3.8)', 'antigravity_3_8', ag38, 'antigravity_3_8_gemini', 'antigravity_3_8_claude'));
     if (hasLegacy) gauges.push(antigravityGauge('antigravity', 'Antigravity', 'antigravity', agLegacy, 'antigravity_gemini', 'antigravity_claude'));
   } else {
     gauges.push(antigravityGauge('antigravity', 'Antigravity', 'antigravity', ag, 'antigravity_gemini', 'antigravity_claude'));

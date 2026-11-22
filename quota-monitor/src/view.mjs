@@ -44,10 +44,6 @@ export function gaugeData(gauge, error, fetchedAt = null) {
     hint: [gauge.hint, error].filter(Boolean).join(' · ').slice(0, 500),
     details: { title: title.slice(0, 40), rows: detailRows.slice(0, 12) }
   };
-  if (gauge.tag) {
-    node.tag = String(gauge.tag).slice(0, 6);
-    node.tagColor = outerColor;
-  }
   // The monitor's own observation time wins; otherwise the last successful read. A failed read never advances either.
   const updatedAt = Number.isFinite(gauge.updatedAt) && gauge.updatedAt > 0 ? gauge.updatedAt : fetchedAt;
   if (Number.isFinite(updatedAt) && updatedAt > 0) node.details.updatedAt = Math.round(updatedAt);

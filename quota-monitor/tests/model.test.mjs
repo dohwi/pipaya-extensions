@@ -141,11 +141,11 @@ test('Antigravity splits into independent AGY (4) and AGY (3.8) gauges when mode
     fleet('antigravity_3_8_gemini', 98.9),
     fleet('antigravity_3_8_claude', 0)
   ]));
-  assert.deepEqual(view.gauges.map(g => [g.id, g.label, g.tag ?? null, g.remainingPercent, g.innerRemainingPercent ?? null]), [
-    ['claude', 'Claude', null, 64, null],
-    ['gpt', 'GPT', null, 78, null],
-    ['antigravity_4', 'AGY (4)', '4', 99.3, 100],
-    ['antigravity_3_8', 'AGY (3.8)', '3.8', 98.9, 0]
+  assert.deepEqual(view.gauges.map(g => [g.id, g.label, g.remainingPercent, g.innerRemainingPercent ?? null]), [
+    ['claude', 'Claude', 64, null],
+    ['gpt', 'GPT', 78, null],
+    ['antigravity_4', 'AGY (4)', 99.3, 100],
+    ['antigravity_3_8', 'AGY (3.8)', 98.9, 0]
   ]);
   assert.equal(view.gauges[2].stale, false, 'AGY (4) is not marked stale by AGY (3.8)');
   assert.equal(view.gauges[3].stale, true, 'AGY (3.8) tracks its own stale state');

@@ -224,7 +224,7 @@ test('language setting switches the rendered text; auto without a program langua
   assert.ok(noKey.calls.at(-1).gauges[0].hint.includes('Set the management key'));
 });
 
-test('bundled worker renders AGY (4) and AGY (3.8) as distinct dual-ring gauges with version tags and colors', async () => {
+test('bundled worker renders AGY (4) and AGY (3.8) as distinct dual-ring gauges with colors and hover titles', async () => {
   const snap = {
     configured: true,
     snapshot_complete: true,
@@ -248,8 +248,7 @@ test('bundled worker renders AGY (4) and AGY (3.8) as distinct dual-ring gauges 
   assert.deepEqual(list.map(g => g.id), ['claude', 'gpt', 'antigravity_4', 'antigravity_3_8']);
   const ag4 = list[2], ag38 = list[3];
   assert.equal(ag4.label, 'AGY (4)');
-  assert.equal(ag4.tag, '4');
-  assert.equal(ag4.tagColor, '#8b7cf6');
+  assert.equal(ag4.tag, undefined);
   assert.equal(ag4.icon.paths[0].fill, '#8b7cf6');
   assert.equal(ag4.details.title, 'AGY (4) 잔량');
   assert.deepEqual(ag4.rings.map(r => [r.label, r.value, r.color]), [
@@ -258,8 +257,7 @@ test('bundled worker renders AGY (4) and AGY (3.8) as distinct dual-ring gauges 
   ]);
 
   assert.equal(ag38.label, 'AGY (3.8)');
-  assert.equal(ag38.tag, '3.8');
-  assert.equal(ag38.tagColor, '#4b8be8');
+  assert.equal(ag38.tag, undefined);
   assert.equal(ag38.icon.paths[0].fill, '#4b8be8');
   assert.equal(ag38.details.title, 'AGY (3.8) 잔량');
   assert.deepEqual(ag38.rings.map(r => [r.label, r.value, r.color]), [
