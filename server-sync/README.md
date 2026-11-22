@@ -202,6 +202,19 @@ It refreshes after every pull and every 30 seconds. On an app older than 0.8.8 (
 extension still works, and `POST .../methods/status` reports the same state. A `statusText` field left by an older
 version is removed from the settings on load.
 
+## Automatic backups and restore
+
+Before either side overwrites any settings row, extension settings, app extension list/states, skill folder, helper
+role, `AGENTS.md`, or model connection (during a `pull`, a `push` from a follower, or a `restore`), the previous state
+of the items that actually changed is saved to `extension-data/server-sync/backups/<id>.json` (`0600`).
+
+- No-op polls create no backup.
+- At most 20 backups are kept per server (older ones are rotated out).
+- Credentials (API keys, tokens, secrets) are never written into backup files and stay intact on restore.
+- Both pages show a **백업 복원 (N)** button in the action bar once backups exist. Opening it shows a dated backup
+  selector, a live before/after diff table, and an option to pause sync (`paused: true`) upon approval so restored
+  settings are not overwritten on the next sync.
+
 ## Tests
 
 `bun test` in this folder. `api.test.ts` drives a server with `pi.api` (each side's routes stood in for); the other files
@@ -215,5 +228,7 @@ pipaya checkout: `PIPAYA_APP=/path/to/pipaya/server bun test`.
 - `connect` — the follower's side: `{ url, code }` (or `{ url, token }`) connects and pulls once, returning the status.
 - `sync` — one pull now (follower only): `{ applied, ...status }`.
 - `status` — `{ role, url, intervalSeconds, keys, syncExtensions, lastSyncAt, lastApplied, lastError, status }`, so the health of a sync can be checked without reading the log.
+- `backups` — `{ backups: { id, at, reason, summary }[] }`, newest first.
+- `restore` — `{ id? }` restores the given backup (or the latest one when omitted) and returns `{ id, restored }`.
 
 The follower also emits an ephemeral `synced` event (`{ keys, at }`) to connected clients whenever a pull changed something.

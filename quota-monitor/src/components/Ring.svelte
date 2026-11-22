@@ -152,7 +152,7 @@
 				</svg>
 			{/if}
 		</svg>
-		{#if gauge.stale}<span class="badge" aria-hidden="true">!</span>{/if}
+		{#if gauge.stale}<span class="badge" aria-hidden="true"></span>{/if}
 		{#each rings as ring}
 			<span class="sr-only" role="progressbar" aria-label={ring.label} aria-valuemin="0" aria-valuemax={ring.max} aria-valuenow={ring.known ? ring.value : undefined} aria-valuetext={ring.text}></span>
 		{/each}
@@ -162,21 +162,20 @@
 {#if open && details}
 	<div use:portal bind:this={popEl} id={popId} class="qm-pop {placement}" role="tooltip" style="visibility: hidden" onpointerenter={clear} onpointerleave={(e) => { if (hovering(e)) later(hide, CLOSE_DELAY); }}>
 		{#if details.title}<div class="pop-title">{details.title}</div>{/if}
-		{#if gauge.stale && updatedAt === undefined}<div class="pop-stale">{strings.stale}</div>{/if}
 		{#each rows as row}
 			{#if row.heading}<div class="pop-group">{row.heading}</div>{/if}
 			<div class="pop-row">
 				<div class="pop-line">
-					<span class="pop-label">{row.label}</span>
+					<span class="pop-label" title={row.label}>{row.label}</span>
+					<div class="pop-track" class:unknown={!row.known}>
+						{#if row.known}<div class="pop-fill {row.named}" style:width="{row.percent}%" style:background={row.hex}></div>{/if}
+					</div>
 					<span class="pop-value" class:unknown={!row.known}>{row.text}</span>
-				</div>
-				<div class="pop-track" class:unknown={!row.known}>
-					{#if row.known}<div class="pop-fill {row.named}" style:width="{row.percent}%" style:background={row.hex}></div>{/if}
 				</div>
 				{#if row.caption}<div class="pop-caption">{row.caption}</div>{/if}
 			</div>
 		{/each}
-		{#if updatedText}<div class="pop-updated" class:stale={gauge.stale}>{updatedText}</div>{/if}
+		{#if updatedText || gauge.stale}<div class="pop-updated" class:stale={gauge.stale}>{updatedText || strings.stale}</div>{/if}
 	</div>
 {/if}
 
@@ -184,7 +183,7 @@
 	.gauge { position: relative; display: inline-flex; align-items: center; flex: none; max-width: 100%; border-radius: 6px; -webkit-tap-highlight-color: transparent; }
 	.gauge:focus:not(:focus-visible) { outline: none; }
 	.gauge:focus-visible { outline: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; }
-	.gauge.stale { opacity: 0.65; }
+	.gauge.stale .rings { opacity: 0.72; }
 	.circle { position: relative; flex: none; width: 26px; height: 26px; }
 	.rings { display: block; width: 100%; height: 100%; overflow: visible; }
 	circle { fill: none; stroke-width: 2.4; }
@@ -197,14 +196,14 @@
 	/* Unknown: just a dimmed empty track, no dashes (dashes on tiny concentric rings look jagged). */
 	.track.unknown { opacity: 0.45; }
 	.glyph { color: var(--text-dim); overflow: hidden; }
-	.badge { position: absolute; right: 0; top: 0; width: 9px; height: 9px; line-height: 9px; text-align: center; border-radius: 50%; font-size: 7px; overflow: hidden; color: var(--bg); background: var(--warn); }
+	.badge { position: absolute; right: 0; top: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 1.5px var(--bg); }
 	.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 	@media (max-width: 600px) { .circle { width: 22px; height: 22px; } }
 	/* The popover lives outside this component's DOM position (portal), so its rules are global-by-class. */
 	:global(.qm-pop) {
 		position: fixed; top: 0; left: 0; z-index: var(--z-tooltip); box-sizing: border-box;
-		min-width: min(240px, calc(100vw - 16px)); max-width: min(320px, calc(100vw - 16px)); overflow-y: auto;
-		padding: 10px 12px; border-radius: var(--radius); border: 1px solid var(--border-strong);
+		min-width: min(250px, calc(100vw - 16px)); max-width: min(320px, calc(100vw - 16px)); overflow-y: auto;
+		padding: 9px 11px; border-radius: var(--radius); border: 1px solid var(--border-strong);
 		background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow);
 		font-size: var(--fs-xs); line-height: 1.4; text-align: left; white-space: normal;
 		transform-origin: top center; animation: qm-pop-in var(--motion-normal) var(--ease);
@@ -213,18 +212,17 @@
 	@keyframes qm-pop-in { from { opacity: 0; transform: translateY(-4px) scale(0.96); } to { opacity: 1; transform: none; } }
 	@media (prefers-reduced-motion: reduce) { :global(.qm-pop) { animation: none; } :global(.qm-pop .pop-fill) { transition: none !important; } }
 	:global(.qm-pop .pop-title) { font-weight: 600; font-size: var(--fs-sm); margin-bottom: 6px; overflow-wrap: anywhere; }
-	:global(.qm-pop .pop-stale) { margin-bottom: 6px; padding: 2px 6px; border-radius: 5px; font-size: var(--fs-2xs); color: var(--warn); background: var(--warn-soft); }
-	:global(.qm-pop .pop-updated) { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border-strong); font-size: var(--fs-2xs); font-variant-numeric: tabular-nums; color: var(--text-faint); }
+	:global(.qm-pop .pop-updated) { margin-top: 7px; padding-top: 5px; border-top: 1px solid var(--border-strong); font-size: var(--fs-2xs); font-variant-numeric: tabular-nums; color: var(--text-faint); }
 	:global(.qm-pop .pop-updated.stale) { color: var(--warn); }
-	:global(.qm-pop .pop-group) { margin: 8px 0 4px; font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.02em; color: var(--text-faint); overflow-wrap: anywhere; }
+	:global(.qm-pop .pop-group) { margin: 7px 0 4px; font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.02em; color: var(--text-faint); overflow-wrap: anywhere; }
 	:global(.qm-pop .pop-group:first-child) { margin-top: 0; }
-	:global(.qm-pop .pop-row) { margin: 0 0 8px; }
+	:global(.qm-pop .pop-row) { margin: 0 0 6px; }
 	:global(.qm-pop .pop-row:last-child) { margin-bottom: 0; }
-	:global(.qm-pop .pop-line) { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
-	:global(.qm-pop .pop-label) { min-width: 0; overflow-wrap: anywhere; color: var(--text); }
-	:global(.qm-pop .pop-value) { flex: none; font-variant-numeric: tabular-nums; color: var(--text-dim); text-align: right; }
+	:global(.qm-pop .pop-line) { display: grid; grid-template-columns: minmax(0, 1fr) 64px auto; align-items: center; gap: 8px; }
+	:global(.qm-pop .pop-label) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+	:global(.qm-pop .pop-value) { flex: none; min-width: 34px; font-variant-numeric: tabular-nums; color: var(--text-dim); text-align: right; white-space: nowrap; }
 	:global(.qm-pop .pop-value.unknown) { color: var(--text-faint); }
-	:global(.qm-pop .pop-track) { height: 6px; border-radius: var(--radius-pill); overflow: hidden; background: var(--border-strong); }
+	:global(.qm-pop .pop-track) { height: 5px; border-radius: var(--radius-pill); overflow: hidden; background: var(--border-strong); }
 	:global(.qm-pop .pop-track.unknown) { opacity: 0.45; }
 	:global(.qm-pop .pop-fill) { height: 100%; border-radius: var(--radius-pill); background: var(--accent); transition: width var(--motion-normal) var(--ease-std); }
 	:global(.qm-pop .pop-fill.ok) { background: var(--ok); }

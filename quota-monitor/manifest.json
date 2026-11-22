@@ -15,7 +15,7 @@
       "key": "httpOrigin",
       "type": "string",
       "label": "CLIProxyAPI 주소",
-      "description": "quota-monitor 플러그인이 있는 CLIProxyAPI의 origin입니다. 경로나 계정 정보는 넣지 마세요.",
+      "description": "경로·계정 없이 origin만 입력",
       "placeholder": "http://localhost:8317",
       "required": true,
       "format": "origin"
@@ -23,21 +23,21 @@
     {
       "key": "httpToken",
       "type": "string",
-      "label": "관리 키 (Management Key)",
-      "description": "CLIProxyAPI 관리 키입니다. pipaya 서버에 저장되어 이 서버에 연결한 모든 기기가 함께 씁니다. 설정 내보내기에서는 빠집니다. 쿼터 데이터는 관리 인증이 필요합니다.",
+      "label": "관리 키",
+      "description": "서버에 저장·공유되며 설정 내보내기에서는 제외됩니다.",
       "required": true,
       "secret": true
     },
     {
       "key": "language",
       "type": "select",
-      "label": "언어 (Language)",
-      "description": "자동은 pipaya 화면 언어(설정 > 일반 > 언어)를 따릅니다. / Auto follows the pipaya UI language.",
+      "label": "언어",
+      "description": "자동은 pipaya 앱 언어를 따릅니다.",
       "default": "auto",
       "options": [
         {
           "value": "auto",
-          "label": "자동 (프로그램 언어) / Auto"
+          "label": "자동 (앱 언어)"
         },
         {
           "value": "ko",
@@ -53,7 +53,7 @@
       "key": "pollSeconds",
       "type": "number",
       "label": "갱신 주기(초)",
-      "description": "비워 두면 서버가 알려주는 간격을 씁니다.",
+      "description": "비우면 서버 기본 간격 사용",
       "min": 10,
       "max": 900
     }

@@ -14,42 +14,39 @@
       {
         "key": "wipe",
         "type": "boolean",
-        "label": "Block wiping disks and home",
-        "description": "Stops commands that delete a whole disk or home directory, such as rm -rf / and rm -rf ~.",
+        "label": "Wipe disk / home",
+        "description": "rm -rf /, rm -rf ~",
         "default": true
       },
       {
         "key": "disk",
         "type": "boolean",
-        "label": "Block formatting or overwriting disks",
-        "description": "Stops commands that format or overwrite a disk, such as mkfs, dd of=/dev/sdX and > /dev/nvme0n1.",
+        "label": "Format / overwrite disk",
+        "description": "mkfs, dd of=/dev/sdX, > /dev/nvme0n1",
         "default": true
       },
       {
         "key": "fork",
         "type": "boolean",
-        "label": "Block fork bombs",
-        "description": "Stops commands that multiply processes without end, such as :(){ :|:& };:.",
+        "label": "Fork bombs",
+        "description": ":(){ :|:& };:",
         "default": true
       },
       {
         "key": "permissions",
         "type": "boolean",
-        "label": "Block permission changes on disks and home",
-        "description": "Stops chmod -R and chown -R applied to all of / or ~.",
+        "label": "Disk / home permissions",
+        "description": "chmod -R / chown -R on / or ~",
         "default": true
       }
     ],
     "translations": {
       "ko": {
-        "Block wiping disks and home": "디스크·홈 삭제 차단",
-        "Stops commands that delete a whole disk or home directory, such as rm -rf / and rm -rf ~.": "rm -rf /, rm -rf ~ 처럼 디스크나 홈 디렉터리 전체를 지우는 명령을 막습니다.",
-        "Block formatting or overwriting disks": "디스크 포맷·덮어쓰기 차단",
-        "Stops commands that format or overwrite a disk, such as mkfs, dd of=/dev/sdX and > /dev/nvme0n1.": "mkfs, dd of=/dev/sdX, > /dev/nvme0n1 처럼 디스크를 포맷하거나 덮어쓰는 명령을 막습니다.",
-        "Block fork bombs": "포크 폭탄 차단",
-        "Stops commands that multiply processes without end, such as :(){ :|:& };:.": ":(){ :|:& };: 처럼 프로세스를 무한히 늘리는 명령을 막습니다.",
-        "Block permission changes on disks and home": "디스크·홈 권한 변경 차단",
-        "Stops chmod -R and chown -R applied to all of / or ~.": "chmod -R, chown -R 을 / 나 ~ 전체에 적용하는 명령을 막습니다."
+        "Wipe disk / home": "디스크·홈 삭제 차단",
+        "Format / overwrite disk": "디스크 포맷·덮어쓰기 차단",
+        "Fork bombs": "포크 폭탄 차단",
+        "Disk / home permissions": "디스크·홈 권한 변경 차단",
+        "chmod -R / chown -R on / or ~": "/·~ 전체 chmod -R · chown -R"
       }
     }
   },

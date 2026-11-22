@@ -18,6 +18,9 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync,
 const MAX_BACKOFF = 8;
 /** How long a connection code stays valid (same as the app's pairing code). */
 const CODE_TTL_MS = 120_000;
+/** How many automatic pre-change backups to keep per server. */
+const MAX_BACKUPS = 20;
+const SAFE_BACKUP_ID = /^[0-9]+-[a-f0-9]+$/;
 
 /** Rows mirrored by default. */
 const SYNCED_KEYS = [
@@ -465,6 +468,68 @@ export default (pi: any) => {
 		writeFileSync(tmp, JSON.stringify(b), { mode: 0o600 });
 		renameSync(tmp, file);
 	};
+	type BackupReason = "pull" | "push" | "restore";
+	interface BackupSummary { id: string; at: number; reason: BackupReason; summary: string[] }
+	interface BackupRecord extends BackupSummary {
+		rows?: Record<string, unknown>;
+		extensions?: Record<string, Record<string, unknown>>;
+		clientExtensions?: { list?: unknown; states?: unknown };
+		skills?: Record<string, FileSet | null>;
+		subagents?: Record<string, string | null>;
+		agentsMd?: string | null;
+		providers?: Record<string, Record<string, unknown> | null>;
+	}
+	const backupsDir = () => join(dirname(peerFile()), "backups");
+	const listBackups = (): BackupSummary[] => {
+		const dir = backupsDir();
+		if (!existsSync(dir)) return [];
+		const out: BackupSummary[] = [];
+		for (const name of readdirSync(dir)) {
+			if (!name.endsWith(".json")) continue;
+			const id = name.slice(0, -5);
+			if (!SAFE_BACKUP_ID.test(id)) continue;
+			try {
+				const v: unknown = JSON.parse(readFileSync(join(dir, name), "utf8"));
+				if (plain(v) && typeof v.id === "string" && typeof v.at === "number" && (v.reason === "pull" || v.reason === "push" || v.reason === "restore") && Array.isArray(v.summary)) {
+					out.push({ id: v.id, at: v.at, reason: v.reason, summary: v.summary.filter((x): x is string => typeof x === "string") });
+				}
+			} catch { /* damaged backup file */ }
+		}
+		return out.sort((a, b) => b.at - a.at);
+	};
+	const readBackup = (id: string): BackupRecord | null => {
+		if (!SAFE_BACKUP_ID.test(id)) return null;
+		try {
+			const v: unknown = JSON.parse(readFileSync(join(backupsDir(), `${id}.json`), "utf8"));
+			if (plain(v) && v.id === id && typeof v.at === "number" && (v.reason === "pull" || v.reason === "push" || v.reason === "restore") && Array.isArray(v.summary)) {
+				return v as unknown as BackupRecord;
+			}
+		} catch { /* missing or damaged */ }
+		return null;
+	};
+	const saveBackup = (record: Omit<BackupRecord, "id" | "at">): BackupSummary | null => {
+		if (!record.summary.length) return null;
+		const dir = backupsDir();
+		mkdirSync(dir, { recursive: true, mode: 0o700 });
+		const at = Date.now();
+		const id = `${at}-${randomBytes(3).toString("hex")}`;
+		const full: BackupRecord = { id, at, ...record };
+		const file = join(dir, `${id}.json`);
+		const tmp = `${file}.${randomBytes(4).toString("hex")}.tmp`;
+		writeFileSync(tmp, JSON.stringify(full), { mode: 0o600 });
+		chmodSync(tmp, 0o600);
+		renameSync(tmp, file);
+		// Keep at most MAX_BACKUPS newest files.
+		const files = readdirSync(dir)
+			.filter((n) => n.endsWith(".json") && SAFE_BACKUP_ID.test(n.slice(0, -5)))
+			.sort((a, b) => {
+				const ta = Number(a.split("-")[0]) || 0;
+				const tb = Number(b.split("-")[0]) || 0;
+				return tb - ta || b.localeCompare(a);
+			});
+		for (const old of files.slice(MAX_BACKUPS)) rmSync(join(dir, old), { force: true });
+		return { id, at, reason: full.reason, summary: full.summary };
+	};
 	/**
 	 * This follower's own id, made once and kept next to the peer file: how the primary tells two followers apart and
 	 * one follower's pulls from another's. A random value, not derived from the token, so it says nothing about it.
@@ -562,6 +627,8 @@ export default (pi: any) => {
 	const wantSecrets = () => settings().syncSecrets === true;
 	/** Extension settings values travel with the extensions: one box, "확장". */
 	const syncExtensions = () => settings().syncExtensions === true;
+	/** Pause automatic sync (follower) and sync responses (primary). */
+	const isPaused = () => settings().paused === true;
 
 	/**
 	 * The server's own db, opened lazily at the same path the server process uses. The path is re-read each time and the
@@ -867,6 +934,7 @@ export default (pi: any) => {
 	};
 	const keyLabel = (k: string): Text => {
 		if (k.startsWith("up:")) { const t = keyLabel(k.slice(3)); return { ko: `↑ 기준 서버에 반영: ${t.ko}`, en: `↑ Sent to the primary: ${t.en}` }; }
+		if (k.startsWith("restore:")) { const t = keyLabel(k.slice(8)); return { ko: `↩ 백업에서 복원: ${t.ko}`, en: `↩ Restored from backup: ${t.en}` }; }
 		const [kind, rest = ""] = k.includes(":") ? [k.slice(0, k.indexOf(":")), k.slice(k.indexOf(":") + 1)] : ["", k];
 		if (kind === "ext") return { ko: `확장 설정: ${rest}`, en: `Extension settings: ${rest}` };
 		if (kind === "srv") return { ko: `확장 설치: ${rest}`, en: `Extension installed: ${rest}` };
@@ -899,17 +967,105 @@ export default (pi: any) => {
 	/** A manual pull from the page is running: its button shows that. */
 	let pulling = false;
 
+	let selectedBackupId = "";
+	let confirmRestoreId: string | null = null;
+	let pauseAfterRestore = true;
+	let previewRowsCache: { id: string; rows: { id: string; cells: (Text | string)[] }[] } | null = null;
+
+	const backupButton = (list: BackupSummary[], confirming: boolean): unknown[] =>
+		!list.length || confirming ? [] : [{
+			type: "button", id: "restore-preview", variant: "secondary", disabled: pulling || busy,
+			label: { ko: `백업 복원 (${list.length})`, en: `Restore backup (${list.length})` },
+		}];
+
+	const restoreCardNodes = (list: BackupSummary[]): unknown[] => {
+		if (!list.length || !confirmRestoreId) return [];
+		const active = list.find((b) => b.id === selectedBackupId) ?? list[0]!;
+		if (confirmRestoreId !== active.id || previewRowsCache?.id !== confirmRestoreId) return [];
+		const reasonLabel = (r: BackupReason): Text => r === "pull"
+			? { ko: "수신 전", en: "Before pull" }
+			: r === "push" ? { ko: "반영 전", en: "Before push" }
+			: { ko: "복원 직전", en: "Before restore" };
+		const summaryText = (keys: readonly string[], lang: "ko" | "en"): string => {
+			if (!keys.length) return "";
+			const head = keys.slice(0, 2).map((k) => keyLabel(k)[lang]).join(", ");
+			return keys.length > 2 ? (lang === "ko" ? `${head} 외 ${keys.length - 2}` : `${head} +${keys.length - 2}`) : head;
+		};
+		const rows = previewRowsCache.rows;
+		return [{
+			type: "card", id: "restore-confirm",
+			title: { ko: "백업 복원", en: "Restore backup" },
+			description: { ko: `총 ${list.length}개 보관 · 복원 전 현재 상태도 자동 백업됩니다.`, en: `${list.length} kept · current state is backed up beforehand.` },
+			children: [
+				{
+					type: "select", id: "backup-select",
+					label: { ko: "복원할 시점", en: "Backup point" },
+					value: active.id,
+					options: list.map((b) => ({
+						value: b.id,
+						label: {
+							ko: `${formatDate(b.at)} · ${reasonLabel(b.reason).ko} · ${summaryText(b.summary, "ko")}`,
+							en: `${formatDate(b.at)} · ${reasonLabel(b.reason).en} · ${summaryText(b.summary, "en")}`,
+						},
+					})),
+				},
+				...(rows.length ? [{
+					type: "table", id: "restore-diff",
+					columns: [
+						{ id: "item", label: { ko: "항목", en: "Item" } },
+						{ id: "before", label: { ko: "현재", en: "Current" } },
+						{ id: "after", label: { ko: "복원", en: "Restored" } },
+					],
+					rows,
+				}] : [{ type: "text", id: "restore-same", size: "small", text: { ko: "현재 상태와 차이가 없습니다.", en: "No differences from the current state." } }]),
+				{
+					type: "select", id: "restore-after",
+					label: { ko: "복원 후 동작", en: "After restore" },
+					value: pauseAfterRestore ? "pause" : "keep",
+					options: [
+						{ value: "pause", label: { ko: "자동 동기화 멈춤 (권장)", en: "Pause auto sync (recommended)" } },
+						{ value: "keep", label: { ko: "자동 동기화 유지", en: "Keep auto sync" } },
+					],
+				},
+				{
+					type: "stack", id: "restore-actions", direction: "horizontal", gap: "small",
+					children: [
+						{ type: "button", id: "restore-cancel", variant: "secondary", disabled: pulling || busy, label: { ko: "취소", en: "Cancel" } },
+						{ type: "button", id: "restore-approve", variant: "danger", disabled: pulling || busy || !rows.length, label: { ko: "승인하고 복원", en: "Approve and restore" } },
+					],
+				},
+			],
+		}];
+	};
+
 	/** The extension's page (`pi.ui`): the state, the numbers that matter and what can be done now. */
 	const panel = () => {
+		const backups = listBackups();
+		const restoreCard = restoreCardNodes(backups);
+		const confirming = restoreCard.length > 0;
 		if (role() === "primary") {
 			const url = publicUrl();
+			const flist = followerList();
+			const secretsOn = settings().shareSecrets === true;
+			const primaryActions: unknown[] = [
+				...(isPaused() ? [{ type: "button", id: "resume-sync", variant: "primary", disabled: pulling || busy, label: { ko: "동기화 다시 시작", en: "Resume sync" } }] : []),
+				...backupButton(backups, confirming),
+			];
+			const addrKo = url ? hostOf(url) : "로컬 전용";
+			const addrEn = url ? hostOf(url) : "loopback only";
+			const secKo = secretsOn ? "비밀값 허용됨" : "비밀값 꺼짐";
+			const secEn = secretsOn ? "secrets allowed" : "secrets off";
 			return {
-				type: "stack", id: "status", gap: "medium", children: [
-					{ type: "badge", id: "state", tone: "info", text: { ko: "기준 서버", en: "Primary" } },
-					{ type: "text", id: "what", text: { ko: "팔로워 서버와 설정을 맞춥니다. 한쪽에서 바꾼 것은 다른 쪽에도 반영되고, 양쪽에서 같은 항목을 바꾸면 이 서버(기준) 값이 이깁니다.", en: "Keeps follower servers in step with this one. A change on either side reaches the other; when both changed the same item, this server (the primary) wins." } },
-					...(url ? [{ type: "stat", id: "address", label: { ko: "이 서버 주소", en: "This server's address" }, value: hostOf(url) }] : []),
-					{ type: "text", id: "followers-title", size: "small", text: { ko: "연결된 팔로워", en: "Connected followers" } },
-					{ type: "list", id: "followers", items: followerList().map((f, i) => {
+				type: "stack", id: "status", gap: "small", children: [
+					{
+						type: "text", id: isPaused() ? "paused-badge" : secretsOn ? "state" : "secrets-off", size: "small",
+						tone: isPaused() ? "warning" : "neutral",
+						text: isPaused()
+							? { ko: `● 기준 서버 · 일시 중지됨 · ${addrKo} · ${secKo}`, en: `● Primary · paused · ${addrEn} · ${secEn}` }
+							: { ko: `● 기준 서버 · ${addrKo} · 팔로워 ${flist.length}대 · ${secKo}`, en: `● Primary · ${addrEn} · ${flist.length} follower${flist.length === 1 ? "" : "s"} · ${secEn}` },
+					},
+					...(secretsOn ? [{ type: "alert", id: "secrets-on", tone: "warning", text: { ko: "비밀값 내보내기가 켜져 있습니다. 팔로워가 요청하면 모델 API 키와 확장 토큰을 건네줍니다.", en: "Sharing secrets is on. Followers that ask receive model API keys and extension tokens." } }] : []),
+					{ type: "list", id: "followers", items: flist.map((f, i) => {
 						const when = ago(f.lastAt);
 						const where = f.url ? `${hostOf(f.url)} · ` : "";
 						return {
@@ -918,42 +1074,72 @@ export default (pi: any) => {
 							...(followerSilent(f) ? { badge: { ko: "동기화 멈춤", en: "Not syncing" } } : {}),
 						};
 					}),
-					emptyText: { ko: "연결된 팔로워가 없습니다. 팔로워가 처음 동기화하면 여기에 나타납니다(팔로워의 Server Sync 0.17.0 이상).", en: "No followers yet. A follower shows up here after its first sync (Server Sync 0.17.0 or later on the follower)." } },
-					{ type: "text", id: "how", size: "small", text: { ko: "팔로워를 연결하려면: 이 서버의 기기 탭 → [연결 링크 복사] → 팔로워의 연결 링크 칸에 붙여넣기", en: "To connect a follower: this server's Devices tab → [Copy connection link] → paste it into the follower's link field" } },
-					{ type: "text", id: "pick", size: "small", text: { ko: "무엇을 맞출지(앱 설정·확장·스킬 등)는 팔로워 서버의 이 화면에서 고릅니다. 확장 설치, 앱의 확장 목록, API 키는 이 서버에서 팔로워로만 갑니다.", en: "What to keep in step (app settings, extensions, skills, …) is picked on the follower's page. Installs, the apps' extension list and API keys only go from here to followers." } },
-					settings().shareSecrets === true
-						? { type: "alert", id: "secrets-on", tone: "warning", text: { ko: "비밀값 내보내기가 켜져 있습니다. 팔로워가 요청하면 이 서버의 모델 API 키와 확장 토큰을 건네줍니다. 내 서버가 아니면 끄세요.", en: "Sharing secrets is on. A follower that asks gets this server's model API keys and extension tokens. Turn it off unless the follower is yours." } }
-						: { type: "text", id: "secrets-off", size: "small", text: { ko: "API 키·토큰은 나가지 않습니다(비밀값 내보내기 꺼짐).", en: "API keys and tokens do not leave (sharing secrets is off)." } },
+					emptyText: { ko: "연결된 팔로워가 없습니다. 기기 탭 → [연결 링크 복사]로 연결하세요.", en: "No followers yet. Connect via Devices → [Copy connection link]." } },
+					...(primaryActions.length ? [{ type: "stack", id: "actions", direction: "horizontal", gap: "small", children: primaryActions }] : []),
+					...restoreCard,
 				],
 			};
 		}
 		const { url, token } = cfg();
 		const pasted = String(settings().shareCode ?? "").trim();
 		const waiting = !token && !!pasted && !lastError;
-		const state: { tone: string; text: Text } = !url && !pairingLink(pasted) && !token
-			? { tone: "neutral", text: { ko: "연결 안 됨", en: "Not connected" } }
-			: lastError ? { tone: "danger", text: { ko: "연결 실패", en: "Failed" } }
-			: waiting || (token && lastSyncAt === null) ? { tone: "neutral", text: { ko: "연결 중", en: "Connecting" } }
-			: token ? { tone: "success", text: { ko: "연결됨", en: "Connected" } }
-			: { tone: "neutral", text: { ko: "연결 안 됨", en: "Not connected" } };
+		const stateTone = !url && !pairingLink(pasted) && !token ? "neutral"
+			: lastError ? "danger"
+			: isPaused() ? "warning"
+			: waiting || (token && lastSyncAt === null) ? "neutral"
+			: token ? "success" : "neutral";
+		const stateDot = stateTone === "danger" ? "✕" : stateTone === "neutral" ? "○" : "●";
+		const stateLabel: Text = !url && !pairingLink(pasted) && !token
+			? { ko: "연결 안 됨", en: "Not connected" }
+			: lastError ? { ko: "연결 실패", en: "Failed" }
+			: isPaused() ? { ko: "일시 중지됨", en: "Paused" }
+			: waiting || (token && lastSyncAt === null) ? { ko: "연결 중", en: "Connecting" }
+			: token ? { ko: "연결됨", en: "Connected" }
+			: { ko: "연결 안 됨", en: "Not connected" };
 		const next = timer && nextPullAt > Date.now() ? until(nextPullAt) : null;
+		const headPartsKo = [`${stateDot} ${stateLabel.ko}`];
+		const headPartsEn = [`${stateDot} ${stateLabel.en}`];
+		if (token && url) {
+			headPartsKo.push(hostOf(url));
+			headPartsEn.push(hostOf(url));
+		}
+		if (token && !isPaused() && !lastError) {
+			if (pulling || busy) { headPartsKo.push("동기화 중…"); headPartsEn.push("syncing…"); }
+			else if (next) { headPartsKo.push(`다음 ${next.ko}`); headPartsEn.push(`next ${next.en}`); }
+		}
+		if (lastSyncAt !== null) {
+			if (lastError) { headPartsKo.push(`마지막 성공 ${ago(lastSyncAt).ko}`); headPartsEn.push(`last ok ${ago(lastSyncAt).en}`); }
+			else { headPartsKo.push(`${ago(lastSyncAt).ko} 확인`); headPartsEn.push(`checked ${ago(lastSyncAt).en}`); }
+		}
 		const children: unknown[] = [
-			{ type: "stack", id: "head", direction: "horizontal", gap: "small", children: [
-				{ type: "badge", id: "state", tone: state.tone, text: state.text },
-				...(lastSyncAt !== null ? [{ type: "text", id: "checked", size: "small", tone: "neutral", text: lastError
-					? { ko: `마지막 성공 ${ago(lastSyncAt).ko}`, en: `last succeeded ${ago(lastSyncAt).en}` }
-					: { ko: `${ago(lastSyncAt).ko} 확인`, en: `checked ${ago(lastSyncAt).en}` } }] : []),
-			] },
+			{
+				type: "text", id: isPaused() ? "paused-badge" : "state", size: "small", tone: stateTone,
+				text: { ko: headPartsKo.join(" · "), en: headPartsEn.join(" · ") },
+			},
 		];
 		if (!token) {
-			children.push({ type: "text", id: "how", text: { ko: "기준 서버의 기기 탭 → [연결 링크 복사]로 받은 링크를 아래 ‘연결 링크’에 붙여넣고 저장하세요.", en: "Paste the link from the primary's Devices tab → [Copy connection link] into ‘Connection link’ below, then save." } });
+			children.push({ type: "text", id: "how", size: "small", tone: "neutral", text: { ko: "기준 서버의 기기 탭 → [연결 링크 복사]로 받은 링크를 아래 ‘연결 링크’에 붙여넣고 저장하세요.", en: "Paste the link from the primary's Devices tab → [Copy connection link] into ‘Connection link’ below, then save." } });
+			const offActions = backupButton(backups, confirming);
+			if (offActions.length) children.push({ type: "stack", id: "actions", direction: "horizontal", gap: "small", children: offActions });
 		} else {
-			children.push({ type: "grid", id: "numbers", columns: 3, children: [
-				{ type: "stat", id: "peer", label: { ko: "기준 서버", en: "Primary" }, value: hostOf(url) },
-				{ type: "stat", id: "pulled", label: { ko: "지난번 맞춘 항목", en: "Matched last time" }, value: lastSyncAt === null ? "—" : lastApplied.length ? { ko: `${lastApplied.length}개`, en: String(lastApplied.length) } : { ko: "변경 없음", en: "No changes" } },
-				{ type: "stat", id: "next", label: { ko: "다음 동기화", en: "Next sync" }, value: pulling || busy ? { ko: "지금", en: "now" } : next ?? { ko: "곧", en: "soon" } },
+			if (lastApplied.length) {
+				children.push({
+					type: "text", id: "recent", size: "small", tone: "neutral",
+					text: {
+						ko: `최근 반영: ${lastApplied.slice(0, 3).map((k) => keyLabel(k).ko).join(", ")}${lastApplied.length > 3 ? ` 외 ${lastApplied.length - 3}개` : ""}`,
+						en: `Last matched: ${lastApplied.slice(0, 3).map((k) => keyLabel(k).en).join(", ")}${lastApplied.length > 3 ? ` +${lastApplied.length - 3}` : ""}`,
+					},
+				});
+			}
+			children.push({ type: "stack", id: "actions", direction: "horizontal", gap: "small", children: [
+				isPaused()
+					? { type: "button", id: "resume-sync", variant: "primary", disabled: pulling || busy, label: { ko: "동기화 다시 시작", en: "Resume sync" } }
+					: { type: "button", id: "sync", variant: "primary", disabled: pulling || busy, label: pulling ? { ko: "동기화 중…", en: "Syncing…" } : { ko: "지금 동기화", en: "Sync now" } },
+				...backupButton(backups, confirming),
+				{ type: "button", id: "disconnect", variant: "secondary", disabled: pulling, label: { ko: "연결 해제", en: "Disconnect" } },
 			] });
 		}
+		children.push(...restoreCard);
 		if (lastError) children.push({ type: "alert", id: "error", tone: "danger", title: errorTitle(lastError), text: lastError });
 		if (token && needsInput.length && settings().syncExtensions === true) {
 			// The alert carries the sentence; the list under it names each extension and what it lacks (an alert's text
@@ -981,17 +1167,7 @@ export default (pi: any) => {
 		if (token && unlisted.length && settings().syncExtensions === true) children.push({ type: "alert", id: "unlisted", tone: "warning",
 			title: { ko: "마켓플레이스에 없는 확장은 설치하지 않았습니다", en: "Extensions not in the marketplace were not installed" },
 			text: { ko: `${unlisted.join(", ")} — 기준 서버에서 복사하려면 아래 ‘직접 만든 확장도 복사’를 켜세요.`, en: `${unlisted.join(", ")} — to copy them from the primary, turn on ‘Also copy extensions you made yourself’ below.` } });
-		if (token && lastApplied.length) {
-			children.push({ type: "text", id: "changed-title", size: "small", text: { ko: "지난번에 바뀐 항목", en: "Changed last time" } });
-			children.push({ type: "list", id: "changed", items: lastApplied.slice(0, 20).map((k, i) => ({ id: `k${i}`, title: keyLabel(k) })) });
-		}
-		if (token) {
-			children.push({ type: "stack", id: "actions", direction: "horizontal", gap: "small", children: [
-				{ type: "button", id: "sync", variant: "primary", disabled: pulling || busy, label: pulling ? { ko: "동기화 중…", en: "Syncing…" } : { ko: "지금 동기화", en: "Sync now" } },
-				{ type: "button", id: "disconnect", variant: "secondary", disabled: pulling, label: { ko: "연결 해제", en: "Disconnect" } },
-			] });
-		}
-		return { type: "stack", id: "status", gap: "medium", children };
+		return { type: "stack", id: "status", gap: "small", children };
 	};
 
 	const status = (): Status => ({
@@ -1010,6 +1186,7 @@ export default (pi: any) => {
 	// ---- what a peer reads: the rows this server mirrors and the keys they cover ----
 
 	pi.registerMethod("snapshot", async (params: unknown): Promise<Snapshot> => {
+		if (isPaused()) throw new Error("sync is paused on the primary");
 		const list = keys();
 		const snap: Snapshot = { keys: list, settings: readSettings(dbo(), list), push: 1 };
 		// A follower (0.17.0+) says who it is: the page lists it. Only on a primary; a code fetch (`codeOf`) sends nothing.
@@ -1144,10 +1321,19 @@ export default (pi: any) => {
 	 */
 	pi.registerMethod("push", async (params: unknown) => {
 		if (role() !== "primary") throw new Error("this server is not a primary");
+		if (isPaused()) throw new Error("sync is paused on the primary");
 		if (!plain(params)) throw new Error("nothing to push");
 		const changed: string[] = [];
 		const list = keys();
 		let refused: string[] = [];
+		const before = await captureBefore({
+			rowKeys: (plain(params.settings) || Array.isArray(params.deleted)) ? list : undefined,
+			extensions: plain(params.extensions),
+			skills: plain(params.skills),
+			subagents: plain(params.subagents),
+			agentsMd: typeof params.agentsMd === "string",
+			providers: plain(params.providers),
+		});
 		if (plain(params.settings) || Array.isArray(params.deleted)) {
 			const rows = plain(params.settings) ? params.settings : {};
 			const gone = Array.isArray(params.deleted) ? params.deleted.filter((k): k is string => typeof k === "string") : [];
@@ -1185,8 +1371,10 @@ export default (pi: any) => {
 			changed.push(...(await applyProviders(clean)));
 		}
 		if (changed.length) {
+			commitBackup("push", changed, before);
 			log(`took from a follower: ${changed.join(", ")}`);
 			pi.emit(null, "synced", { keys: changed, at: Date.now(), from: "follower" }, { ephemeral: true });
+			showStatus();
 		}
 		// What this server holds now for every item it was sent, hashed as a follower hashes it: the follower's next
 		// comparison starts from there, so a value this server stores a little differently is not a change.
@@ -1351,6 +1539,18 @@ export default (pi: any) => {
 			for (const k of unfit) (base.items.rows ??= {})[k] = "local";
 			skippedPaths = unfit.map((k) => String(peerRows[k]));
 		} else skippedPaths = [];
+		// Server extensions first: a pulled extension's settings need the extension installed to mean anything.
+		// A primary older than 0.10.0 sends no environment: nothing to do, not an error.
+		const env = plain(body.result?.environment) ? (body.result.environment as Environment) : {};
+		const before = await captureBefore({
+			rowKeys: rows.pull.length ? rows.pull : undefined,
+			extensions: withExtensions && plain(body.result?.extensions),
+			clientExtensions: parts.includes("clientExtensions") && plain(env.clientExtensions),
+			skills: parts.includes("skills") && plain(env.skills),
+			subagents: parts.includes("subagents") && plain(env.subagents),
+			agentsMd: parts.includes("agentsMd") && "agentsMd" in env,
+			providers: parts.includes("providers") && plain(env.providers),
+		});
 		// A value this server's route refuses (a model it does not have) is not taken and not settled: it is tried again
 		// on the next sync, and this server keeps its own until then.
 		const applied = rows.pull.length ? await applyRows(rows.pull, peer as Record<string, unknown>) : { changed: [], refused: [] };
@@ -1358,9 +1558,6 @@ export default (pi: any) => {
 		refusedRows = applied.refused;
 		await settle("rows", rows.pull.filter((k) => !applied.refused.some((r) => r.key === k)), rows.p);
 		up.push({ kind: "rows", ids: rows.push, mine: rows.mine });
-		// Server extensions first: a pulled extension's settings need the extension installed to mean anything.
-		// A primary older than 0.10.0 sends no environment: nothing to do, not an error.
-		const env = plain(body.result?.environment) ? (body.result.environment as Environment) : {};
 		if (parts.includes("serverExtensions") && Array.isArray(env.serverExtensions)) {
 			const fetchCode = async (ids: string[]): Promise<InstalledExtension[]> => {
 				const r = await fetch(`${url}/server-extensions/server-sync/methods/snapshot`, {
@@ -1430,6 +1627,7 @@ export default (pi: any) => {
 		for (const kind of Object.keys(base.items) as Kind[]) if (!planned.includes(kind)) delete base.items[kind];
 		base.seen = twoWay ? [...planned] : base.seen.filter((k) => planned.includes(k));
 		writeBase(base);
+		if (changed.length) commitBackup("pull", changed, before);
 		// Then what changed here goes up. A failure leaves the history as it was, so the next sync tries again.
 		const sendUp = async (params: Record<string, unknown>): Promise<{ applied: string[]; hashes: Partial<Record<Kind, Record<string, string>>> }> => {
 			const r = await fetch(`${url}/server-extensions/server-sync/methods/push`, {
@@ -1669,6 +1867,266 @@ export default (pi: any) => {
 		return changed;
 	};
 
+	type BackupSnapshot = {
+		rows: Record<string, unknown>;
+		extensions: Record<string, Record<string, unknown>>;
+		clientExtensions?: { list: unknown; states: unknown };
+		skills: Record<string, FileSet>;
+		subagents: FileSet;
+		agentsMd: string | null;
+		providers: Record<string, Record<string, unknown>>;
+	};
+	const captureBefore = async (opts: {
+		rowKeys?: readonly string[];
+		extensions?: boolean;
+		clientExtensions?: boolean;
+		skills?: boolean;
+		subagents?: boolean;
+		agentsMd?: boolean;
+		providers?: boolean;
+	}): Promise<BackupSnapshot> => {
+		const home = agentsHome();
+		return {
+			rows: opts.rowKeys?.length ? readSettings(dbo(), opts.rowKeys) : {},
+			extensions: opts.extensions ? await extensionSettings() : {},
+			clientExtensions: opts.clientExtensions ? await clientExtensionRows() : undefined,
+			skills: opts.skills ? readFolders(join(home, ".agents", "skills")) : {},
+			subagents: opts.subagents ? readFiles(join(home, ".agents", "subagents"), /\.md$/) : {},
+			agentsMd: opts.agentsMd ? readText(join(home, ".agents", "AGENTS.md")) : null,
+			providers: opts.providers ? await providerRows() : {},
+		};
+	};
+	const commitBackup = (reasonKind: BackupReason, changed: readonly string[], before: BackupSnapshot): BackupSummary | null => {
+		const rec: Omit<BackupRecord, "id" | "at"> = { reason: reasonKind, summary: [] };
+		for (const k of changed) {
+			if (k.startsWith("up:") || k.startsWith("srv:") || k.startsWith("key:") || k.startsWith("agent-ext:")) continue;
+			if (k.startsWith("ext:")) {
+				const id = k.slice(4);
+				(rec.extensions ??= {})[id] = publicOf(before.extensions[id]);
+				rec.summary.push(k);
+			} else if (k === "client:extensions") {
+				(rec.clientExtensions ??= {}).list = before.clientExtensions?.list ?? null;
+				rec.summary.push(k);
+			} else if (k === "client:extensionStates") {
+				(rec.clientExtensions ??= {}).states = before.clientExtensions?.states ?? null;
+				rec.summary.push(k);
+			} else if (k.startsWith("skill:")) {
+				const name = k.slice(6);
+				(rec.skills ??= {})[name] = name in before.skills ? before.skills[name]! : null;
+				rec.summary.push(k);
+			} else if (k.startsWith("helper:")) {
+				const name = k.slice(7);
+				const file = `${name}.md`;
+				(rec.subagents ??= {})[file] = file in before.subagents ? before.subagents[file]! : null;
+				rec.summary.push(k);
+			} else if (k === "agents-md") {
+				rec.agentsMd = before.agentsMd;
+				rec.summary.push(k);
+			} else if (k.startsWith("provider:")) {
+				const id = k.slice(9);
+				(rec.providers ??= {})[id] = id in before.providers ? publicOf(before.providers[id]) : null;
+				rec.summary.push(k);
+			} else if (!k.includes(":")) {
+				(rec.rows ??= {})[k] = k in before.rows ? before.rows[k] : null;
+				rec.summary.push(k);
+			}
+		}
+		return saveBackup(rec);
+	};
+	const restoreBackup = async (id?: string): Promise<{ id: string; restored: string[] }> => {
+		const target = id ? readBackup(id) : (() => { const first = listBackups()[0]; return first ? readBackup(first.id) : null; })();
+		if (!target) throw new Error("no backup to restore");
+		const before = await captureBefore({
+			rowKeys: target.rows ? Object.keys(target.rows) : undefined,
+			extensions: !!target.extensions,
+			clientExtensions: !!target.clientExtensions,
+			skills: !!target.skills,
+			subagents: !!target.subagents,
+			agentsMd: "agentsMd" in target,
+			providers: !!target.providers,
+		});
+		const restored: string[] = [];
+		if (target.rows && Object.keys(target.rows).length) {
+			const rowKeys = Object.keys(target.rows);
+			const vals = Object.fromEntries(Object.entries(target.rows).filter(([, v]) => v !== null));
+			const res = await applyRows(rowKeys, vals);
+			restored.push(...res.changed);
+		}
+		if (target.extensions) {
+			const all = await extensionSettings();
+			for (const [extId, pub] of Object.entries(target.extensions)) {
+				if (extId === SELF_ID || !EXTENSION_ID.test(extId) || !plain(pub)) continue;
+				const current = all[extId];
+				const secrets = Object.fromEntries(Object.entries(current ?? {}).filter(([k]) => CREDENTIAL_KEY.test(k)));
+				const next = { ...publicOf(pub), ...secrets };
+				if (sameObject(current, next)) continue;
+				const res = await own("PUT", `/extensions/${extId}/settings`, { settings: next });
+				if (!res.ok) throw new Error(`could not restore the settings of ${extId} (${res.status})`);
+				restored.push(`ext:${extId}`);
+			}
+		}
+		if (target.clientExtensions) restored.push(...(await applyClientExtensions(target.clientExtensions)));
+		const home = agentsHome();
+		if (target.skills) {
+			const toApply: Record<string, FileSet> = {};
+			for (const [name, files] of Object.entries(target.skills)) {
+				if (!SAFE_NAME.test(name)) continue;
+				if (files === null) {
+					const dir = join(home, ".agents", "skills", name);
+					try {
+						if (existsSync(dir) && !lstatSync(dir).isSymbolicLink()) {
+							rmSync(dir, { recursive: true, force: true });
+							restored.push(`skill:${name}`);
+						}
+					} catch { /* ignore */ }
+				} else if (plain(files)) toApply[name] = files;
+			}
+			if (Object.keys(toApply).length) restored.push(...applyFolders(join(home, ".agents", "skills"), toApply, "skill"));
+		}
+		if (target.subagents) {
+			const toApply: FileSet = {};
+			for (const [file, text] of Object.entries(target.subagents)) {
+				if (!SAFE_NAME.test(file) || !/\.md$/.test(file)) continue;
+				if (text === null) {
+					const path = join(home, ".agents", "subagents", file);
+					if (existsSync(path)) { rmSync(path, { force: true }); restored.push(`helper:${file.replace(/\.md$/, "")}`); }
+				} else if (typeof text === "string") toApply[file] = text;
+			}
+			if (Object.keys(toApply).length) restored.push(...applyFiles(join(home, ".agents", "subagents"), toApply, /\.md$/, "helper"));
+		}
+		if ("agentsMd" in target) {
+			const path = join(home, ".agents", "AGENTS.md");
+			if (typeof target.agentsMd === "string") restored.push(...applyText(path, target.agentsMd, "agents-md"));
+			else if (target.agentsMd === null && existsSync(path)) { rmSync(path, { force: true }); restored.push("agents-md"); }
+		}
+		if (target.providers) {
+			const toApply: Record<string, Record<string, unknown>> = {};
+			const current = await providerRows();
+			for (const [pid, val] of Object.entries(target.providers)) {
+				if (!/^[a-z][a-z0-9_-]{0,63}$/.test(pid)) continue;
+				if (val === null) {
+					if (pid in current) {
+						if (hasApi) {
+							const res = await own("DELETE", `/configuration/providers/${pid}`);
+							if (res.ok || res.status === 404) restored.push(`provider:${pid}`);
+						} else {
+							dbo().query("DELETE FROM custom_providers WHERE id = ?").run(pid);
+							restored.push(`provider:${pid}`);
+						}
+					}
+				} else if (plain(val)) toApply[pid] = val;
+			}
+			if (Object.keys(toApply).length) restored.push(...(await applyProviders(toApply)));
+		}
+		if (restored.length) {
+			commitBackup("restore", restored, before);
+			log(`restored from backup ${target.id}: ${restored.join(", ")}`);
+			lastApplied = restored.map((k) => `restore:${k}`);
+			pi.emit(null, "synced", { keys: lastApplied, at: Date.now(), from: "restore" }, { ephemeral: true });
+		}
+		showStatus();
+		return { id: target.id, restored };
+	};
+
+	const formatDate = (at: number): string => {
+		const d = new Date(at);
+		const pad = (n: number) => String(n).padStart(2, "0");
+		const now = new Date();
+		const hm = `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+		return d.getFullYear() === now.getFullYear() ? hm : `${d.getFullYear()}-${hm}`;
+	};
+	const shortVal = (v: unknown, key = ""): Text | string => {
+		if (v === null || v === undefined) return { ko: "(없음)", en: "(none)" };
+		if (typeof v === "string") {
+			const clean = v.replace(/\s+/g, " ").trim();
+			return clean.length > 34 ? `${clean.slice(0, 34)}…` : clean || { ko: "(빈 문자열)", en: "(empty)" };
+		}
+		if (typeof v === "boolean") return v ? { ko: "켜짐", en: "on" } : { ko: "꺼짐", en: "off" };
+		if (typeof v === "number") return String(v);
+		if (key === "retention" && plain(v)) {
+			const days = typeof v.days === "number" ? v.days : "?";
+			return v.enabled === false
+				? { ko: `${days}일 · 꺼짐`, en: `${days}d · off` }
+				: { ko: `${days}일 보관 · 켜짐`, en: `${days}d · on` };
+		}
+		if (key === "compaction" && plain(v)) {
+			const m = plain(v.model) && typeof v.model.model === "string" ? ` (${v.model.model})` : "";
+			return v.auto === false ? { ko: `자동 꺼짐${m}`, en: `auto off${m}` } : { ko: `자동 켜짐${m}`, en: `auto on${m}` };
+		}
+		if (key === "mcp_servers" && Array.isArray(v)) {
+			const names = v.map((x) => (plain(x) && typeof x.name === "string" ? x.name : "")).filter(Boolean);
+			if (!v.length) return { ko: "0개", en: "0" };
+			const head = names.slice(0, 2).join(", ");
+			return { ko: `${v.length}개${head ? ` (${head}${names.length > 2 ? "…" : ""})` : ""}`, en: `${v.length}${head ? ` (${head}${names.length > 2 ? "…" : ""})` : ""}` };
+		}
+		if ((key === "disabled_tools" || key === "disabled_subagents") && Array.isArray(v)) {
+			return v.length ? { ko: `${v.length}개 꺼짐`, en: `${v.length} off` } : { ko: "모두 켜짐", en: "all on" };
+		}
+		if (plain(v) && "provider" in v && "model" in v) return `${v.provider} / ${v.model}`;
+		if (plain(v) && "model" in v && plain(v.model) && "provider" in v.model && "model" in v.model) return `${v.model.provider} / ${v.model.model}`;
+		if (Array.isArray(v)) return { ko: `${v.length}개 항목`, en: `${v.length} items` };
+		if (plain(v)) {
+			const parts = Object.entries(v).slice(0, 3).map(([k, x]) => `${k}: ${typeof x === "object" ? "…" : String(x)}`);
+			const s = parts.join(", ");
+			return s.length > 34 ? `${s.slice(0, 34)}…` : s || "{}";
+		}
+		const raw = JSON.stringify(v);
+		return raw.length > 34 ? `${raw.slice(0, 34)}…` : raw;
+	};
+	const previewBackup = async (id: string): Promise<{ id: string; rows: { id: string; cells: (Text | string)[] }[] }> => {
+		const target = readBackup(id);
+		if (!target) throw new Error("no backup to preview");
+		const cur = await captureBefore({
+			rowKeys: target.rows ? Object.keys(target.rows) : undefined,
+			extensions: !!target.extensions,
+			clientExtensions: !!target.clientExtensions,
+			skills: !!target.skills,
+			subagents: !!target.subagents,
+			agentsMd: "agentsMd" in target,
+			providers: !!target.providers,
+		});
+		const rows: { id: string; cells: (Text | string)[] }[] = [];
+		const add = (key: string, before: unknown, after: unknown) => {
+			if (JSON.stringify(before ?? null) === JSON.stringify(after ?? null)) return;
+			rows.push({
+				id: `r${rows.length}`,
+				cells: [keyLabel(key), shortVal(before, key), shortVal(after, key)],
+			});
+		};
+		for (const [k, v] of Object.entries(target.rows ?? {})) add(k, k in cur.rows ? cur.rows[k] : null, v);
+		for (const [extId, v] of Object.entries(target.extensions ?? {})) add(`ext:${extId}`, publicOf(cur.extensions[extId]), publicOf(v));
+		if (target.clientExtensions) {
+			if ("list" in target.clientExtensions) add("client:extensions", cur.clientExtensions?.list ?? null, target.clientExtensions.list ?? null);
+			if ("states" in target.clientExtensions) add("client:extensionStates", cur.clientExtensions?.states ?? null, target.clientExtensions.states ?? null);
+		}
+		for (const [name, files] of Object.entries(target.skills ?? {})) {
+			const c = name in cur.skills ? { ko: `파일 ${Object.keys(cur.skills[name]!).length}개`, en: `${Object.keys(cur.skills[name]!).length} files` } : null;
+			const a = files === null ? null : { ko: `파일 ${Object.keys(files).length}개`, en: `${Object.keys(files).length} files` };
+			if (JSON.stringify(c) !== JSON.stringify(a)) rows.push({ id: `r${rows.length}`, cells: [keyLabel(`skill:${name}`), c ?? { ko: "(없음)", en: "(none)" }, a ?? { ko: "(없음)", en: "(none)" }] });
+		}
+		for (const [file, text] of Object.entries(target.subagents ?? {})) add(`helper:${file.replace(/\.md$/, "")}`, cur.subagents[file] ?? null, text);
+		if ("agentsMd" in target) add("agents-md", cur.agentsMd, target.agentsMd ?? null);
+		for (const [pid, val] of Object.entries(target.providers ?? {})) add(`provider:${pid}`, pid in cur.providers ? publicOf(cur.providers[pid]) : null, val ? publicOf(val) : null);
+		return { id: target.id, rows };
+	};
+
+	pi.registerMethod("backups", () => ({ backups: listBackups() }));
+	pi.registerMethod("restorePreview", async (params: unknown) => {
+		const id = plain(params) && typeof params.id === "string" ? params.id : listBackups()[0]?.id;
+		if (!id) throw new Error("no backup to preview");
+		return previewBackup(id);
+	});
+	pi.registerMethod("restore", async (params: unknown) => {
+		const id = plain(params) && typeof params.id === "string" ? params.id : undefined;
+		const res = await restoreBackup(id);
+		if (plain(params) && params.pause === true) {
+			pi.settings.set({ ...withoutToken(settings()), paused: true });
+			arm(true);
+			showStatus();
+		}
+		return res;
+	});
+
 	/** One pull, with the status and the client event updated either way. Shared by the timer and the method. */
 	const pull = async (): Promise<string[]> => {
 		try {
@@ -1707,13 +2165,13 @@ export default (pi: any) => {
 	let armedFor = "";
 	const arm = (force = false) => {
 		const { url, token, interval } = cfg();
-		const key = JSON.stringify([role(), url, token, interval]);
+		const key = JSON.stringify([role(), url, token, interval, isPaused()]);
 		if (!force && key === armedFor && (timer || busy)) return;
 		armedFor = key;
 		if (timer) clearTimeout(timer);
 		timer = undefined;
 		failures = 0;
-		if (role() !== "follower" || !url || !token) return;
+		if (role() !== "follower" || !url || !token || isPaused()) return;
 		const tick = () => {
 			timer = undefined;
 			if (busy) return schedule();
@@ -1834,9 +2292,30 @@ export default (pi: any) => {
 		} catch { /* a pairing code is not base64 JSON: keep it */ }
 	};
 
-	/** What the page's buttons do. */
+	/** What the page's buttons and fields do. */
 	if (hasPanel && typeof pi.ui.onEvent === "function") {
-		pi.ui.onEvent(async (e: { type: string; id: string }) => {
+		pi.ui.onEvent(async (e: { type: string; id: string; value?: unknown }) => {
+			if (e.type === "change") {
+				if (e.id === "backup-select" && typeof e.value === "string") {
+					selectedBackupId = e.value;
+					if (confirmRestoreId) {
+						try {
+							previewRowsCache = await previewBackup(e.value);
+							confirmRestoreId = e.value;
+						} catch {
+							confirmRestoreId = null;
+							previewRowsCache = null;
+						}
+					} else {
+						previewRowsCache = null;
+					}
+					showStatus();
+				} else if (e.id === "restore-after" && typeof e.value === "string") {
+					pauseAfterRestore = e.value === "pause";
+					showStatus();
+				}
+				return;
+			}
 			if (e.type !== "action") return;
 			if (e.id === "sync") {
 				if (pulling || busy || role() !== "follower") return;
@@ -1851,9 +2330,57 @@ export default (pi: any) => {
 				lastSyncAt = null;
 				lastApplied = [];
 				lastError = null;
+				confirmRestoreId = null;
+				previewRowsCache = null;
 				pi.settings.set({ ...withoutToken(settings()), remoteUrl: "", shareCode: "" });
 				arm(true);
 				showStatus();
+			} else if (e.id === "resume-sync") {
+				if (pulling || busy) return;
+				pi.settings.set({ ...withoutToken(settings()), paused: false });
+				arm(true);
+				showStatus();
+			} else if (e.id === "restore-preview") {
+				if (pulling || busy) return;
+				const list = listBackups();
+				const activeId = list.some((b) => b.id === selectedBackupId) ? selectedBackupId : list[0]?.id;
+				if (!activeId) return;
+				busy = true;
+				showStatus();
+				try {
+					previewRowsCache = await previewBackup(activeId);
+					confirmRestoreId = activeId;
+					lastError = null;
+				} catch (err) {
+					lastError = err instanceof Error ? err.message : String(err);
+					log(`preview failed: ${lastError}`);
+				} finally {
+					busy = false;
+					showStatus();
+				}
+			} else if (e.id === "restore-cancel") {
+				confirmRestoreId = null;
+				previewRowsCache = null;
+				showStatus();
+			} else if (e.id === "restore-approve") {
+				if (pulling || busy || !confirmRestoreId) return;
+				const id = confirmRestoreId;
+				busy = true;
+				showStatus();
+				try {
+					await restoreBackup(id);
+					if (pauseAfterRestore) pi.settings.set({ ...withoutToken(settings()), paused: true });
+					confirmRestoreId = null;
+					previewRowsCache = null;
+					lastError = null;
+					arm(true);
+				} catch (err) {
+					lastError = err instanceof Error ? err.message : String(err);
+					log(`restore failed: ${lastError}`);
+				} finally {
+					busy = false;
+					showStatus();
+				}
 			}
 		});
 	}

@@ -150,6 +150,13 @@
           "equals": "primary"
         },
         "description": "켜면 팔로워가 요청할 때 이 서버의 모델 API 키와 확장 토큰을 건네줍니다(로그인으로 연결한 계정은 제외). 팔로워가 내 서버일 때만 켜세요. 끄면 비밀값은 절대 나가지 않습니다."
+      },
+      {
+        "key": "paused",
+        "type": "boolean",
+        "label": "동기화 일시 중지",
+        "default": false,
+        "description": "켜면 자동 동기화(팔로워)와 동기화 응답(기준 서버)을 멈춥니다. 백업을 복원한 뒤 다시 덮어쓰이는 것을 막을 때 쓰세요."
       }
     ],
     "translations": {
@@ -173,6 +180,8 @@
         "모델 API 키와 확장 설정의 토큰을 함께 가져옵니다. 이 서버에 이미 있는 값은 바꾸지 않습니다. 기준 서버에서도 ‘비밀값 내보내기 허용’이 켜져 있어야 합니다.": "Pulls model API keys and the tokens in extension settings. A value already on this server is never replaced. The primary must also have ‘Allow secrets to leave’ on.",
         "비밀값 내보내기 허용": "Allow secrets to leave",
         "켜면 팔로워가 요청할 때 이 서버의 모델 API 키와 확장 토큰을 건네줍니다(로그인으로 연결한 계정은 제외). 팔로워가 내 서버일 때만 켜세요. 끄면 비밀값은 절대 나가지 않습니다.": "When on, this server hands its model API keys and extension tokens to a follower that asks (accounts connected by login are excluded). Turn it on only when the follower is your own server. Off: no secret ever leaves.",
+        "동기화 일시 중지": "Pause sync",
+        "켜면 자동 동기화(팔로워)와 동기화 응답(기준 서버)을 멈춥니다. 백업을 복원한 뒤 다시 덮어쓰이는 것을 막을 때 쓰세요.": "Pauses automatic sync (follower) and sync responses (primary). Useful after restoring a backup so changes are not overwritten again.",
         "기준: 팔로워와 설정을 맞추고, 양쪽에서 같은 항목을 바꾸면 이 서버 값이 이깁니다. 팔로워: 아래에 체크한 항목을 기준 서버와 양방향으로 맞춥니다.": "Primary: keeps followers in step; when both changed the same item, this server wins. Follower: keeps the boxes checked below in step with the primary, both ways.",
         "기준 서버에 설치된 확장을 같은 버전으로 설치하고, 앱의 확장 목록·켜기 상태와 확장 설정 값을 맞춥니다. 확장 설정 값은 여기서 바꿔도 기준 서버에 반영됩니다(토큰·키 제외). 이 서버에만 있는 확장은 지우지 않습니다.": "Installs the primary's extensions at the same version and matches the apps' extension list, on/off states and extension settings. Settings changed here reach the primary too (never tokens or keys). An extension only here is never removed.",
         "~/.agents의 스킬 폴더, 도우미 역할(.md), 전역 AGENTS.md. 어느 쪽에서 고치거나 새로 만들어도 다른 쪽에 반영됩니다. 처음 연결할 때는 기준 서버 것으로 맞추고, 이 서버에만 있던 것은 그대로 둡니다.": "Skill folders, helper roles (.md) and the global AGENTS.md in ~/.agents. An edit or a new one on either side reaches the other. On the first sync the primary's are taken, and what was only here stays here.",

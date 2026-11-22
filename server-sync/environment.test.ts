@@ -2,7 +2,7 @@
 // installed server extensions. Two homes and two data folders, a stand-in for each server's own routes.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import factory from "./index.ts";
@@ -589,5 +589,140 @@ describe("what belongs to one PC", () => {
 		const on = follower({ syncApp: true });
 		await on.sync();
 		expect(row(F.db, "mcp_servers")).toEqual([{ name: "remote", url: "http://mcp" }]);
+	});
+});
+
+describe("automatic pre-change backups and restore", () => {
+	const row = (file: string, key: string) => {
+		const r = rows(file, `SELECT data FROM settings WHERE key = '${key}'`)[0];
+		return r ? JSON.parse(r.data as string) : undefined;
+	};
+	const setRow = (file: string, key: string, v: unknown) => sql(file, "INSERT OR REPLACE INTO settings (key, data) VALUES (?, ?)", key, JSON.stringify(v));
+	const bootSide = (s: typeof P, settings: Record<string, unknown>) => {
+		const dataDir = mkdtempSync(join(root, "backup-ext-"));
+		const methods = new Map<string, (p?: unknown) => unknown>();
+		as(s, () => factory({
+			home: s.home,
+			dataDir,
+			settings: { get: () => settings, set: (n: Record<string, unknown>) => { for (const k of Object.keys(settings)) delete settings[k]; Object.assign(settings, n); return settings; }, onChange: () => () => {} },
+			log: () => {}, registerMethod: (n: string, f: (p?: unknown) => unknown) => void methods.set(n, f), emit: () => {}, on: () => {},
+		}));
+		return { methods, backupDir: join(dataDir, "backups") };
+	};
+
+	test("pull creates a backup before overwriting (without secrets), skips no-op polls, and restores", async () => {
+		primary = boot(P, { role: "primary" });
+		setRow(P.db, "default_model", { provider: "anthropic", model: "claude-sonnet" });
+		setRow(F.db, "default_model", { provider: "openai", model: "gpt-4o" });
+		write(join(P.data, "extensions", "quota-monitor", "settings.json"), JSON.stringify({ httpOrigin: "http://primary:1", apiToken: "p-secret" }));
+		write(join(F.data, "extensions", "quota-monitor", "settings.json"), JSON.stringify({ httpOrigin: "http://follower:1", apiToken: "f-secret" }));
+		write(join(P.home, ".agents", "AGENTS.md"), "primary rules");
+		write(join(F.home, ".agents", "AGENTS.md"), "follower rules");
+		write(join(P.home, ".agents", "skills", "new-skill", "SKILL.md"), "brand new");
+
+		const f = bootSide(F, { role: "follower", remoteUrl: `http://127.0.0.1:${peer.port}`, remoteToken: "t", syncApp: true, syncExtensions: true, syncAgent: true });
+		await as(F, () => f.methods.get("sync")!());
+
+		expect(row(F.db, "default_model")).toEqual({ provider: "anthropic", model: "claude-sonnet" });
+		expect(readFileSync(join(F.home, ".agents", "AGENTS.md"), "utf8")).toBe("primary rules");
+		expect(existsSync(join(F.home, ".agents", "skills", "new-skill", "SKILL.md"))).toBe(true);
+
+		const list1 = (await as(F, () => f.methods.get("backups")!())) as { backups: { id: string; reason: string; summary: string[] }[] };
+		expect(list1.backups).toHaveLength(1);
+		expect(list1.backups[0]!.reason).toBe("pull");
+		expect(list1.backups[0]!.summary).toContain("default_model");
+		expect(list1.backups[0]!.summary).toContain("ext:quota-monitor");
+		expect(list1.backups[0]!.summary).toContain("agents-md");
+		expect(list1.backups[0]!.summary).toContain("skill:new-skill");
+
+		// Backup file must never contain secrets.
+		const backupJson = readFileSync(join(f.backupDir, `${list1.backups[0]!.id}.json`), "utf8");
+		expect(backupJson).not.toContain("f-secret");
+		expect(backupJson).not.toContain("p-secret");
+
+		// A no-op poll creates no extra backup.
+		await as(F, () => f.methods.get("sync")!());
+		const list2 = (await as(F, () => f.methods.get("backups")!())) as { backups: { id: string }[] };
+		expect(list2.backups).toHaveLength(1);
+
+		// Restore reverts changed values while keeping the follower's own secret and removing newly pulled skill.
+		const restored = (await as(F, () => f.methods.get("restore")!({ id: list1.backups[0]!.id }))) as { id: string; restored: string[] };
+		expect(restored.restored).toContain("default_model");
+		expect(row(F.db, "default_model")).toEqual({ provider: "openai", model: "gpt-4o" });
+		expect(readFileSync(join(F.home, ".agents", "AGENTS.md"), "utf8")).toBe("follower rules");
+		expect(existsSync(join(F.home, ".agents", "skills", "new-skill"))).toBe(false);
+		expect(JSON.parse(readFileSync(join(F.data, "extensions", "quota-monitor", "settings.json"), "utf8"))).toEqual({
+			httpOrigin: "http://follower:1",
+			apiToken: "f-secret",
+		});
+	});
+
+	test("push creates a backup on the primary and the primary can restore from it", async () => {
+		const p = bootSide(P, { role: "primary" });
+		primary = p.methods;
+		setRow(P.db, "default_model", { provider: "anthropic", model: "claude-sonnet" });
+		const f = follower({ syncApp: true });
+		await f.sync();
+
+		// Follower edits default_model and pushes to primary.
+		setRow(F.db, "default_model", { provider: "openai", model: "gpt-5" });
+		await f.sync();
+		expect(row(P.db, "default_model")).toEqual({ provider: "openai", model: "gpt-5" });
+
+		const list = as(P, () => p.methods.get("backups")!()) as { backups: { id: string; reason: string; summary: string[] }[] };
+		expect(list.backups).toHaveLength(1);
+		expect(list.backups[0]!.reason).toBe("push");
+		expect(list.backups[0]!.summary).toContain("default_model");
+
+		process.env.PIPAYA_PORT = String(primarySelf.port);
+		use(P);
+		try { await p.methods.get("restore")!(); } finally { use(F); process.env.PIPAYA_PORT = String(self.port); }
+		expect(row(P.db, "default_model")).toEqual({ provider: "anthropic", model: "claude-sonnet" });
+	});
+
+	test("rotates backups so at most 20 files are kept", async () => {
+		primary = boot(P, { role: "primary" });
+		const f = bootSide(F, { role: "follower", remoteUrl: `http://127.0.0.1:${peer.port}`, remoteToken: "t", syncApp: true });
+		for (let i = 0; i < 23; i++) {
+			setRow(P.db, "default_model", { provider: "anthropic", model: `m-${i}` });
+			await as(F, () => f.methods.get("sync")!());
+		}
+		const files = readdirSync(f.backupDir).filter((n) => n.endsWith(".json"));
+		expect(files.length).toBe(20);
+	});
+
+	test("UI dropdown -> preview table -> approve with pause sets paused=true and pauses primary/follower sync", async () => {
+		primary = boot(P, { role: "primary" });
+		setRow(P.db, "default_model", { provider: "anthropic", model: "claude-sonnet" });
+		setRow(F.db, "default_model", { provider: "openai", model: "gpt-4o" });
+
+		const dataDir = mkdtempSync(join(root, "ui-ext-"));
+		const settings: Record<string, unknown> = { role: "follower", remoteUrl: `http://127.0.0.1:${peer.port}`, remoteToken: "t", syncApp: true };
+		const panels: any[] = [];
+		const methods = new Map<string, (p?: unknown) => unknown>();
+		let onEvent!: (e: { type: string; id: string; value?: unknown }) => Promise<void>;
+		as(F, () => factory({
+			home: F.home, dataDir,
+			settings: { get: () => settings, set: (n: Record<string, unknown>) => { Object.assign(settings, n); return settings; }, onChange: () => () => {} },
+			ui: { setPanel: (n: unknown) => void panels.push(n), onEvent: (fn: typeof onEvent) => { onEvent = fn; } },
+			log: () => {}, registerMethod: (n: string, fn: (p?: unknown) => unknown) => void methods.set(n, fn), emit: () => {}, on: () => {},
+		}));
+
+		await as(F, () => methods.get("sync")!());
+		expect(row(F.db, "default_model")).toEqual({ provider: "anthropic", model: "claude-sonnet" });
+
+		// Click "Review changes & restore…"
+		await as(F, () => onEvent({ type: "action", id: "restore-preview" }));
+		const confirmPanel = JSON.stringify(panels.at(-1));
+		expect(confirmPanel).toContain("restore-confirm");
+		expect(confirmPanel).toContain("restore-diff");
+		expect(confirmPanel).toContain("openai / gpt-4o");
+		expect(confirmPanel).toContain("anthropic / claude-sonnet");
+
+		// Approve with default pauseAfterRestore=true
+		await as(F, () => onEvent({ type: "action", id: "restore-approve" }));
+		expect(row(F.db, "default_model")).toEqual({ provider: "openai", model: "gpt-4o" });
+		expect(settings.paused).toBe(true);
+		expect(JSON.stringify(panels.at(-1))).toContain("paused-badge");
 	});
 });
