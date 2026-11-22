@@ -18,9 +18,8 @@
 
 | 폴더 | 종류 | 설명 |
 |---|---|---|
-| [guard](guard) | server | 위험한 셸 명령(`rm -rf /`, `mkfs`, 포크 폭탄)을 실행 전에 차단 |
-| [prompt-templates](prompt-templates) | server | 긴 프롬프트를 Markdown 파일로 저장해 `/prompt:이름`으로 호출 |
 | [quota-monitor](quota-monitor) | client | Claude, GPT, Antigravity 잔량 게이지를 상단 바에 표시 |
+| [server-sync](server-sync) | server | 두 pipaya 서버의 설정·확장·스킬·모델 연결을 동기화 |
 
 ## 설치
 
@@ -55,7 +54,7 @@ extensions/                # 이 저장소 (dohwi/pipaya-extensions)
 
 ```bash
 bun scripts/check.ts                          # 전체: package.json 유효성, 진입 파일, 서버가 필요 없는 테스트
-PIPAYA_APP=../app/server bun scripts/check.ts guard   # 확장 하나, 서버 테스트 포함
+PIPAYA_APP=../app/server bun scripts/check.ts server-sync   # 확장 하나, 서버 테스트 포함
 ```
 
 ## 라이선스

@@ -18,9 +18,8 @@
 
 | Folder | Kind | What it does |
 |---|---|---|
-| [guard](guard) | server | Blocks destructive shell commands (`rm -rf /`, `mkfs`, fork bombs) before they run |
-| [prompt-templates](prompt-templates) | server | Save a long prompt as a Markdown file and call it with `/prompt:name` |
 | [quota-monitor](quota-monitor) | client | Claude, GPT and Antigravity quota gauges in the header |
+| [server-sync](server-sync) | server | Keeps two pipaya servers in step (settings, extensions, skills, models) |
 
 ## Install
 
@@ -56,7 +55,7 @@ Requires [Bun](https://bun.sh) (`mise install`). Server extensions have no build
 
 ```bash
 bun scripts/check.ts                          # every extension: package.json is valid, entry exists, tests that need no server pass
-PIPAYA_APP=../app/server bun scripts/check.ts guard   # one extension, with its server tests
+PIPAYA_APP=../app/server bun scripts/check.ts server-sync   # one extension, with its server tests
 ```
 
 ## License
