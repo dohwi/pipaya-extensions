@@ -91,7 +91,7 @@
 공급자 → CLIProxyAPI + quota-monitor 플러그인 ──GET(관리 키)──▶ 이 확장 ──▶ pipaya 상단 바
 ```
 
-플러그인이 모든 계정을 측정해 전체 잔량(`availability`: `claude`, `codex`, `antigravity_gemini`, `antigravity_claude`)을 집계합니다. 확장은 그 값을 링에 매핑할 뿐 다시 계산하지 않습니다.
+플러그인이 모든 계정을 측정해 전체 잔량(`availability`: `claude`, `codex`, `antigravity_4_gemini`, `antigravity_4_claude`, `antigravity_3_8_gemini`, `antigravity_3_8_claude`, 미분류 시 `antigravity_gemini`, `antigravity_claude`)을 집계합니다. 확장은 그 값을 링에 매핑할 뿐 다시 계산하지 않습니다.
 
 ## 개발
 

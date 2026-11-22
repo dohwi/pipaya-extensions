@@ -223,3 +223,51 @@ test('language setting switches the rendered text; auto without a program langua
   const noKey = await boot(async () => body, { language: 'en' });
   assert.ok(noKey.calls.at(-1).gauges[0].hint.includes('Set the management key'));
 });
+
+test('bundled worker renders AGY (4) and AGY (3.8) as distinct dual-ring gauges with version tags and colors', async () => {
+  const snap = {
+    configured: true,
+    snapshot_complete: true,
+    availability: [
+      { key: 'claude', remaining_percent: 64, accounts: 1 },
+      { key: 'codex', remaining_percent: 78, accounts: 1 },
+      { key: 'antigravity_4_gemini', remaining_percent: 99.3, accounts: 1 },
+      { key: 'antigravity_4_claude', remaining_percent: 100, accounts: 1 },
+      { key: 'antigravity_3_8_gemini', remaining_percent: 98.9, accounts: 3 },
+      { key: 'antigravity_3_8_claude', remaining_percent: 0, accounts: 3 }
+    ],
+    accounts: [
+      { provider: 'claude', status: 'known', windows: [] },
+      { provider: 'codex', status: 'known', windows: [] },
+      { provider: 'antigravity', model_tier: '4', status: 'known', windows: [] },
+      { provider: 'antigravity', model_tier: '3.8', status: 'known', windows: [] }
+    ]
+  };
+  const ko = await boot(async () => snap, { httpToken: 'k', language: 'ko' });
+  const list = ko.calls.at(-1).gauges;
+  assert.deepEqual(list.map(g => g.id), ['claude', 'gpt', 'antigravity_4', 'antigravity_3_8']);
+  const ag4 = list[2], ag38 = list[3];
+  assert.equal(ag4.label, 'AGY (4)');
+  assert.equal(ag4.tag, '4');
+  assert.equal(ag4.tagColor, '#8b7cf6');
+  assert.equal(ag4.icon.paths[0].fill, '#8b7cf6');
+  assert.equal(ag4.details.title, 'AGY (4) 잔량');
+  assert.deepEqual(ag4.rings.map(r => [r.label, r.value, r.color]), [
+    ['AGY (4) · Gemini 잔량', 99.3, '#8b7cf6'],
+    ['AGY (4) · Claude/GPT 잔량', 100, '#d97757']
+  ]);
+
+  assert.equal(ag38.label, 'AGY (3.8)');
+  assert.equal(ag38.tag, '3.8');
+  assert.equal(ag38.tagColor, '#4b8be8');
+  assert.equal(ag38.icon.paths[0].fill, '#4b8be8');
+  assert.equal(ag38.details.title, 'AGY (3.8) 잔량');
+  assert.deepEqual(ag38.rings.map(r => [r.label, r.value, r.color]), [
+    ['AGY (3.8) · Gemini 잔량', 98.9, '#4b8be8'],
+    ['AGY (3.8) · Claude/GPT 잔량', 0, 'danger']
+  ]);
+
+  const en = await boot(async () => snap, { httpToken: 'k', language: 'en' });
+  assert.equal(en.calls.at(-1).gauges[2].details.title, 'AGY (4) remaining');
+  assert.equal(en.calls.at(-1).gauges[3].details.title, 'AGY (3.8) remaining');
+});

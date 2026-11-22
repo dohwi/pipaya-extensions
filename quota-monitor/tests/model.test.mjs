@@ -126,3 +126,43 @@ test('observedAt takes the newest valid timestamp and ignores garbage', () => {
   const view = gaugesFromSnapshot(snapshot([account('antigravity', [], { observed_at: '2026-01-01T00:00:20Z' })]));
   assert.equal(view.gauges.at(-1).updatedAt, Date.parse('2026-01-01T00:00:20Z'));
 });
+
+test('Antigravity splits into independent AGY (4) and AGY (3.8) gauges when model_tier or split availability is present', () => {
+  const view = gaugesFromSnapshot(snapshot([
+    account('claude', [], { observed_at: '2026-01-01T00:00:10Z' }),
+    account('codex', [], { observed_at: '2026-01-01T00:00:10Z' }),
+    account('antigravity', [], { model_tier: '4', observed_at: '2026-01-01T00:00:40Z' }),
+    account('antigravity', [], { model_tier: '3.8', status: 'stale', observed_at: '2026-01-01T00:00:20Z' })
+  ], [
+    fleet('claude', 64),
+    fleet('codex', 78),
+    fleet('antigravity_4_gemini', 99.3),
+    fleet('antigravity_4_claude', 100),
+    fleet('antigravity_3_8_gemini', 98.9),
+    fleet('antigravity_3_8_claude', 0)
+  ]));
+  assert.deepEqual(view.gauges.map(g => [g.id, g.label, g.tag ?? null, g.remainingPercent, g.innerRemainingPercent ?? null]), [
+    ['claude', 'Claude', null, 64, null],
+    ['gpt', 'GPT', null, 78, null],
+    ['antigravity_4', 'AGY (4)', '4', 99.3, 100],
+    ['antigravity_3_8', 'AGY (3.8)', '3.8', 98.9, 0]
+  ]);
+  assert.equal(view.gauges[2].stale, false, 'AGY (4) is not marked stale by AGY (3.8)');
+  assert.equal(view.gauges[3].stale, true, 'AGY (3.8) tracks its own stale state');
+  assert.equal(view.gauges[2].updatedAt, Date.parse('2026-01-01T00:00:40Z'));
+  assert.equal(view.gauges[3].updatedAt, Date.parse('2026-01-01T00:00:20Z'));
+});
+
+test('mixed split and legacy Antigravity accounts keep legacy fallback separate without polluting AGY (4) or AGY (3.8)', () => {
+  const view = gaugesFromSnapshot(snapshot([
+    account('antigravity', [], { model_tier: '4' }),
+    account('antigravity', [], { model_tier: 'unexpected' })
+  ], [
+    fleet('antigravity_4_gemini', 95),
+    fleet('antigravity_gemini', 50)
+  ]));
+  assert.deepEqual(view.gauges.map(g => g.id), ['claude', 'antigravity_4', 'antigravity']);
+  assert.equal(view.gauges[1].remainingPercent, 95);
+  assert.equal(view.gauges[1].innerRemainingPercent, null);
+  assert.equal(view.gauges[2].remainingPercent, 50);
+});

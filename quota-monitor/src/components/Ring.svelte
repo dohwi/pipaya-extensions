@@ -153,6 +153,7 @@
 			{/if}
 		</svg>
 		{#if gauge.stale}<span class="badge" aria-hidden="true">!</span>{/if}
+		{#if gauge.tag}<span class="tag" aria-hidden="true" style:color={gauge.tagColor}>{gauge.tag}</span>{/if}
 		{#each rings as ring}
 			<span class="sr-only" role="progressbar" aria-label={ring.label} aria-valuemin="0" aria-valuemax={ring.max} aria-valuenow={ring.known ? ring.value : undefined} aria-valuetext={ring.text}></span>
 		{/each}
@@ -198,8 +199,9 @@
 	.track.unknown { opacity: 0.45; }
 	.glyph { color: var(--text-dim); overflow: hidden; }
 	.badge { position: absolute; right: 0; top: 0; width: 9px; height: 9px; line-height: 9px; text-align: center; border-radius: 50%; font-size: 7px; overflow: hidden; color: var(--bg); background: var(--warn); }
+	.tag { position: absolute; right: -2px; bottom: -2px; display: inline-flex; align-items: center; justify-content: center; padding: 1px 2.5px; min-width: 10px; line-height: 1; text-align: center; border-radius: 4px; font-size: 7px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; color: var(--text-dim); background: var(--bg); border: 1px solid var(--border-strong); pointer-events: none; }
 	.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-	@media (max-width: 600px) { .circle { width: 22px; height: 22px; } }
+	@media (max-width: 600px) { .circle { width: 22px; height: 22px; } .tag { font-size: 6.5px; padding: 1px 2px; min-width: 9px; } }
 	/* The popover lives outside this component's DOM position (portal), so its rules are global-by-class. */
 	:global(.qm-pop) {
 		position: fixed; top: 0; left: 0; z-index: var(--z-tooltip); box-sizing: border-box;

@@ -16,7 +16,7 @@
 
 <style>
 	/* Yields to the header title: capped, clipped instead of growing. */
-	.qm { display: flex; align-items: center; flex: 0 1 auto; gap: 6px; min-width: 0; max-width: min(40%, 160px); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; padding: 2px 3px; overscroll-behavior-x: contain; }
+	.qm { display: flex; align-items: center; flex: 0 1 auto; gap: 6px; min-width: 0; max-width: min(44%, 192px); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; padding: 3px 4px; overscroll-behavior-x: contain; }
 	.qm::-webkit-scrollbar { display: none; }
-	@media (max-width: 600px) { .qm { max-width: min(36%, 132px); gap: 4px; padding: 2px; } }
+	@media (max-width: 600px) { .qm { max-width: min(40%, 148px); gap: 4px; padding: 3px; } }
 </style>

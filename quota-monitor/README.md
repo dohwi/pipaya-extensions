@@ -97,7 +97,7 @@ The gauges appear in the header within a few seconds.
 Providers → CLIProxyAPI + quota-monitor plugin ──GET (management key)──▶ worker (polls) ──▶ Gauge component (draws) ──▶ pipaya header
 ```
 
-The plugin measures every account and aggregates the overall remaining quota (`availability`: `claude`, `codex`, `antigravity_gemini`, `antigravity_claude`). The extension maps those values to rings and never recalculates them.
+The plugin measures every account and aggregates the overall remaining quota (`availability`: `claude`, `codex`, `antigravity_4_gemini`, `antigravity_4_claude`, `antigravity_3_8_gemini`, `antigravity_3_8_claude`, or `antigravity_gemini` / `antigravity_claude` when unclassified). The extension maps those values to rings and never recalculates them.
 
 ## Development
 
