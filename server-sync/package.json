@@ -7,15 +7,15 @@
   "pipaya": {
     "title": "Server Sync",
     "descriptions": {
-      "en": "Makes this server match a primary pipaya server. Connect with the link from the primary's Devices tab, then choose what to include or exclude in detail using .gitignore-style rules (`syncignore`) from the page, file, or agent. API keys, tokens, and unreviewed local extension code only travel when their security switches are turned on.",
-      "ko": "이 서버를 기준 서버와 똑같이 맞춥니다. 기준 서버의 기기 탭에서 받은 연결 링크로 연결한 뒤, 상태 패널·파일·에이전트에서 .gitignore 방식의 동기화 규칙(`syncignore`)으로 동기화할 항목과 제외할 항목을 세밀하게 정할 수 있습니다. API 키·토큰과 직접 만든 확장 코드는 아래 보안 스위치를 켤 때만 넘어옵니다."
+      "en": "Makes this server match a primary pipaya server. Connect with the link from the primary's Devices tab, then choose what to include or exclude in detail using .gitignore-style rules (syncignore) from the page, file, or agent. API keys, tokens, and unreviewed local extension code only travel when their security switches are turned on.",
+      "ko": "이 서버를 기준 서버와 똑같이 맞춥니다. 기준 서버의 기기 탭에서 받은 연결 링크로 연결한 뒤, 상태 패널·파일·에이전트에서 .gitignore 방식의 동기화 규칙(syncignore)으로 동기화할 항목과 제외할 항목을 세밀하게 정할 수 있습니다. API 키·토큰과 직접 만든 확장 코드는 아래 보안 스위치를 켤 때만 넘어옵니다."
     },
     "settings": [
       {
         "key": "role",
         "type": "select",
         "label": "역할",
-        "description": "기준: 팔로워와 설정을 맞추고, 양쪽에서 같은 항목을 바꾸면 이 서버 값이 이깁니다. 팔로워: 동기화 규칙(`syncignore`)에 따라 기준 서버와 양방향으로 맞춥니다.",
+        "description": "기준: 팔로워와 설정을 맞추고, 양쪽에서 같은 항목을 바꾸면 이 서버 값이 이깁니다. 팔로워: 동기화 규칙(syncignore)에 따라 기준 서버와 양방향으로 맞춥니다.",
         "default": "primary",
         "options": [
           {
@@ -124,7 +124,7 @@
         "켜면 팔로워가 요청할 때 이 서버의 모델 API 키와 확장 토큰을 건네줍니다(로그인으로 연결한 계정은 제외). 팔로워가 내 서버일 때만 켜세요. 끄면 비밀값은 절대 나가지 않습니다.": "When on, this server hands its model API keys and extension tokens to a follower that asks (accounts connected by login are excluded). Turn it on only when the follower is your own server. Off: no secret ever leaves.",
         "동기화 일시 중지": "Pause sync",
         "켜면 자동 동기화(팔로워)와 동기화 응답(기준 서버)을 멈춥니다. 백업을 복원한 뒤 다시 덮어쓰이는 것을 막을 때 쓰세요.": "Pauses automatic sync (follower) and sync responses (primary). Useful after restoring a backup so changes are not overwritten again.",
-        "기준: 팔로워와 설정을 맞추고, 양쪽에서 같은 항목을 바꾸면 이 서버 값이 이깁니다. 팔로워: 동기화 규칙(`syncignore`)에 따라 기준 서버와 양방향으로 맞춥니다.": "Primary: keeps followers in step; when both changed the same item, this server wins. Follower: keeps this server in step with the primary both ways according to your sync rules (`syncignore`)."
+        "기준: 팔로워와 설정을 맞추고, 양쪽에서 같은 항목을 바꾸면 이 서버 값이 이깁니다. 팔로워: 동기화 규칙(syncignore)에 따라 기준 서버와 양방향으로 맞춥니다.": "Primary: keeps followers in step; when both changed the same item, this server wins. Follower: keeps this server in step with the primary both ways according to your sync rules (syncignore)."
       }
     }
   },

@@ -1447,12 +1447,15 @@ export default (pi: any) => {
 			label: { ko: "동기화 규칙", en: "Sync rules" },
 		}];
 
+	const UI_TEXTAREA_MAX = 16_000;
+
 	const rulesCardNodes = (): unknown[] => {
 		if (!editingRules) return [];
 		const preview = rulesPreviewCache;
 		const parsed = parseSyncRules(rulesDraft);
 		const warnings = preview?.warnings ?? parsed.warnings;
 		const items = preview?.items ?? [];
+		const tooLongForUi = rulesDraft.length > UI_TEXTAREA_MAX;
 		// Show excluded items first so the user immediately verifies what will be skipped, then synced items (max 20 rows).
 		const ordered = [...items.filter((i) => !i.synced), ...items.filter((i) => i.synced)].slice(0, 20);
 		const rows = ordered.map((item, idx) => ({
@@ -1465,19 +1468,23 @@ export default (pi: any) => {
 		}));
 		const summaryText: Text = preview
 			? {
-				ko: `현재 서버 항목 기준: 동기화 ${preview.syncedCount}개 · 제외 ${preview.ignoredCount}개${items.length > 20 ? " (상위 20개 표시)" : ""}`,
+				ko: `현재 서버 항목 기준: 동기화 ${preview.syncedCount}개 · 제외 ${preview.ignoredCount}개${items.length > 20 ? " (20개만 표시)" : ""}`,
 				en: `On this server: ${preview.syncedCount} synced · ${preview.ignoredCount} excluded${items.length > 20 ? " (showing 20)" : ""}`,
 			}
 			: { ko: "항목 미리보기를 불러오는 중…", en: "Loading preview…" };
+		const fileHint = rulesFile().slice(-240);
 		return [{
 			type: "card", id: "rules-editor",
 			title: { ko: "동기화 규칙 (syncignore)", en: "Sync rules (syncignore)" },
 			description: {
-				ko: `파일: ${rulesFile()} · .gitignore 문법(# 주석, * / ** 와일드카드, ! 다시 포함, 아래 규칙 우선)`,
-				en: `File: ${rulesFile()} · .gitignore syntax (# comment, * / ** globs, ! re-include, last rule wins)`,
+				ko: `파일: ${fileHint} · .gitignore 문법(# 주석, * / ** 와일드카드, ! 다시 포함, 아래 규칙 우선)`,
+				en: `File: ${fileHint} · .gitignore syntax (# comment, * / ** globs, ! re-include, last rule wins)`,
 			},
 			children: [
-				{
+				...(tooLongForUi ? [{
+					type: "alert", id: "rules-too-long", tone: "warning",
+					text: { ko: "syncignore 파일이 16,000자를 넘어 화면 편집을 비활성화했습니다. 파일을 직접 편집하세요.", en: "syncignore exceeds 16,000 characters; edit the file directly." },
+				}] : [{
 					type: "form", id: "rules-form",
 					submitLabel: { ko: "규칙 저장", en: "Save rules" },
 					disabled: pulling || busy,
@@ -1487,14 +1494,14 @@ export default (pi: any) => {
 							label: { ko: "제외/포함 규칙", en: "Exclude / include rules" },
 							value: rulesDraft,
 							rows: 10,
-							maxLength: MAX_RULES_BYTES,
+							maxLength: UI_TEXTAREA_MAX,
 							placeholder: {
-								ko: "# 예: skills/browser-bridge\n# mcp/local-*\n# settings/default_model",
-								en: "# e.g. skills/browser-bridge\n# mcp/local-*\n# settings/default_model",
+								ko: "예: skills/browser-bridge, mcp/local-*, !skills/orchestrate",
+								en: "e.g. skills/browser-bridge, mcp/local-*, !skills/orchestrate",
 							},
 						},
 					],
-				},
+				}]),
 				...(warnings.length ? [{
 					type: "alert", id: "rules-warn", tone: "warning",
 					title: { ko: "규칙 확인 필요", en: "Check rules" },
