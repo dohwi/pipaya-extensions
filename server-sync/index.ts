@@ -125,8 +125,10 @@ interface Status {
 	keys: string[];
 	/** Whether this follower also pulls extension settings. */
 	syncExtensions: boolean;
-	/** Path to this server's `.gitignore`-style `syncignore` file. */
+	/** Path to this server's `.gitignore`-style `syncignore` file (server-side rules). */
 	rulesFile?: string;
+	/** Path to this server's client UI override rules file (`syncignore.ui`). */
+	clientRulesFile?: string;
 	/** Unix ms of the last successful pull (follower only). */
 	lastSyncAt: number | null;
 	/** Keys the last successful pull changed. */
@@ -940,35 +942,101 @@ export default (pi: any) => {
 	};
 
 	/**
-	 * This server's `.gitignore`-style sync rules file (`extension-data/server-sync/syncignore`).
-	 * Plain UTF-8 text (never synced to peers), editable from the UI, terminal, or AI agent.
-	 * When the file does not exist yet, rules fall back to defaults (or pre-0.19 legacy box settings).
+	 * This server's `.gitignore`-style sync rules are split into two independent, non-interfering files:
+	 *  - `extension-data/server-sync/syncignore`: server-side rules (direct file / CLI / AI agent edits)
+	 *  - `extension-data/server-sync/syncignore.ui`: client UI rules (edited from the pipaya app UI)
+	 * Both are plain UTF-8 text (never synced to peers) and evaluated in order: server rules first, then client UI
+	 * overrides (`syncignore.ui`), so editing from the app never overwrites hand-edited server rules (and vice versa).
+	 * On startup, `syncignore` is materialized with the server's role defaults if it does not exist yet.
 	 */
 	const rulesFile = () => join(dirname(peerFile()), "syncignore");
+	const clientRulesFile = () => join(dirname(peerFile()), "syncignore.ui");
 	const hasRulesFile = () => existsSync(rulesFile());
-	const readRulesText = (): string => {
-		const file = rulesFile();
-		if (existsSync(file)) {
-			try { return readFileSync(file, "utf8"); } catch { /* unreadable: fall back to defaults */ }
-		}
-		return defaultRulesText(role(), settings());
-	};
-	const writeRulesText = (text: string) => {
-		const file = rulesFile();
+	const hasClientRulesFile = () => existsSync(clientRulesFile());
+	const writeTextFile = (file: string, text: string) => {
 		mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
 		const normalized = text.endsWith("\n") || !text ? text : `${text}\n`;
 		const tmp = `${file}.${randomBytes(4).toString("hex")}.tmp`;
 		writeFileSync(tmp, normalized, { mode: 0o644 });
 		chmodSync(tmp, 0o644);
 		renameSync(tmp, file);
-		// Once the file exists it is the sole source of truth: drop any obsolete pre-0.19 scope checkboxes.
+	};
+	const cleanLegacyScopeKeys = () => {
 		const s = settings();
 		if (LEGACY_SCOPE_KEYS.some((k) => k in s)) {
 			const cleaned = Object.fromEntries(Object.entries(withoutToken(s)).filter(([k]) => !(LEGACY_SCOPE_KEYS as readonly string[]).includes(k)));
 			pi.settings.set(cleaned);
 		}
 	};
-	const activeParsedRules = (overrideText?: string): ParsedSyncRules => parseSyncRules(overrideText ?? readRulesText());
+	const readServerRulesText = (): string => {
+		const file = rulesFile();
+		const s = settings();
+		if (existsSync(file)) {
+			try {
+				const text = readFileSync(file, "utf8");
+				// If `syncignore` is still our untouched auto-generated default template and pre-0.19 legacy box
+				// settings are present (e.g. a server upgraded or toggled legacy flags), honor the legacy boxes
+				// until the user edits `syncignore` or `syncignore.ui`.
+				if (LEGACY_SCOPE_KEYS.some((k) => k in s) && (text === defaultRulesText("primary") || text === defaultRulesText("follower"))) {
+					return defaultRulesText(role(), s);
+				}
+				return text;
+			} catch { /* unreadable: fall back to defaults */ }
+		}
+		return defaultRulesText(role(), s);
+	};
+	const readClientRulesText = (): string => {
+		const file = clientRulesFile();
+		if (existsSync(file)) {
+			try { return readFileSync(file, "utf8"); } catch { /* unreadable */ }
+		}
+		return "";
+	};
+	const combineRulesText = (serverText: string, clientText: string): string => {
+		const s = serverText.trimEnd();
+		const c = clientText.trim();
+		if (!c) return serverText;
+		return `${s ? `${s}\n\n` : ""}# --- client UI rules (syncignore.ui) ---\n${c}\n`;
+	};
+	/** Combined effective rules text (`syncignore` followed by `syncignore.ui`). */
+	const readRulesText = (): string => combineRulesText(readServerRulesText(), readClientRulesText());
+	const writeServerRulesText = (text: string) => {
+		writeTextFile(rulesFile(), text);
+		cleanLegacyScopeKeys();
+	};
+	const writeClientRulesText = (text: string) => {
+		const clean = text.replace(/\u0000/g, "");
+		if (!clean.trim()) {
+			// Empty client override: remove the file (or keep empty) so server rules act cleanly without stale overrides.
+			try { if (existsSync(clientRulesFile())) rmSync(clientRulesFile(), { force: true }); } catch { /* ignore */ }
+		} else {
+			writeTextFile(clientRulesFile(), clean);
+		}
+		cleanLegacyScopeKeys();
+	};
+	/**
+	 * Materialize `syncignore` on disk once so users can find and edit it directly on the server without opening UI first.
+	 * When pre-0.19 legacy box settings exist, keep them untouched until the user explicitly saves a rules file.
+	 */
+	const ensureRulesFile = () => {
+		if (hasRulesFile()) return;
+		const s = settings();
+		if (LEGACY_SCOPE_KEYS.some((k) => k in s)) return;
+		try {
+			writeTextFile(rulesFile(), defaultRulesText(role(), s));
+		} catch (e) {
+			log(`init syncignore: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	};
+	const activeParsedRules = (overrideText?: string): ParsedSyncRules => {
+		if (overrideText !== undefined) return parseSyncRules(overrideText);
+		const s = parseSyncRules(readServerRulesText());
+		const c = parseSyncRules(readClientRulesText());
+		return {
+			rules: [...s.rules, ...c.rules].slice(0, MAX_RULES_COUNT),
+			warnings: [...s.warnings, ...c.warnings],
+		};
+	};
 	const activeRules = (): SyncRule[] => activeParsedRules().rules;
 	const isIgnoredPath = (rules: readonly SyncRule[], path: string): boolean => matchSyncPath(rules, path).ignored;
 
@@ -1423,17 +1491,25 @@ export default (pi: any) => {
 	let editingRules = false;
 	let rulesDraft = "";
 	let rulesDraftRevision = 0;
+	type RuleSource = "server" | "client";
 	interface DiscoveredSyncItem {
 		path: string;
 		synced: boolean;
 		matchedBy: string | null;
+		source?: RuleSource | null;
 	}
 	interface RulesInspection {
 		file: string;
 		exists: boolean;
+		clientFile: string;
+		clientExists: boolean;
 		role: "primary" | "follower";
 		content: string;
+		serverContent: string;
+		clientContent: string;
 		warnings: SyncRuleWarning[];
+		serverWarnings: SyncRuleWarning[];
+		clientWarnings: SyncRuleWarning[];
 		gates: { syncLocalExtensions: boolean; syncSecrets: boolean; shareSecrets: boolean };
 		items: DiscoveredSyncItem[];
 		syncedCount: number;
@@ -1446,7 +1522,7 @@ export default (pi: any) => {
 	const rulesButton = (open: boolean): unknown[] =>
 		open ? [] : [{
 			type: "button", id: "rules-open", variant: "secondary", disabled: pulling || busy,
-			label: { ko: "규칙 수정", en: "Edit rules" },
+			label: { ko: "클라이언트 규칙 편집", en: "Edit client rules" },
 		}];
 
 	const UI_TEXTAREA_MAX = 16_000;
@@ -1552,34 +1628,50 @@ export default (pi: any) => {
 		return out;
 	};
 
+	const ruleSourceLabel = (source: RuleSource | null | undefined): Text | null =>
+		source === "client"
+			? { ko: "클라이언트 UI", en: "Client UI" }
+			: source === "server"
+				? { ko: "서버 syncignore", en: "Server syncignore" }
+				: null;
+
 	const rulesListNodes = (rules: readonly SyncRule[], hidden: boolean): unknown[] => {
 		if (hidden) return [];
-		const custom = hasRulesFile();
-		const shownRules = rules.slice(0, 20);
-		const rawBody = shownRules.length
-			? [
-				...shownRules.map((r) => r.raw),
-				...(rules.length > shownRules.length ? [`# … +${rules.length - shownRules.length} more`] : []),
-			].join("\n")
-			: "";
-		const rawNode = rawBody
-			? { type: "code", id: "rules-list", language: "gitignore", text: rawBody }
-			: {
-				type: "text", id: "rules-list", size: "small", tone: "neutral",
-				text: {
-					ko: "제외 규칙 없음 (보안 스위치가 허용한 모든 항목 동기화)",
-					en: "No exclude rules (everything allowed by security switches syncs)",
-				},
-			};
+		const serverParsed = parseSyncRules(readServerRulesText());
+		const clientParsed = parseSyncRules(readClientRulesText());
+		const formatRuleBlock = (list: readonly SyncRule[], empty: Text, id: string) => {
+			const shown = list.slice(0, 20);
+			const body = shown.length
+				? [
+					...shown.map((r) => r.raw),
+					...(list.length > shown.length ? [`# … +${list.length - shown.length} more`] : []),
+				].join("\n")
+				: "";
+			return body
+				? { type: "code", id, language: "gitignore", text: body }
+				: { type: "text", id, size: "small", tone: "neutral", text: empty };
+		};
+		const serverRawNode = formatRuleBlock(
+			serverParsed.rules,
+			{ ko: "서버 제외 규칙 없음 (보안 스위치가 허용한 모든 항목 동기화)", en: "No server exclude rules (everything allowed by security switches syncs)" },
+			"rules-list",
+		);
+		const clientRawNode = formatRuleBlock(
+			clientParsed.rules,
+			{ ko: "클라이언트 UI 추가 규칙 없음 — 상단 ‘클라이언트 규칙 편집’에서 추가할 수 있습니다.", en: "No client UI overrides yet — click ‘Edit client rules’ above to add overrides." },
+			"client-rules-list",
+		);
 		const live = liveInspection;
 		if (!live) {
-			const title: Text = custom
-				? { ko: `동기화 규칙 (syncignore · ${rules.length}개)`, en: `Sync rules (syncignore · ${rules.length})` }
-				: { ko: `동기화 규칙 (기본값 · ${rules.length}개)`, en: `Sync rules (defaults · ${rules.length})` };
+			const title: Text = {
+				ko: `동기화 규칙 · 서버 ${serverParsed.rules.length}개 · 클라이언트 ${clientParsed.rules.length}개`,
+				en: `Sync rules · Server ${serverParsed.rules.length} · Client ${clientParsed.rules.length}`,
+			};
 			return [
 				{ type: "divider", id: "rules-sep" },
 				{ type: "text", id: "rules-list-title", size: "small", tone: "neutral", text: title },
-				rawNode,
+				serverRawNode,
+				...(clientParsed.rules.length ? [clientRawNode] : []),
 			];
 		}
 		const total = live.items.length;
@@ -1589,8 +1681,8 @@ export default (pi: any) => {
 		const excludedHint: Text = excluded.length
 			? categoryBreakdown(live.items, false)
 			: {
-				ko: custom ? `syncignore ${rules.length}개 규칙 적용` : `기본 규칙 ${rules.length}개 적용`,
-				en: custom ? `${rules.length} syncignore rules` : `${rules.length} default rules`,
+				ko: `서버 ${serverParsed.rules.length}개 · 클라이언트 ${clientParsed.rules.length}개 규칙`,
+				en: `Server ${serverParsed.rules.length} · Client ${clientParsed.rules.length} rules`,
 			};
 		return [
 			{ type: "divider", id: "rules-sep" },
@@ -1628,14 +1720,20 @@ export default (pi: any) => {
 						label: { ko: `제외됨 (${excluded.length})`, en: `Excluded (${excluded.length})` },
 						children: [{
 							type: "list", id: "rules-excluded-list",
-							items: excluded.slice(0, 30).map((item, idx) => ({
-								id: `ex${idx}`,
-								title: item.path,
-								description: item.matchedBy
-									? { ko: `적용 규칙: ${item.matchedBy}`, en: `Rule: ${item.matchedBy}` }
-									: { ko: "기본 규칙으로 제외", en: "Excluded by default" },
-								badge: { ko: "제외", en: "Excluded" },
-							})),
+							items: excluded.slice(0, 30).map((item, idx) => {
+								const src = ruleSourceLabel(item.source);
+								return {
+									id: `ex${idx}`,
+									title: item.path,
+									description: item.matchedBy
+										? {
+											ko: `${src ? `[${src.ko}] ` : ""}${item.matchedBy}`,
+											en: `${src ? `[${src.en}] ` : ""}${item.matchedBy}`,
+										}
+										: { ko: "기본 규칙으로 제외", en: "Excluded by default" },
+									badge: src ?? { ko: "제외", en: "Excluded" },
+								};
+							}),
 							emptyText: { ko: "제외된 항목이 없습니다. 모든 발견 항목이 동기화됩니다.", en: "No excluded items. All discovered items sync." },
 						}],
 					},
@@ -1647,11 +1745,17 @@ export default (pi: any) => {
 							items: synced.slice(0, 30).map((item, idx) => {
 								const koName = itemShortName(item.path, "ko");
 								const enName = itemShortName(item.path, "en");
+								const src = ruleSourceLabel(item.source);
 								return {
 									id: `sy${idx}`,
 									title: item.path,
 									...(item.matchedBy
-										? { description: { ko: `재포함 규칙: ${item.matchedBy}`, en: `Included by: ${item.matchedBy}` } }
+										? {
+											description: {
+												ko: `${src ? `[${src.ko}] ` : ""}재포함: ${item.matchedBy}`,
+												en: `${src ? `[${src.en}] ` : ""}Included by: ${item.matchedBy}`,
+											},
+										}
 										: item.path.startsWith("settings/")
 											? { description: { ko: koName, en: enName } }
 											: {}),
@@ -1663,10 +1767,25 @@ export default (pi: any) => {
 					},
 					{
 						id: "tab-raw",
-						label: { ko: `syncignore (${rules.length})`, en: `syncignore (${rules.length})` },
+						label: { ko: `규칙 파일 (${rules.length})`, en: `Rules (${rules.length})` },
 						children: [
-							rawNode,
-							{ type: "text", id: "rules-file-path", size: "small", tone: "neutral", text: rulesFile() },
+							{
+								type: "text", id: "rules-layer-note", size: "small", tone: "neutral",
+								text: {
+									ko: "서버 파일(syncignore)과 클라이언트 UI 규칙(syncignore.ui)은 별도 파일로 관리되어 서로 덮어쓰지 않습니다. 같은 경로는 클라이언트 UI 규칙이 마지막에 적용됩니다.",
+									en: "Server rules (syncignore) and client UI rules (syncignore.ui) live in separate files so edits never overwrite each other. Client UI rules apply on top of server rules.",
+								},
+							},
+							{
+								type: "text", id: "server-rules-heading", size: "small", tone: "neutral",
+								text: { ko: `서버 규칙 (syncignore · ${serverParsed.rules.length}개) — ${rulesFile()}`, en: `Server rules (syncignore · ${serverParsed.rules.length}) — ${rulesFile()}` },
+							},
+							serverRawNode,
+							{
+								type: "text", id: "client-rules-heading", size: "small", tone: "neutral",
+								text: { ko: `클라이언트 UI 규칙 (syncignore.ui · ${clientParsed.rules.length}개) — ${clientRulesFile()}`, en: `Client UI rules (syncignore.ui · ${clientParsed.rules.length}) — ${clientRulesFile()}` },
+							},
+							clientRawNode,
 						],
 					},
 				],
@@ -1678,46 +1797,47 @@ export default (pi: any) => {
 		if (!editingRules) return [];
 		const preview = rulesPreviewCache;
 		const parsed = parseSyncRules(rulesDraft);
-		const warnings = preview?.warnings ?? parsed.warnings;
+		const warnings = preview?.clientWarnings ?? parsed.warnings;
 		const items = preview?.items ?? [];
 		const tooLongForUi = rulesDraft.length > UI_TEXTAREA_MAX;
 		const catItems = categoryListItems(items, "ecat");
+		const serverRulesCount = parseSyncRules(readServerRulesText()).rules.length;
 		const summaryText: Text = preview
 			? {
-				ko: `미리보기 · 동기화 ${preview.syncedCount}개 / 전체 ${items.length}개 (제외 ${preview.ignoredCount}개)`,
-				en: `Preview · ${preview.syncedCount} synced / ${items.length} total (${preview.ignoredCount} excluded)`,
+				ko: `합산 미리보기 (서버 ${serverRulesCount}개 + 클라이언트) · 동기화 ${preview.syncedCount}개 / 전체 ${items.length}개 (제외 ${preview.ignoredCount}개)`,
+				en: `Combined preview (server ${serverRulesCount} + client) · ${preview.syncedCount} synced / ${items.length} total (${preview.ignoredCount} excluded)`,
 			}
 			: { ko: "미리보기를 불러오는 중…", en: "Loading preview…" };
-		const fileHint = rulesFile().slice(-240);
+		const fileHint = clientRulesFile().slice(-240);
 		return [{
 			type: "stack", id: "rules-editor", gap: "medium",
 			children: [
 				{ type: "divider", id: "rules-edit-sep" },
-				{ type: "text", id: "rules-edit-title", size: "body", text: { ko: "동기화 규칙 편집 (syncignore)", en: "Edit sync rules (syncignore)" } },
+				{ type: "text", id: "rules-edit-title", size: "body", text: { ko: "클라이언트 UI 규칙 편집 (syncignore.ui)", en: "Edit client UI rules (syncignore.ui)" } },
 				{
 					type: "text", id: "rules-edit-desc", size: "small", tone: "neutral",
 					text: {
-						ko: `${fileHint}\n.gitignore 문법: # 주석 · * / ** 와일드카드 · ! 다시 포함 · 아래 줄 우선`,
-						en: `${fileHint}\n.gitignore syntax: # comment · * / ** globs · ! re-include · last line wins`,
+						ko: `${fileHint}\n서버의 syncignore 파일은 건드리지 않고 별도로 저장됩니다. (!패턴으로 서버 제외 규칙을 다시 포함할 수 있습니다)`,
+						en: `${fileHint}\nSaved separately without touching the server's syncignore file. Use !pattern to re-include items excluded by server rules.`,
 					},
 				},
 				...(tooLongForUi ? [{
 					type: "alert", id: "rules-too-long", tone: "warning",
-					text: { ko: "syncignore 파일이 16,000자를 넘어 화면 편집을 비활성화했습니다. 파일을 직접 편집하세요.", en: "syncignore exceeds 16,000 characters; edit the file directly." },
+					text: { ko: "syncignore.ui 파일이 16,000자를 넘어 화면 편집을 비활성화했습니다. 파일을 직접 편집하세요.", en: "syncignore.ui exceeds 16,000 characters; edit the file directly." },
 				}] : [{
 					type: "form", id: "rules-form",
-					submitLabel: { ko: "규칙 저장", en: "Save rules" },
+					submitLabel: { ko: "클라이언트 규칙 저장", en: "Save client rules" },
 					disabled: pulling || busy,
 					children: [
 						{
 							type: "textarea", id: `rules-text-${rulesDraftRevision}`,
-							label: { ko: "제외/포함 규칙", en: "Exclude / include rules" },
+							label: { ko: "클라이언트 추가·예외 규칙 (.gitignore 문법)", en: "Client override rules (.gitignore syntax)" },
 							value: rulesDraft,
 							rows: 6,
 							maxLength: UI_TEXTAREA_MAX,
 							placeholder: {
-								ko: "예: skills/browser-bridge, mcp/local-*, !skills/orchestrate",
-								en: "e.g. skills/browser-bridge, mcp/local-*, !skills/orchestrate",
+								ko: "예:\n# 이 서버에서 추가로 제외\nmcp/local-obsidian\n# 서버 규칙에서 제외된 항목을 다시 포함\n!skills/orchestrate",
+								en: "e.g.\n# Exclude additionally\nmcp/local-obsidian\n# Re-include an item excluded by server syncignore\n!skills/orchestrate",
 							},
 						},
 					],
@@ -1733,7 +1853,7 @@ export default (pi: any) => {
 				{
 					type: "stack", id: "rules-actions", direction: "horizontal", gap: "small",
 					children: [
-						{ type: "button", id: "rules-reset", variant: "secondary", disabled: pulling || busy, label: { ko: "기본값 불러오기", en: "Load defaults" } },
+						{ type: "button", id: "rules-reset", variant: "secondary", disabled: pulling || busy, label: { ko: "클라이언트 규칙 비우기", en: "Clear client rules" } },
 						{ type: "button", id: "rules-cancel", variant: "secondary", disabled: pulling || busy, label: { ko: "취소", en: "Cancel" } },
 					],
 				},
@@ -1896,6 +2016,7 @@ export default (pi: any) => {
 			keys: allowedKeys(keys(), rules),
 			syncExtensions: role() === "follower" && syncExtensions(rules),
 			rulesFile: rulesFile(),
+			clientRulesFile: clientRulesFile(),
 			lastSyncAt,
 			lastApplied,
 			lastError,
@@ -3084,19 +3205,38 @@ export default (pi: any) => {
 	};
 
 	/**
-	 * Discover all live syncable items on this server and evaluate each against `overrideText` (or the active rules).
-	 * Never reads or returns any secret value — only canonical sync paths, status, and matching rule.
+	 * Discover all live syncable items on this server and evaluate each against server (`syncignore`) + client UI
+	 * (`syncignore.ui`) rules, or an optional override for dry-run previewing.
+	 * Never reads or returns any secret value — only canonical sync paths, status, matching rule, and rule source.
 	 */
-	const inspectRules = async (overrideText?: string, testPaths?: readonly string[]): Promise<RulesInspection & { tested?: DiscoveredSyncItem[] }> => {
-		const content = overrideText ?? readRulesText();
-		const { rules, warnings } = parseSyncRules(content);
+	const inspectRules = async (
+		override?: { content?: string; scope?: RuleSource },
+		testPaths?: readonly string[],
+	): Promise<RulesInspection & { tested?: DiscoveredSyncItem[] }> => {
+		const scope = override?.scope;
+		const serverContent = override?.content !== undefined && scope !== "client" ? override.content : readServerRulesText();
+		const clientContent = override?.content !== undefined && scope === "client" ? override.content : readClientRulesText();
+		const sParsed = parseSyncRules(serverContent);
+		const cParsed = parseSyncRules(clientContent);
+		const serverRules = sParsed.rules;
+		const clientRules = cParsed.rules;
+		const rules = [...serverRules, ...clientRules].slice(0, MAX_RULES_COUNT);
+		const warnings = [...sParsed.warnings, ...cParsed.warnings];
+		const content = combineRulesText(serverContent, clientContent);
+		const evalPath = (path: string): { ignored: boolean; matchedBy: string | null; source: RuleSource | null } => {
+			const cMatch = clientRules.length ? matchSyncPath(clientRules, path) : { ignored: false, matchedBy: null };
+			if (cMatch.matchedBy) return { ignored: cMatch.ignored, matchedBy: cMatch.matchedBy.raw, source: "client" };
+			const sMatch = matchSyncPath(serverRules, path);
+			if (sMatch.matchedBy) return { ignored: sMatch.ignored, matchedBy: sMatch.matchedBy.raw, source: "server" };
+			return { ignored: false, matchedBy: null, source: null };
+		};
 		const items: DiscoveredSyncItem[] = [];
 		const seen = new Set<string>();
 		const pushItem = (path: string) => {
 			if (seen.has(path)) return;
 			seen.add(path);
-			const m = matchSyncPath(rules, path);
-			items.push({ path, synced: !m.ignored, matchedBy: m.matchedBy?.raw ?? null });
+			const m = evalPath(path);
+			items.push({ path, synced: !m.ignored, matchedBy: m.matchedBy, source: m.source });
 		};
 		// 1. Settings rows (except mcp_servers, which is expanded per server below).
 		const allKeys = keys();
@@ -3131,14 +3271,14 @@ export default (pi: any) => {
 		} catch { /* ignore */ }
 		for (const id of [...extIds].sort()) {
 			const subAspects = ["install", "settings", "client"] as const;
-			const states = subAspects.map((sub) => matchSyncPath(rules, `extensions/${id}/${sub}`));
+			const states = subAspects.map((sub) => evalPath(`extensions/${id}/${sub}`));
 			const allSame = states.every((st) => st.ignored === states[0]!.ignored);
 			if (allSame) {
-				const m = matchSyncPath(rules, `extensions/${id}`);
+				const m = evalPath(`extensions/${id}`);
 				const eff = m.ignored === states[0]!.ignored ? m : states[0]!;
 				if (!seen.has(`extensions/${id}`)) {
 					seen.add(`extensions/${id}`);
-					items.push({ path: `extensions/${id}`, synced: !states[0]!.ignored, matchedBy: eff.matchedBy?.raw ?? null });
+					items.push({ path: `extensions/${id}`, synced: !states[0]!.ignored, matchedBy: eff.matchedBy, source: eff.source });
 				}
 			} else {
 				for (const sub of subAspects) pushItem(`extensions/${id}/${sub}`);
@@ -3149,17 +3289,19 @@ export default (pi: any) => {
 		const skills = readFolders(join(home, ".agents", "skills"));
 		for (const name of Object.keys(skills).sort()) {
 			const files = Object.keys(skills[name] ?? {}).sort();
-			const matches = files.map((rel) => ({ rel, m: matchSyncPath(rules, `skills/${name}/${rel}`) }));
+			const matches = files.map((rel) => ({ rel, m: evalPath(`skills/${name}/${rel}`) }));
 			const syncedFiles = matches.filter((x) => !x.m.ignored);
 			const ignoredFiles = matches.filter((x) => x.m.ignored);
 			if (!syncedFiles.length) {
-				const top = matchSyncPath(rules, `skills/${name}`);
+				const top = evalPath(`skills/${name}`);
+				const eff = top.ignored ? top : ignoredFiles[0]?.m;
 				seen.add(`skills/${name}`);
-				items.push({ path: `skills/${name}`, synced: false, matchedBy: (top.ignored ? top.matchedBy : ignoredFiles[0]?.m.matchedBy)?.raw ?? null });
+				items.push({ path: `skills/${name}`, synced: false, matchedBy: eff?.matchedBy ?? null, source: eff?.source ?? null });
 			} else {
-				const top = matchSyncPath(rules, `skills/${name}`);
+				const top = evalPath(`skills/${name}`);
+				const eff = !top.ignored ? top : syncedFiles[0]?.m;
 				seen.add(`skills/${name}`);
-				items.push({ path: `skills/${name}`, synced: true, matchedBy: (!top.ignored ? top.matchedBy : syncedFiles[0]?.m.matchedBy)?.raw ?? null });
+				items.push({ path: `skills/${name}`, synced: true, matchedBy: eff?.matchedBy ?? null, source: eff?.source ?? null });
 				for (const ig of ignoredFiles) pushItem(`skills/${name}/${ig.rel}`);
 			}
 		}
@@ -3183,9 +3325,15 @@ export default (pi: any) => {
 		const result: RulesInspection & { tested?: DiscoveredSyncItem[] } = {
 			file: rulesFile(),
 			exists: hasRulesFile(),
+			clientFile: clientRulesFile(),
+			clientExists: hasClientRulesFile(),
 			role: role(),
 			content,
+			serverContent,
+			clientContent,
 			warnings,
+			serverWarnings: sParsed.warnings,
+			clientWarnings: cParsed.warnings,
 			gates: {
 				syncLocalExtensions: wantLocalExtensions(),
 				syncSecrets: wantSecrets(),
@@ -3198,8 +3346,8 @@ export default (pi: any) => {
 		if (testPaths?.length) {
 			result.tested = testPaths.slice(0, MAX_KEYS).map((raw) => {
 				const p = normalizeSyncPathAlias(raw.slice(0, 300).replace(/^\/+/, "").replace(/\/+$/, ""));
-				const m = matchSyncPath(rules, p);
-				return { path: p, synced: !m.ignored, matchedBy: m.matchedBy?.raw ?? null };
+				const m = evalPath(p);
+				return { path: p, synced: !m.ignored, matchedBy: m.matchedBy, source: m.source };
 			});
 		}
 		return result;
@@ -3213,6 +3361,8 @@ export default (pi: any) => {
 			const prev = liveInspection;
 			const changed = !prev
 				|| prev.content !== next.content
+				|| prev.serverContent !== next.serverContent
+				|| prev.clientContent !== next.clientContent
 				|| prev.syncedCount !== next.syncedCount
 				|| prev.ignoredCount !== next.ignoredCount
 				|| prev.items.length !== next.items.length
@@ -3224,27 +3374,31 @@ export default (pi: any) => {
 		}
 	};
 
-	const saveRulesContent = async (raw: string) => {
+	const saveRulesContent = async (raw: string, scope: RuleSource = "server") => {
 		const clean = raw.replace(/\u0000/g, "");
-		if (clean.length > MAX_RULES_BYTES) throw new Error(`syncignore exceeds ${MAX_RULES_BYTES} bytes`);
-		writeRulesText(clean);
+		if (clean.length > MAX_RULES_BYTES) throw new Error(`${scope === "client" ? "syncignore.ui" : "syncignore"} exceeds ${MAX_RULES_BYTES} bytes`);
+		if (scope === "client") writeClientRulesText(clean);
+		else writeServerRulesText(clean);
 		const inspected = await inspectRules();
-		rulesDraft = inspected.content;
+		if (scope === "client") rulesDraft = inspected.clientContent;
 		rulesPreviewCache = inspected;
 		liveInspection = inspected;
-		log(`updated syncignore (${inspected.syncedCount} synced, ${inspected.ignoredCount} excluded)`);
+		log(`updated ${scope === "client" ? "syncignore.ui" : "syncignore"} (${inspected.syncedCount} synced, ${inspected.ignoredCount} excluded)`);
 		showStatus();
 		return inspected;
 	};
 
+	const parseScope = (v: unknown): RuleSource => (v === "client" ? "client" : "server");
+
 	pi.registerMethod("rules", async (params: unknown) => {
 		const content = plain(params) && typeof params.content === "string" ? params.content : undefined;
+		const scope = plain(params) && (params.scope === "client" || params.scope === "server") ? params.scope : undefined;
 		const paths = plain(params) && Array.isArray(params.paths) ? params.paths.filter((x): x is string => typeof x === "string").slice(0, MAX_KEYS) : undefined;
-		return inspectRules(content, paths);
+		return inspectRules(content !== undefined ? { content, scope } : undefined, paths);
 	});
 	pi.registerMethod("setRules", async (params: unknown) => {
 		if (!plain(params) || typeof params.content !== "string") throw new Error("content (string) is required");
-		return saveRulesContent(params.content);
+		return saveRulesContent(params.content, parseScope(params.scope));
 	});
 
 	if (typeof pi.registerTool === "function" && pi.Type) {
@@ -3253,48 +3407,52 @@ export default (pi: any) => {
 			name: "server_sync_rules",
 			label: "Server Sync Rules",
 			description: [
-				"Inspect, test, or edit this server's .gitignore-style server-sync rules file (`syncignore`).",
-				"Use action='inspect' to see the rules file path, active patterns, security gates, and every discovered syncable item on this server.",
-				"Use action='set' with `content` to replace the file, action='add' or 'remove' with `patterns` to append/delete lines while keeping comments, action='reset' to restore role defaults, or action='test' with optional `content` and `paths` to dry-run without saving.",
+				"Inspect, test, or edit this server's .gitignore-style server-sync rules.",
+				"Server rules (`syncignore`, scope='server', default) and client UI overrides (`syncignore.ui`, scope='client') live in separate files so they never overwrite each other; client UI rules apply on top of server rules.",
+				"Use action='inspect' to see both files, active patterns, security gates, and every discovered syncable item with its matching rule & source.",
+				"Use action='set' with `content`, action='add'/'remove' with `patterns`, action='reset' (defaults for server, empty for client), or action='test' with optional `content` & `paths`.",
 				"Namespaces: settings/<key>, mcp/<name>, extensions/<id>[/{install,settings,client,code}], skills/<name>[/<file>], subagents/<name>, agents-md, providers/<id>, agent-extensions/<name>, secrets/providers/<id>, secrets/extensions/<id>.",
 				"Security switches (syncLocalExtensions, syncSecrets, shareSecrets) and NEVER_SYNCED keys cannot be bypassed by rules.",
 			].join(" "),
 			parameters: T.Object({
 				action: T.Optional(T.String({ description: "inspect | set | add | remove | reset | test (default: inspect)" })),
+				scope: T.Optional(T.String({ description: "server (syncignore, default) | client (syncignore.ui)" })),
 				content: T.Optional(T.String({ description: "Full .gitignore-style rules text (for action='set' or dry-run action='test')" })),
 				patterns: T.Optional(T.Array(T.String(), { description: "Pattern lines to add or remove (for action='add' or 'remove')" })),
 				paths: T.Optional(T.Array(T.String(), { description: "Specific canonical sync paths to evaluate (for action='test')" })),
 			}),
 			execute: async (_id: string, params: Record<string, unknown>) => {
 				const action = typeof params?.action === "string" ? params.action : "inspect";
+				const scope = parseScope(params?.scope);
+				const readScoped = () => (scope === "client" ? readClientRulesText() : readServerRulesText());
 				let result: RulesInspection & { tested?: DiscoveredSyncItem[] };
 				if (action === "inspect") {
 					result = await inspectRules();
 				} else if (action === "test") {
 					const content = typeof params?.content === "string" ? params.content : undefined;
 					const paths = Array.isArray(params?.paths) ? params.paths.filter((x): x is string => typeof x === "string").slice(0, MAX_KEYS) : undefined;
-					result = await inspectRules(content, paths);
+					result = await inspectRules(content !== undefined ? { content, scope } : undefined, paths);
 				} else if (action === "set") {
 					if (typeof params?.content !== "string") throw new Error("action='set' requires `content`");
-					result = await saveRulesContent(params.content);
+					result = await saveRulesContent(params.content, scope);
 				} else if (action === "add") {
 					const pats = Array.isArray(params?.patterns) ? params.patterns.map((x) => String(x).replace(/[\r\n\u0000]/g, "").trim()).filter(Boolean) : [];
 					if (!pats.length) throw new Error("action='add' requires non-empty `patterns`");
-					const current = readRulesText();
+					const current = readScoped();
 					const existing = new Set(current.split(/\r?\n/).map((l) => l.trim()));
 					const toAdd = pats.filter((p) => !existing.has(p));
 					const base = current.replace(/\s*$/, "");
 					const next = toAdd.length ? `${base ? `${base}\n` : ""}${toAdd.join("\n")}\n` : current;
-					result = await saveRulesContent(next);
+					result = await saveRulesContent(next, scope);
 				} else if (action === "remove") {
 					const pats = new Set(Array.isArray(params?.patterns) ? params.patterns.map((x) => String(x).replace(/[\r\n\u0000]/g, "").trim()).filter(Boolean) : []);
 					if (!pats.size) throw new Error("action='remove' requires non-empty `patterns`");
-					const current = readRulesText();
+					const current = readScoped();
 					const cleaned = current.split(/\r?\n/).filter((l) => !pats.has(l.trim())).join("\n").replace(/\n{3,}/g, "\n\n").replace(/\s*$/, "");
 					const next = cleaned ? `${cleaned}\n` : "";
-					result = await saveRulesContent(next);
+					result = await saveRulesContent(next, scope);
 				} else if (action === "reset") {
-					result = await saveRulesContent(defaultRulesText(role()));
+					result = await saveRulesContent(scope === "client" ? "" : defaultRulesText(role()), scope);
 				} else {
 					throw new Error(`unknown action: ${action}`);
 				}
@@ -3510,7 +3668,7 @@ export default (pi: any) => {
 					showStatus();
 				} else if (e.id === `rules-text-${rulesDraftRevision}` && typeof e.value === "string") {
 					rulesDraft = e.value;
-					try { rulesPreviewCache = await inspectRules(rulesDraft); } catch { /* ignore */ }
+					try { rulesPreviewCache = await inspectRules({ content: rulesDraft, scope: "client" }); } catch { /* ignore */ }
 					showStatus();
 				}
 				return;
@@ -3522,7 +3680,7 @@ export default (pi: any) => {
 					busy = true;
 					showStatus();
 					try {
-						await saveRulesContent(submitted);
+						await saveRulesContent(submitted, "client");
 						editingRules = false;
 						rulesPreviewCache = null;
 						lastError = null;
@@ -3566,12 +3724,12 @@ export default (pi: any) => {
 				if (pulling || busy) return;
 				confirmRestoreId = null;
 				previewRowsCache = null;
-				rulesDraft = readRulesText();
+				rulesDraft = readClientRulesText();
 				rulesDraftRevision++;
 				editingRules = true;
 				showStatus();
 				try {
-					rulesPreviewCache = await inspectRules(rulesDraft);
+					rulesPreviewCache = await inspectRules({ content: rulesDraft, scope: "client" });
 				} catch (err) {
 					lastError = err instanceof Error ? err.message : String(err);
 					log(`rules preview failed: ${lastError}`);
@@ -3580,10 +3738,10 @@ export default (pi: any) => {
 				}
 			} else if (e.id === "rules-reset") {
 				if (pulling || busy) return;
-				rulesDraft = defaultRulesText(role());
+				rulesDraft = "";
 				rulesDraftRevision++;
 				try {
-					rulesPreviewCache = await inspectRules(rulesDraft);
+					rulesPreviewCache = await inspectRules({ content: rulesDraft, scope: "client" });
 				} catch { /* ignore */ }
 				showStatus();
 			} else if (e.id === "rules-cancel") {
@@ -3641,6 +3799,7 @@ export default (pi: any) => {
 	mergeOldBoxes();
 	moveOldToken();
 	dropStaleCode();
+	ensureRulesFile();
 	void fillPeerToken();
 	showStatus();
 	void refreshInspection();

@@ -545,21 +545,24 @@ describe("file-based syncignore end-to-end sync, agent tool & UI", () => {
 		write(join(F.home, ".agents", "AGENTS.md"), "# global");
 		sql(F.db, "INSERT OR REPLACE INTO custom_providers (id, data) VALUES ('ollama', ?)", JSON.stringify({ id: "ollama", name: "Ollama", baseUrl: "http://localhost:11434", models: [] }));
 
-		// 1. inspect (before file exists: uses defaults)
+		// 1. inspect: `syncignore` is pre-created on startup with role defaults; `syncignore.ui` does not exist yet
 		const initial = await f.runTool({ action: "inspect" });
-		expect(initial.exists).toBe(false);
+		expect(initial.exists).toBe(true);
+		expect(initial.clientExists).toBe(false);
 		expect(initial.file).toBe(join(F.extData, "syncignore"));
+		expect(initial.clientFile).toBe(join(F.extData, "syncignore.ui"));
 		expect(initial.items.find((i: any) => i.path === "mcp/search").synced).toBe(true);
 		expect(initial.items.find((i: any) => i.path === "skills/browser-bridge").synced).toBe(false);
 		expect(initial.items.find((i: any) => i.path === "providers/ollama").synced).toBe(false);
 
-		// 2. test (dry-run without writing disk)
+		// 2. test (dry-run without modifying disk)
+		const beforeDisk = readFileSync(join(F.extData, "syncignore"), "utf8");
 		const dry = await f.runTool({
 			action: "test",
 			content: "mcp/local-obs\nskills/browser-bridge\n",
 			paths: ["mcp/local-obs", "mcp/search", "skills/orchestrate/SKILL.md", "skills/browser-bridge/SKILL.md"],
 		});
-		expect(existsSync(join(F.extData, "syncignore"))).toBe(false);
+		expect(readFileSync(join(F.extData, "syncignore"), "utf8")).toBe(beforeDisk);
 		expect(dry.tested.map((t: any) => [t.path, t.synced])).toEqual([
 			["mcp/local-obs", false],
 			["mcp/search", true],
@@ -567,7 +570,7 @@ describe("file-based syncignore end-to-end sync, agent tool & UI", () => {
 			["skills/browser-bridge/SKILL.md", false],
 		]);
 
-		// 3. set (writes file and strips obsolete legacy keys if any)
+		// 3. set (writes server `syncignore` and strips obsolete legacy keys if any)
 		f.settings.syncMcpServers = false;
 		const saved = await f.runTool({ action: "set", content: "# my rules\nmcp/local-obs\nskills/browser-bridge\n" });
 		expect(saved.exists).toBe(true);
@@ -578,29 +581,50 @@ describe("file-based syncignore end-to-end sync, agent tool & UI", () => {
 		// 4. add (appends without duplicating existing line)
 		const added = await f.runTool({ action: "add", patterns: ["mcp/local-obs", "providers/ollama"] });
 		expect(added.items.find((i: any) => i.path === "providers/ollama").synced).toBe(false);
-		expect(added.content.match(/mcp\/local-obs/g)?.length).toBe(1);
+		expect(added.serverContent.match(/mcp\/local-obs/g)?.length).toBe(1);
 
 		// 5. remove (deletes exact line while keeping comments and other rules)
 		const removed = await f.runTool({ action: "remove", patterns: ["providers/ollama"] });
 		expect(removed.items.find((i: any) => i.path === "providers/ollama").synced).toBe(true);
-		expect(removed.content).toContain("# my rules");
+		expect(removed.serverContent).toContain("# my rules");
 
-		// 6. reset (restores follower defaults)
+		// 6. client scope overrides server rules without touching `syncignore`
+		const clientAdded = await f.runTool({ action: "add", scope: "client", patterns: ["!skills/browser-bridge", "mcp/search"] });
+		expect(clientAdded.clientExists).toBe(true);
+		expect(clientAdded.items.find((i: any) => i.path === "skills/browser-bridge").synced).toBe(true);
+		expect(clientAdded.items.find((i: any) => i.path === "skills/browser-bridge").source).toBe("client");
+		expect(clientAdded.items.find((i: any) => i.path === "mcp/search").synced).toBe(false);
+		expect(clientAdded.items.find((i: any) => i.path === "mcp/local-obs").source).toBe("server");
+		// Server `syncignore` was completely untouched!
+		expect(readFileSync(join(F.extData, "syncignore"), "utf8")).toContain("# my rules");
+		expect(readFileSync(join(F.extData, "syncignore"), "utf8")).not.toContain("!skills/browser-bridge");
+
+		// 7. reset client scope clears `syncignore.ui` without touching server `syncignore`
+		const clientReset = await f.runTool({ action: "reset", scope: "client" });
+		expect(clientReset.clientExists).toBe(false);
+		expect(clientReset.items.find((i: any) => i.path === "skills/browser-bridge").synced).toBe(false);
+		expect(readFileSync(join(F.extData, "syncignore"), "utf8")).toContain("# my rules");
+
+		// 8. reset server scope restores follower defaults
 		const reset = await f.runTool({ action: "reset" });
 		expect(reset.items.find((i: any) => i.path === "skills/orchestrate").synced).toBe(false);
 		expect(reset.items.find((i: any) => i.path === "mcp/local-obs").synced).toBe(true);
 	});
 
-	test("rules/setRules RPC methods and pi.ui rules editor card work end-to-end", async () => {
+	test("rules/setRules RPC methods and pi.ui client rules editor work without overwriting server syncignore", async () => {
 		const { f } = resetBoth();
 		setRow(F.db, "mcp_servers", [{ name: "local-tool", command: "x" }, { name: "search", url: "http://s" }]);
+		write(join(F.home, ".agents", "skills", "orchestrate", "SKILL.md"), "# o");
+		// User directly edits server `syncignore` on disk
+		const serverRules = "# server-managed rules\nskills/*\n";
+		writeFileSync(join(F.extData, "syncignore"), serverRules);
 
 		// Initial view shows active rules list (read-only) before opening editor
 		const initPanel = JSON.stringify(f.panels.at(-1));
 		expect(initPanel).toContain("rules-list");
 		expect(initPanel).not.toContain("rules-editor");
 
-		// Open rules editor via UI action
+		// Open client UI rules editor via UI action
 		await f.uiEvent({ type: "action", id: "rules-open" });
 		const openPanel = JSON.stringify(f.panels.at(-1));
 		expect(openPanel).toContain("rules-editor");
@@ -614,20 +638,35 @@ describe("file-based syncignore end-to-end sync, agent tool & UI", () => {
 		expect(warnPanel).toContain("rules-warn");
 		expect(warnPanel).toContain("skils");
 
-		// Submit form -> saves syncignore to disk, closes editor, and returns to updated rules list
-		await f.uiEvent({ type: "submit", id: "rules-form", values: { "rules-text-1": "mcp/local-tool\n" } });
-		expect(readFileSync(join(F.extData, "syncignore"), "utf8")).toBe("mcp/local-tool\n");
+		// Submit form -> saves ONLY `syncignore.ui`, leaves server `syncignore` completely intact!
+		await f.uiEvent({ type: "submit", id: "rules-form", values: { "rules-text-1": "mcp/local-tool\n!skills/orchestrate\n" } });
+		expect(readFileSync(join(F.extData, "syncignore"), "utf8")).toBe(serverRules);
+		expect(readFileSync(join(F.extData, "syncignore.ui"), "utf8")).toBe("mcp/local-tool\n!skills/orchestrate\n");
 		const afterSavePanel = JSON.stringify(f.panels.at(-1));
 		expect(afterSavePanel).not.toContain("rules-editor");
 		expect(afterSavePanel).toContain("rules-list");
 		expect(afterSavePanel).toContain("mcp/local-tool");
 
-		// Verify RPC `rules` and `setRules`
+		// Verify RPC `rules` shows both layers combined, and `setRules` respects `scope`
 		const viaRpc = await f.call("rules");
 		expect(viaRpc.exists).toBe(true);
-		expect(viaRpc.items.find((i: any) => i.path === "mcp/local-tool").synced).toBe(false);
-		await f.call("setRules", { content: "" });
-		const afterRpc = await f.call("rules");
-		expect(afterRpc.items.find((i: any) => i.path === "mcp/local-tool").synced).toBe(true);
+		expect(viaRpc.clientExists).toBe(true);
+		expect(viaRpc.items.find((i: any) => i.path === "mcp/local-tool")).toMatchObject({ synced: false, source: "client" });
+		expect(viaRpc.items.find((i: any) => i.path === "skills/orchestrate")).toMatchObject({ synced: true, source: "client" });
+
+		// Editing server rules via RPC (`scope: "server"`, default) leaves `syncignore.ui` intact
+		await f.call("setRules", { content: "# updated server\nmcp/search\n" });
+		expect(readFileSync(join(F.extData, "syncignore.ui"), "utf8")).toBe("mcp/local-tool\n!skills/orchestrate\n");
+		const afterServerEdit = await f.call("rules");
+		expect(afterServerEdit.items.find((i: any) => i.path === "mcp/search")).toMatchObject({ synced: false, source: "server" });
+		expect(afterServerEdit.items.find((i: any) => i.path === "mcp/local-tool")).toMatchObject({ synced: false, source: "client" });
+
+		// Clearing client rules via RPC removes `syncignore.ui` without touching server `syncignore`
+		await f.call("setRules", { scope: "client", content: "" });
+		expect(existsSync(join(F.extData, "syncignore.ui"))).toBe(false);
+		expect(readFileSync(join(F.extData, "syncignore"), "utf8")).toBe("# updated server\nmcp/search\n");
+		const afterClientClear = await f.call("rules");
+		expect(afterClientClear.items.find((i: any) => i.path === "mcp/local-tool").synced).toBe(true);
+		expect(afterClientClear.items.find((i: any) => i.path === "mcp/search").synced).toBe(false);
 	});
 });

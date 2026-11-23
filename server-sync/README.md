@@ -42,14 +42,21 @@ other; when both changed the same item, the primary's value wins. The follower k
 - Excluding an item forgets its history; re-included later, it starts by pulling.
 - **Per-PC values.** The working directory is taken only when that folder exists on the receiving PC (both ways); otherwise each server keeps its own, and the follower's page says so. Individual MCP servers (`mcp/<name>`) can be included or excluded per server without affecting the rest.
 
-## File-based sync rules (`syncignore`)
+## File-based sync rules (`syncignore` + `syncignore.ui`)
 
-Instead of per-category checkboxes, what syncs on each server is controlled by a plain-text `.gitignore`-style file:
-`extension-data/server-sync/syncignore` (per server, never synced to peers). Both the **primary** (what it serves and
-accepts on push) and each **follower** (what it pulls and pushes) evaluate their own `syncignore` file.
+Instead of per-category checkboxes, what syncs on each server is controlled by two plain-text `.gitignore`-style files
+that never overwrite each other (neither is synced to peers):
 
-You can edit it from the extension's **동기화 규칙** panel (with live preview), directly in an editor, or through the
-agent using the `server_sync_rules` tool (`inspect`, `set`, `add`, `remove`, `reset`, `test`).
+- **Server rules** — `extension-data/server-sync/syncignore`: pre-created automatically on server startup with role
+  defaults so you can inspect or edit it directly on the server (or via the `server_sync_rules` agent tool,
+  `scope: "server"`).
+- **Client UI rules** — `extension-data/server-sync/syncignore.ui`: edited from the pipaya app's **클라이언트 규칙 편집**
+  panel (or via `server_sync_rules` / `setRules` with `scope: "client"`).
+
+Both layers are evaluated in order — **server `syncignore` first, then client `syncignore.ui` on top** — so edits in the
+app never clobber hand-edited server rules (and server file edits never wipe client overrides). Use `!pattern` in
+`syncignore.ui` to re-include items excluded by the server file, or add extra exclusions on top. Both the **primary**
+(what it serves and accepts on push) and each **follower** (what it pulls and pushes) evaluate their own two files.
 
 ### Syntax and namespaces
 
