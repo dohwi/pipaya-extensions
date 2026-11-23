@@ -1440,6 +1440,8 @@ export default (pi: any) => {
 		ignoredCount: number;
 	}
 	let rulesPreviewCache: RulesInspection | null = null;
+	let liveInspection: RulesInspection | null = null;
+	let refreshingInspection = false;
 
 	const rulesButton = (open: boolean): unknown[] =>
 		open ? [] : [{
@@ -1449,31 +1451,152 @@ export default (pi: any) => {
 
 	const UI_TEXTAREA_MAX = 16_000;
 
+	const categoryBreakdown = (items: readonly DiscoveredSyncItem[], synced: boolean): Text => {
+		const counts = new Map<string, number>();
+		for (const item of items) {
+			if (item.synced !== synced) continue;
+			const ns = item.path.includes("/") ? item.path.slice(0, item.path.indexOf("/")) : item.path;
+			counts.set(ns, (counts.get(ns) ?? 0) + 1);
+		}
+		const labels: [string, string, string][] = [
+			["settings", "설정", "settings"],
+			["mcp", "MCP", "MCP"],
+			["skills", "스킬", "skills"],
+			["subagents", "도우미", "helpers"],
+			["agents-md", "AGENTS.md", "AGENTS.md"],
+			["extensions", "확장", "extensions"],
+			["providers", "모델 연결", "providers"],
+			["agent-extensions", "내 확장", "local ext"],
+		];
+		const ko: string[] = [];
+		const en: string[] = [];
+		for (const [key, lKo, lEn] of labels) {
+			const n = counts.get(key) ?? 0;
+			if (!n) continue;
+			if (key === "agents-md") { ko.push(lKo); en.push(lEn); }
+			else { ko.push(`${lKo} ${n}`); en.push(`${lEn} ${n}`); }
+		}
+		return ko.length
+			? { ko: ko.join(" · "), en: en.join(" · ") }
+			: synced
+				? { ko: "동기화할 항목 없음", en: "No items to sync" }
+				: { ko: "제외된 항목 없음", en: "Nothing excluded" };
+	};
+
 	const rulesListNodes = (rules: readonly SyncRule[], hidden: boolean): unknown[] => {
 		if (hidden) return [];
 		const custom = hasRulesFile();
-		const shown = rules.slice(0, 20);
-		const title: Text = custom
-			? { ko: `동기화 규칙 (syncignore · ${rules.length}개)`, en: `Sync rules (syncignore · ${rules.length})` }
-			: { ko: `동기화 규칙 (기본값 · ${rules.length}개)`, en: `Sync rules (defaults · ${rules.length})` };
-		const body = shown.length
+		const shownRules = rules.slice(0, 20);
+		const rawBody = shownRules.length
 			? [
-				...shown.map((r) => r.raw),
-				...(rules.length > shown.length ? [`# … +${rules.length - shown.length} more`] : []),
+				...shownRules.map((r) => r.raw),
+				...(rules.length > shownRules.length ? [`# … +${rules.length - shownRules.length} more`] : []),
 			].join("\n")
 			: "";
+		const rawNode = rawBody
+			? { type: "code", id: "rules-list", language: "gitignore", text: rawBody }
+			: {
+				type: "text", id: "rules-list", size: "small", tone: "neutral",
+				text: {
+					ko: "제외 규칙 없음 (보안 스위치가 허용한 모든 항목 동기화)",
+					en: "No exclude rules (everything allowed by security switches syncs)",
+				},
+			};
+		const live = liveInspection;
+		if (!live) {
+			const title: Text = custom
+				? { ko: `동기화 규칙 (syncignore · ${rules.length}개)`, en: `Sync rules (syncignore · ${rules.length})` }
+				: { ko: `동기화 규칙 (기본값 · ${rules.length}개)`, en: `Sync rules (defaults · ${rules.length})` };
+			return [
+				{ type: "divider", id: "rules-sep" },
+				{ type: "text", id: "rules-list-title", size: "small", tone: "neutral", text: title },
+				rawNode,
+			];
+		}
+		const excluded = live.items.filter((i) => !i.synced);
+		const synced = live.items.filter((i) => i.synced);
+		const allOrdered = [...excluded, ...synced].slice(0, 25);
+		const toRows = (list: readonly DiscoveredSyncItem[], prefix: string, withState: boolean) =>
+			list.map((item, idx) => ({
+				id: `${prefix}${idx}`,
+				cells: withState
+					? [
+						item.path,
+						item.synced ? { ko: "동기화", en: "Sync" } : { ko: "제외", en: "Excluded" },
+						item.matchedBy ?? { ko: "(기본)", en: "(default)" },
+					]
+					: [item.path, item.matchedBy ?? { ko: "(기본)", en: "(default)" }],
+			}));
+		const excludedHint: Text = excluded.length
+			? categoryBreakdown(live.items, false)
+			: {
+				ko: custom ? `syncignore ${rules.length}개 규칙 적용` : `기본 규칙 ${rules.length}개 적용`,
+				en: custom ? `${rules.length} syncignore rules` : `${rules.length} default rules`,
+			};
 		return [
 			{ type: "divider", id: "rules-sep" },
-			{ type: "text", id: "rules-list-title", size: "small", tone: "neutral", text: title },
-			...(body
-				? [{ type: "code", id: "rules-list", language: "gitignore", text: body }]
-				: [{
-					type: "text", id: "rules-list", size: "small", tone: "neutral",
-					text: {
-						ko: "제외 규칙 없음 (보안 스위치가 허용한 모든 항목 동기화)",
-						en: "No exclude rules (everything allowed by security switches syncs)",
+			{
+				type: "grid", id: "sync-stats", columns: 2,
+				children: [
+					{
+						type: "stat", id: "stat-synced",
+						label: { ko: "현재 서버 동기화 대상", en: "Synced on this server" },
+						value: { ko: `${live.syncedCount}개`, en: String(live.syncedCount) },
+						hint: categoryBreakdown(live.items, true),
 					},
-				}]),
+					{
+						type: "stat", id: "stat-excluded",
+						label: { ko: "규칙으로 제외됨", en: "Excluded by rules" },
+						value: { ko: `${live.ignoredCount}개`, en: String(live.ignoredCount) },
+						hint: excludedHint,
+					},
+				],
+			},
+			{
+				type: "tabs", id: "rules-tabs",
+				items: [
+					{
+						id: "tab-items",
+						label: { ko: `현재 서버 항목 (${live.items.length})`, en: `Server items (${live.items.length})` },
+						children: [
+							...(allOrdered.length ? [{
+								type: "table", id: "rules-items-table",
+								columns: [
+									{ id: "path", label: { ko: "경로", en: "Path" } },
+									{ id: "state", label: { ko: "동작", en: "Action" } },
+									{ id: "rule", label: { ko: "적용 규칙", en: "Matched rule" } },
+								],
+								rows: toRows(allOrdered, "ri", true),
+							}] : [{
+								type: "text", id: "rules-items-empty", size: "small", tone: "neutral",
+								text: { ko: "이 서버에서 발견된 동기화 항목이 없습니다.", en: "No syncable items found on this server." },
+							}]),
+						],
+					},
+					{
+						id: "tab-excluded",
+						label: { ko: `제외됨 (${excluded.length})`, en: `Excluded (${excluded.length})` },
+						children: [
+							...(excluded.length ? [{
+								type: "table", id: "rules-excluded-table",
+								columns: [
+									{ id: "path", label: { ko: "제외된 경로", en: "Excluded path" } },
+									{ id: "rule", label: { ko: "적용 규칙", en: "Matched rule" } },
+								],
+								rows: toRows(excluded.slice(0, 30), "re", false),
+							}] : [{
+								type: "text", id: "rules-excluded-empty", size: "small", tone: "neutral",
+								text: { ko: "제외된 항목이 없습니다.", en: "No excluded items." },
+							}]),
+						],
+					},
+					{
+						id: "tab-raw",
+						label: { ko: `syncignore (${rules.length})`, en: `syncignore (${rules.length})` },
+						children: [rawNode],
+					},
+				],
+			},
 		];
 	};
 
@@ -3018,6 +3141,25 @@ export default (pi: any) => {
 		return result;
 	};
 
+	const refreshInspection = async () => {
+		if (gone || !hasPanel || refreshingInspection) return;
+		refreshingInspection = true;
+		try {
+			const next = await inspectRules();
+			const prev = liveInspection;
+			const changed = !prev
+				|| prev.content !== next.content
+				|| prev.syncedCount !== next.syncedCount
+				|| prev.ignoredCount !== next.ignoredCount
+				|| prev.items.length !== next.items.length
+				|| JSON.stringify(prev.items) !== JSON.stringify(next.items);
+			liveInspection = next;
+			if (changed && !editingRules) showStatus();
+		} catch { /* ignore transient read failures */ } finally {
+			refreshingInspection = false;
+		}
+	};
+
 	const saveRulesContent = async (raw: string) => {
 		const clean = raw.replace(/\u0000/g, "");
 		if (clean.length > MAX_RULES_BYTES) throw new Error(`syncignore exceeds ${MAX_RULES_BYTES} bytes`);
@@ -3025,6 +3167,7 @@ export default (pi: any) => {
 		const inspected = await inspectRules();
 		rulesDraft = inspected.content;
 		rulesPreviewCache = inspected;
+		liveInspection = inspected;
 		log(`updated syncignore (${inspected.syncedCount} synced, ${inspected.ignoredCount} excluded)`);
 		showStatus();
 		return inspected;
@@ -3133,6 +3276,7 @@ export default (pi: any) => {
 			throw e;
 		} finally {
 			showStatus();
+			void refreshInspection();
 		}
 	};
 
@@ -3233,6 +3377,7 @@ export default (pi: any) => {
 	const refresh = () => {
 		void fillPeerToken();
 		showStatus();
+		void refreshInspection();
 		arm();
 	};
 
@@ -3381,6 +3526,7 @@ export default (pi: any) => {
 				editingRules = false;
 				rulesPreviewCache = null;
 				showStatus();
+				void refreshInspection();
 			} else if (e.id === "restore-preview") {
 				if (pulling || busy) return;
 				editingRules = false;
@@ -3433,11 +3579,12 @@ export default (pi: any) => {
 	dropStaleCode();
 	void fillPeerToken();
 	showStatus();
+	void refreshInspection();
 	arm();
 	// "3분 전" and "42초 후" go stale between pulls.
-	const tick = setInterval(showStatus, 30_000);
+	const tick = setInterval(() => { showStatus(); void refreshInspection(); }, 30_000);
 	(tick as unknown as { unref?: () => void }).unref?.();
-	setTimeout(showStatus, 1500);
+	setTimeout(() => { showStatus(); void refreshInspection(); }, 1500);
 	pi.on("extension_unload", () => clearInterval(tick));
 	pi.settings.onChange(refresh);
 	pi.on("extension_unload", () => {
