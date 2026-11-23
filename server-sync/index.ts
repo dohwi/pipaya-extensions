@@ -1444,10 +1444,42 @@ export default (pi: any) => {
 	const rulesButton = (open: boolean): unknown[] =>
 		open ? [] : [{
 			type: "button", id: "rules-open", variant: "secondary", disabled: pulling || busy,
-			label: { ko: "동기화 규칙", en: "Sync rules" },
+			label: { ko: "규칙 수정", en: "Edit rules" },
 		}];
 
 	const UI_TEXTAREA_MAX = 16_000;
+
+	const rulesListNodes = (rules: readonly SyncRule[], hidden: boolean): unknown[] => {
+		if (hidden) return [];
+		const custom = hasRulesFile();
+		const shown = rules.slice(0, 12);
+		const title: Text = custom
+			? { ko: `동기화 규칙 (syncignore · ${rules.length}개)`, en: `Sync rules (syncignore · ${rules.length})` }
+			: { ko: `동기화 규칙 (기본값 · ${rules.length}개)`, en: `Sync rules (defaults · ${rules.length})` };
+		return [
+			{ type: "divider", id: "rules-sep" },
+			{ type: "text", id: "rules-list-title", size: "small", tone: "neutral", text: title },
+			{
+				type: "list", id: "rules-list",
+				items: shown.map((r, i) => ({
+					id: `rl${i}`,
+					title: r.raw,
+					badge: r.negate ? { ko: "포함", en: "Include" } : { ko: "제외", en: "Exclude" },
+				})),
+				emptyText: {
+					ko: "제외 규칙 없음 (보안 스위치가 허용한 모든 항목 동기화)",
+					en: "No exclude rules (everything allowed by security switches syncs)",
+				},
+			},
+			...(rules.length > shown.length ? [{
+				type: "text", id: "rules-list-more", size: "small", tone: "neutral",
+				text: {
+					ko: `외 ${rules.length - shown.length}개 규칙 — ‘규칙 수정’에서 전체 확인`,
+					en: `+${rules.length - shown.length} more — click ‘Edit rules’ to view all`,
+				},
+			}] : []),
+		];
+	};
 
 	const rulesCardNodes = (): unknown[] => {
 		if (!editingRules) return [];
@@ -1573,6 +1605,7 @@ export default (pi: any) => {
 					}),
 					emptyText: { ko: "연결된 팔로워가 없습니다. 기기 탭 → [연결 링크 복사]로 연결하세요.", en: "No followers yet. Connect via Devices → [Copy connection link]." } },
 					...(primaryActions.length ? [{ type: "stack", id: "actions", direction: "horizontal", gap: "small", children: primaryActions }] : []),
+					...rulesListNodes(rules, editingRules || confirming),
 					...rulesCard,
 					...restoreCard,
 				],
@@ -1638,6 +1671,7 @@ export default (pi: any) => {
 				{ type: "button", id: "disconnect", variant: "secondary", disabled: pulling, label: { ko: "연결 해제", en: "Disconnect" } },
 			] });
 		}
+		children.push(...rulesListNodes(rules, editingRules || confirming));
 		children.push(...rulesCard);
 		children.push(...restoreCard);
 		if (lastError) children.push({ type: "alert", id: "error", tone: "danger", title: errorTitle(lastError), text: lastError });

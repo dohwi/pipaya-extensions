@@ -595,10 +595,16 @@ describe("file-based syncignore end-to-end sync, agent tool & UI", () => {
 		const { f } = resetBoth();
 		setRow(F.db, "mcp_servers", [{ name: "local-tool", command: "x" }, { name: "search", url: "http://s" }]);
 
+		// Initial view shows active rules list (read-only) before opening editor
+		const initPanel = JSON.stringify(f.panels.at(-1));
+		expect(initPanel).toContain("rules-list");
+		expect(initPanel).not.toContain("rules-editor");
+
 		// Open rules editor via UI action
 		await f.uiEvent({ type: "action", id: "rules-open" });
 		const openPanel = JSON.stringify(f.panels.at(-1));
 		expect(openPanel).toContain("rules-editor");
+		expect(openPanel).not.toContain("rules-list");
 		expect(openPanel).toContain("rules-form");
 		expect(openPanel).toContain("mcp/local-tool");
 
@@ -608,10 +614,13 @@ describe("file-based syncignore end-to-end sync, agent tool & UI", () => {
 		expect(warnPanel).toContain("rules-warn");
 		expect(warnPanel).toContain("skils");
 
-		// Submit form -> saves syncignore to disk and closes editor
+		// Submit form -> saves syncignore to disk, closes editor, and returns to updated rules list
 		await f.uiEvent({ type: "submit", id: "rules-form", values: { "rules-text-1": "mcp/local-tool\n" } });
 		expect(readFileSync(join(F.extData, "syncignore"), "utf8")).toBe("mcp/local-tool\n");
-		expect(JSON.stringify(f.panels.at(-1))).not.toContain("rules-editor");
+		const afterSavePanel = JSON.stringify(f.panels.at(-1));
+		expect(afterSavePanel).not.toContain("rules-editor");
+		expect(afterSavePanel).toContain("rules-list");
+		expect(afterSavePanel).toContain("mcp/local-tool");
 
 		// Verify RPC `rules` and `setRules`
 		const viaRpc = await f.call("rules");
