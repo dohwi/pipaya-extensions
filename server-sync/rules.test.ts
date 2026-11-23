@@ -606,7 +606,7 @@ describe("file-based syncignore end-to-end sync, agent tool & UI", () => {
 		expect(openPanel).toContain("rules-editor");
 		expect(openPanel).not.toContain("rules-list");
 		expect(openPanel).toContain("rules-form");
-		expect(openPanel).toContain("mcp/local-tool");
+		expect(openPanel).toContain("local-tool");
 
 		// Change textarea draft with an unknown namespace -> warning appears in preview
 		await f.uiEvent({ type: "change", id: "rules-text-1", value: "skils/typo\nmcp/local-tool\n" });

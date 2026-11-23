@@ -1451,6 +1451,34 @@ export default (pi: any) => {
 
 	const UI_TEXTAREA_MAX = 16_000;
 
+	const CATEGORY_META: readonly { ns: string; label: Text }[] = [
+		{ ns: "settings", label: { ko: "앱 설정", en: "App settings" } },
+		{ ns: "mcp", label: { ko: "MCP 서버", en: "MCP servers" } },
+		{ ns: "skills", label: { ko: "스킬", en: "Skills" } },
+		{ ns: "subagents", label: { ko: "도우미 역할", en: "Helper roles" } },
+		{ ns: "agents-md", label: { ko: "전역 AGENTS.md", en: "Global AGENTS.md" } },
+		{ ns: "extensions", label: { ko: "확장", en: "Extensions" } },
+		{ ns: "providers", label: { ko: "모델 연결", en: "Model connections" } },
+		{ ns: "agent-extensions", label: { ko: "내 확장", en: "Local extensions" } },
+	];
+
+	const itemShortName = (path: string, lang: "ko" | "en"): string => {
+		if (path === "agents-md") return "AGENTS.md";
+		const slash = path.indexOf("/");
+		const ns = slash < 0 ? path : path.slice(0, slash);
+		const rest = slash < 0 ? path : path.slice(slash + 1);
+		if (ns === "settings") return KEY_LABEL[rest]?.[lang] ?? rest;
+		return rest;
+	};
+
+	const summarizeNames = (items: readonly DiscoveredSyncItem[], lang: "ko" | "en", limit = 4): string => {
+		const names = items.map((i) => itemShortName(i.path, lang));
+		const head = names.slice(0, limit).join(", ");
+		return names.length > limit
+			? (lang === "ko" ? `${head} 외 ${names.length - limit}` : `${head} +${names.length - limit}`)
+			: head;
+	};
+
 	const categoryBreakdown = (items: readonly DiscoveredSyncItem[], synced: boolean): Text => {
 		const counts = new Map<string, number>();
 		for (const item of items) {
@@ -1458,29 +1486,70 @@ export default (pi: any) => {
 			const ns = item.path.includes("/") ? item.path.slice(0, item.path.indexOf("/")) : item.path;
 			counts.set(ns, (counts.get(ns) ?? 0) + 1);
 		}
-		const labels: [string, string, string][] = [
-			["settings", "설정", "settings"],
-			["mcp", "MCP", "MCP"],
-			["skills", "스킬", "skills"],
-			["subagents", "도우미", "helpers"],
-			["agents-md", "AGENTS.md", "AGENTS.md"],
-			["extensions", "확장", "extensions"],
-			["providers", "모델 연결", "providers"],
-			["agent-extensions", "내 확장", "local ext"],
-		];
 		const ko: string[] = [];
 		const en: string[] = [];
-		for (const [key, lKo, lEn] of labels) {
-			const n = counts.get(key) ?? 0;
+		for (const meta of CATEGORY_META) {
+			const n = counts.get(meta.ns) ?? 0;
 			if (!n) continue;
-			if (key === "agents-md") { ko.push(lKo); en.push(lEn); }
-			else { ko.push(`${lKo} ${n}`); en.push(`${lEn} ${n}`); }
+			if (meta.ns === "agents-md") { ko.push("AGENTS.md"); en.push("AGENTS.md"); }
+			else { ko.push(`${meta.label.ko} ${n}`); en.push(`${meta.label.en} ${n}`); }
 		}
 		return ko.length
 			? { ko: ko.join(" · "), en: en.join(" · ") }
 			: synced
 				? { ko: "동기화할 항목 없음", en: "No items to sync" }
 				: { ko: "제외된 항목 없음", en: "Nothing excluded" };
+	};
+
+	/** Build compact, human-readable per-category summary rows for a RulesInspection. */
+	const categoryListItems = (items: readonly DiscoveredSyncItem[], prefix: string): unknown[] => {
+		const grouped = new Map<string, DiscoveredSyncItem[]>();
+		for (const item of items) {
+			const ns = item.path.includes("/") ? item.path.slice(0, item.path.indexOf("/")) : item.path;
+			const arr = grouped.get(ns) ?? [];
+			arr.push(item);
+			grouped.set(ns, arr);
+		}
+		const out: unknown[] = [];
+		for (const meta of CATEGORY_META) {
+			const list = grouped.get(meta.ns);
+			if (!list?.length) continue;
+			const synced = list.filter((i) => i.synced);
+			const excluded = list.filter((i) => !i.synced);
+			let badge: Text;
+			let description: Text;
+			if (meta.ns === "agents-md") {
+				const on = synced.length > 0;
+				badge = on ? { ko: "동기화", en: "Synced" } : { ko: "제외", en: "Excluded" };
+				description = on
+					? { ko: "~/.agents/AGENTS.md", en: "~/.agents/AGENTS.md" }
+					: { ko: `규칙: ${excluded[0]?.matchedBy ?? "agents-md"}`, en: `Rule: ${excluded[0]?.matchedBy ?? "agents-md"}` };
+			} else if (excluded.length === 0) {
+				badge = { ko: `전체 동기화 (${synced.length})`, en: `All synced (${synced.length})` };
+				description = meta.ns === "settings"
+					? { ko: "기본 모델·작업 디렉터리·도구·대화 보관 등 전체", en: "Models, workdir, tools, compaction, retention" }
+					: { ko: summarizeNames(synced, "ko", 5), en: summarizeNames(synced, "en", 5) };
+			} else if (synced.length === 0) {
+				badge = { ko: `전체 제외 (${excluded.length})`, en: `All excluded (${excluded.length})` };
+				description = {
+					ko: `제외: ${summarizeNames(excluded, "ko", 4)}`,
+					en: `Excluded: ${summarizeNames(excluded, "en", 4)}`,
+				};
+			} else {
+				badge = { ko: `${synced.length} / ${list.length} 동기화`, en: `${synced.length} / ${list.length} synced` };
+				description = meta.ns === "settings"
+					? {
+						ko: `제외: ${summarizeNames(excluded, "ko", 3)} (나머지 ${synced.length}개 동기화)`,
+						en: `Excluded: ${summarizeNames(excluded, "en", 3)} (${synced.length} others synced)`,
+					}
+					: {
+						ko: `동기화: ${summarizeNames(synced, "ko", 3)} · 제외: ${summarizeNames(excluded, "ko", 3)}`,
+						en: `Sync: ${summarizeNames(synced, "en", 3)} · Excluded: ${summarizeNames(excluded, "en", 3)}`,
+					};
+			}
+			out.push({ id: `${prefix}-${meta.ns}`, title: meta.label, description, badge });
+		}
+		return out;
 	};
 
 	const rulesListNodes = (rules: readonly SyncRule[], hidden: boolean): unknown[] => {
@@ -1513,20 +1582,10 @@ export default (pi: any) => {
 				rawNode,
 			];
 		}
+		const total = live.items.length;
 		const excluded = live.items.filter((i) => !i.synced);
 		const synced = live.items.filter((i) => i.synced);
-		const allOrdered = [...excluded, ...synced].slice(0, 25);
-		const toRows = (list: readonly DiscoveredSyncItem[], prefix: string, withState: boolean) =>
-			list.map((item, idx) => ({
-				id: `${prefix}${idx}`,
-				cells: withState
-					? [
-						item.path,
-						item.synced ? { ko: "동기화", en: "Sync" } : { ko: "제외", en: "Excluded" },
-						item.matchedBy ?? { ko: "(기본)", en: "(default)" },
-					]
-					: [item.path, item.matchedBy ?? { ko: "(기본)", en: "(default)" }],
-			}));
+		const catItems = categoryListItems(live.items, "cat");
 		const excludedHint: Text = excluded.length
 			? categoryBreakdown(live.items, false)
 			: {
@@ -1541,7 +1600,7 @@ export default (pi: any) => {
 					{
 						type: "stat", id: "stat-synced",
 						label: { ko: "현재 서버 동기화 대상", en: "Synced on this server" },
-						value: { ko: `${live.syncedCount}개`, en: String(live.syncedCount) },
+						value: `${live.syncedCount} / ${total}`,
 						hint: categoryBreakdown(live.items, true),
 					},
 					{
@@ -1556,44 +1615,59 @@ export default (pi: any) => {
 				type: "tabs", id: "rules-tabs",
 				items: [
 					{
-						id: "tab-items",
-						label: { ko: `현재 서버 항목 (${live.items.length})`, en: `Server items (${live.items.length})` },
-						children: [
-							...(allOrdered.length ? [{
-								type: "table", id: "rules-items-table",
-								columns: [
-									{ id: "path", label: { ko: "경로", en: "Path" } },
-									{ id: "state", label: { ko: "동작", en: "Action" } },
-									{ id: "rule", label: { ko: "적용 규칙", en: "Matched rule" } },
-								],
-								rows: toRows(allOrdered, "ri", true),
-							}] : [{
-								type: "text", id: "rules-items-empty", size: "small", tone: "neutral",
-								text: { ko: "이 서버에서 발견된 동기화 항목이 없습니다.", en: "No syncable items found on this server." },
-							}]),
-						],
+						id: "tab-summary",
+						label: { ko: "항목 요약", en: "Summary" },
+						children: [{
+							type: "list", id: "rules-cat-list",
+							items: catItems,
+							emptyText: { ko: "이 서버에서 발견된 동기화 항목이 없습니다.", en: "No syncable items found on this server." },
+						}],
 					},
 					{
 						id: "tab-excluded",
 						label: { ko: `제외됨 (${excluded.length})`, en: `Excluded (${excluded.length})` },
-						children: [
-							...(excluded.length ? [{
-								type: "table", id: "rules-excluded-table",
-								columns: [
-									{ id: "path", label: { ko: "제외된 경로", en: "Excluded path" } },
-									{ id: "rule", label: { ko: "적용 규칙", en: "Matched rule" } },
-								],
-								rows: toRows(excluded.slice(0, 30), "re", false),
-							}] : [{
-								type: "text", id: "rules-excluded-empty", size: "small", tone: "neutral",
-								text: { ko: "제외된 항목이 없습니다.", en: "No excluded items." },
-							}]),
-						],
+						children: [{
+							type: "list", id: "rules-excluded-list",
+							items: excluded.slice(0, 30).map((item, idx) => ({
+								id: `ex${idx}`,
+								title: item.path,
+								description: item.matchedBy
+									? { ko: `적용 규칙: ${item.matchedBy}`, en: `Rule: ${item.matchedBy}` }
+									: { ko: "기본 규칙으로 제외", en: "Excluded by default" },
+								badge: { ko: "제외", en: "Excluded" },
+							})),
+							emptyText: { ko: "제외된 항목이 없습니다. 모든 발견 항목이 동기화됩니다.", en: "No excluded items. All discovered items sync." },
+						}],
+					},
+					{
+						id: "tab-synced",
+						label: { ko: `동기화 (${synced.length})`, en: `Synced (${synced.length})` },
+						children: [{
+							type: "list", id: "rules-synced-list",
+							items: synced.slice(0, 30).map((item, idx) => {
+								const koName = itemShortName(item.path, "ko");
+								const enName = itemShortName(item.path, "en");
+								return {
+									id: `sy${idx}`,
+									title: item.path,
+									...(item.matchedBy
+										? { description: { ko: `재포함 규칙: ${item.matchedBy}`, en: `Included by: ${item.matchedBy}` } }
+										: item.path.startsWith("settings/")
+											? { description: { ko: koName, en: enName } }
+											: {}),
+									badge: { ko: "동기화", en: "Synced" },
+								};
+							}),
+							emptyText: { ko: "동기화되는 항목이 없습니다.", en: "No items are synced." },
+						}],
 					},
 					{
 						id: "tab-raw",
 						label: { ko: `syncignore (${rules.length})`, en: `syncignore (${rules.length})` },
-						children: [rawNode],
+						children: [
+							rawNode,
+							{ type: "text", id: "rules-file-path", size: "small", tone: "neutral", text: rulesFile() },
+						],
 					},
 				],
 			},
@@ -1607,31 +1681,26 @@ export default (pi: any) => {
 		const warnings = preview?.warnings ?? parsed.warnings;
 		const items = preview?.items ?? [];
 		const tooLongForUi = rulesDraft.length > UI_TEXTAREA_MAX;
-		// Show excluded items first so the user immediately verifies what will be skipped, then synced items (max 20 rows).
-		const ordered = [...items.filter((i) => !i.synced), ...items.filter((i) => i.synced)].slice(0, 20);
-		const rows = ordered.map((item, idx) => ({
-			id: `rp${idx}`,
-			cells: [
-				item.path,
-				item.synced ? { ko: "동기화", en: "Sync" } : { ko: "제외", en: "Excluded" },
-				item.matchedBy ?? { ko: "(기본)", en: "(default)" },
-			],
-		}));
+		const catItems = categoryListItems(items, "ecat");
 		const summaryText: Text = preview
 			? {
-				ko: `현재 서버 항목 기준: 동기화 ${preview.syncedCount}개 · 제외 ${preview.ignoredCount}개${items.length > 20 ? " (20개만 표시)" : ""}`,
-				en: `On this server: ${preview.syncedCount} synced · ${preview.ignoredCount} excluded${items.length > 20 ? " (showing 20)" : ""}`,
+				ko: `미리보기 · 동기화 ${preview.syncedCount}개 / 전체 ${items.length}개 (제외 ${preview.ignoredCount}개)`,
+				en: `Preview · ${preview.syncedCount} synced / ${items.length} total (${preview.ignoredCount} excluded)`,
 			}
-			: { ko: "항목 미리보기를 불러오는 중…", en: "Loading preview…" };
+			: { ko: "미리보기를 불러오는 중…", en: "Loading preview…" };
 		const fileHint = rulesFile().slice(-240);
 		return [{
-			type: "card", id: "rules-editor",
-			title: { ko: "동기화 규칙 (syncignore)", en: "Sync rules (syncignore)" },
-			description: {
-				ko: `파일: ${fileHint} · .gitignore 문법(# 주석, * / ** 와일드카드, ! 다시 포함, 아래 규칙 우선)`,
-				en: `File: ${fileHint} · .gitignore syntax (# comment, * / ** globs, ! re-include, last rule wins)`,
-			},
+			type: "stack", id: "rules-editor", gap: "medium",
 			children: [
+				{ type: "divider", id: "rules-edit-sep" },
+				{ type: "text", id: "rules-edit-title", size: "body", text: { ko: "동기화 규칙 편집 (syncignore)", en: "Edit sync rules (syncignore)" } },
+				{
+					type: "text", id: "rules-edit-desc", size: "small", tone: "neutral",
+					text: {
+						ko: `${fileHint}\n.gitignore 문법: # 주석 · * / ** 와일드카드 · ! 다시 포함 · 아래 줄 우선`,
+						en: `${fileHint}\n.gitignore syntax: # comment · * / ** globs · ! re-include · last line wins`,
+					},
+				},
 				...(tooLongForUi ? [{
 					type: "alert", id: "rules-too-long", tone: "warning",
 					text: { ko: "syncignore 파일이 16,000자를 넘어 화면 편집을 비활성화했습니다. 파일을 직접 편집하세요.", en: "syncignore exceeds 16,000 characters; edit the file directly." },
@@ -1644,7 +1713,7 @@ export default (pi: any) => {
 							type: "textarea", id: `rules-text-${rulesDraftRevision}`,
 							label: { ko: "제외/포함 규칙", en: "Exclude / include rules" },
 							value: rulesDraft,
-							rows: 7,
+							rows: 6,
 							maxLength: UI_TEXTAREA_MAX,
 							placeholder: {
 								ko: "예: skills/browser-bridge, mcp/local-*, !skills/orchestrate",
@@ -1661,23 +1730,18 @@ export default (pi: any) => {
 						en: warnings.slice(0, 5).map((w) => w.message.en).join("\n"),
 					},
 				}] : []),
-				{ type: "text", id: "rules-summary", size: "small", tone: "neutral", text: summaryText },
-				...(rows.length ? [{
-					type: "table", id: "rules-preview",
-					columns: [
-						{ id: "path", label: { ko: "경로", en: "Path" } },
-						{ id: "state", label: { ko: "동작", en: "Action" } },
-						{ id: "rule", label: { ko: "적용 규칙", en: "Matched rule" } },
-					],
-					rows,
-				}] : []),
 				{
 					type: "stack", id: "rules-actions", direction: "horizontal", gap: "small",
 					children: [
 						{ type: "button", id: "rules-reset", variant: "secondary", disabled: pulling || busy, label: { ko: "기본값 불러오기", en: "Load defaults" } },
-						{ type: "button", id: "rules-cancel", variant: "secondary", disabled: pulling || busy, label: { ko: "닫기", en: "Close" } },
+						{ type: "button", id: "rules-cancel", variant: "secondary", disabled: pulling || busy, label: { ko: "취소", en: "Cancel" } },
 					],
 				},
+				{ type: "text", id: "rules-summary", size: "small", tone: "neutral", text: summaryText },
+				...(catItems.length ? [{
+					type: "list", id: "rules-preview",
+					items: catItems,
+				}] : []),
 			],
 		}];
 	};
