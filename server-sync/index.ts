@@ -1452,32 +1452,28 @@ export default (pi: any) => {
 	const rulesListNodes = (rules: readonly SyncRule[], hidden: boolean): unknown[] => {
 		if (hidden) return [];
 		const custom = hasRulesFile();
-		const shown = rules.slice(0, 12);
+		const shown = rules.slice(0, 20);
 		const title: Text = custom
 			? { ko: `동기화 규칙 (syncignore · ${rules.length}개)`, en: `Sync rules (syncignore · ${rules.length})` }
 			: { ko: `동기화 규칙 (기본값 · ${rules.length}개)`, en: `Sync rules (defaults · ${rules.length})` };
+		const body = shown.length
+			? [
+				...shown.map((r) => r.raw),
+				...(rules.length > shown.length ? [`# … +${rules.length - shown.length} more`] : []),
+			].join("\n")
+			: "";
 		return [
 			{ type: "divider", id: "rules-sep" },
 			{ type: "text", id: "rules-list-title", size: "small", tone: "neutral", text: title },
-			{
-				type: "list", id: "rules-list",
-				items: shown.map((r, i) => ({
-					id: `rl${i}`,
-					title: r.raw,
-					badge: r.negate ? { ko: "포함", en: "Include" } : { ko: "제외", en: "Exclude" },
-				})),
-				emptyText: {
-					ko: "제외 규칙 없음 (보안 스위치가 허용한 모든 항목 동기화)",
-					en: "No exclude rules (everything allowed by security switches syncs)",
-				},
-			},
-			...(rules.length > shown.length ? [{
-				type: "text", id: "rules-list-more", size: "small", tone: "neutral",
-				text: {
-					ko: `외 ${rules.length - shown.length}개 규칙 — ‘규칙 수정’에서 전체 확인`,
-					en: `+${rules.length - shown.length} more — click ‘Edit rules’ to view all`,
-				},
-			}] : []),
+			...(body
+				? [{ type: "code", id: "rules-list", language: "gitignore", text: body }]
+				: [{
+					type: "text", id: "rules-list", size: "small", tone: "neutral",
+					text: {
+						ko: "제외 규칙 없음 (보안 스위치가 허용한 모든 항목 동기화)",
+						en: "No exclude rules (everything allowed by security switches syncs)",
+					},
+				}]),
 		];
 	};
 
@@ -1525,7 +1521,7 @@ export default (pi: any) => {
 							type: "textarea", id: `rules-text-${rulesDraftRevision}`,
 							label: { ko: "제외/포함 규칙", en: "Exclude / include rules" },
 							value: rulesDraft,
-							rows: 10,
+							rows: 7,
 							maxLength: UI_TEXTAREA_MAX,
 							placeholder: {
 								ko: "예: skills/browser-bridge, mcp/local-*, !skills/orchestrate",
