@@ -39,48 +39,78 @@ other; when both changed the same item, the primary's value wins. The follower k
   apps hear about it). It takes only what it mirrors anyway, never a secret, an install or code, and only while its
   role is primary. The primary keeps its own secrets when it takes extension settings.
 - A primary older than 0.14.0 has no `push`: the follower then only pulls, as before.
-- Turning a box off forgets its history; turned on again it starts by pulling.
-- **Per-PC values.** The working directory is taken only when that folder exists on the receiving PC (both ways); otherwise each server keeps its own, and the follower's page says so. MCP servers have their own sub-box for a PC that runs a different set.
+- Excluding an item forgets its history; re-included later, it starts by pulling.
+- **Per-PC values.** The working directory is taken only when that folder exists on the receiving PC (both ways); otherwise each server keeps its own, and the follower's page says so. Individual MCP servers (`mcp/<name>`) can be included or excluded per server without affecting the rest.
 
-## What a follower picks
+## File-based sync rules (`syncignore`)
 
-A follower's form has a few boxes; an unchecked box keeps this server's own value and is never touched.
+Instead of per-category checkboxes, what syncs on each server is controlled by a plain-text `.gitignore`-style file:
+`extension-data/server-sync/syncignore` (per server, never synced to peers). Both the **primary** (what it serves and
+accepts on push) and each **follower** (what it pulls and pushes) evaluate their own `syncignore` file.
 
-| Box | What it matches | Default |
-|---|---|---|
-| 앱 설정 | `default_model`, `system_model`, `image_model`, `default_workdir` (only when that folder exists on the other PC), `skills` (on/off), `disabled_tools`, `disabled_subagents`, `delegate_policy`, `compaction`, `retention` | on |
-| └ MCP 서버도 맞추기 | `mcp_servers` (off: each PC keeps its own list, for an MCP that runs a program installed on one PC) | on |
-| 확장 | extensions installed at the primary's version, the apps' extension list and on/off states, and every extension's settings values | **off** |
-| └ 직접 만든 확장도 복사 | the code of extensions not in the marketplace, and `~/.agents/extensions` (needs 확장) | **off** |
-| 스킬·도우미·AGENTS.md | `~/.agents/skills` folders, `~/.agents/subagents/*.md`, `~/.agents/AGENTS.md` | **off** |
-| 모델 연결 | `custom_providers` (address, API type and models) | **off** |
-| API 키·토큰도 가져오기 | model API keys and the tokens in extension settings (see "Secrets") | **off** |
+You can edit it from the extension's **동기화 규칙** panel (with live preview), directly in an editor, or through the
+agent using the `server_sync_rules` tool (`inspect`, `set`, `add`, `remove`, `reset`, `test`).
 
-The primary has one switch of its own, **비밀값 내보내기 허용** (off by default), for the same reason.
+### Syntax and namespaces
 
-A key listed in `keys` belongs to no box and always comes along. A setting saved before 0.8.0 has no boxes: everything
-counts as checked, as before. The boxes of 0.8–0.12 (up to fifteen of them) are folded into these on load: a box that
-was on stays on, and the old keys are removed.
+- Blank lines and `#` comments are ignored; `*`, `**`, `?` are globs; `!pattern` re-includes; **last matching rule wins**.
+- Trailing `/` is optional; unanchored patterns (no `/`) match any segment (e.g. `*.tmp`, `browser-bridge`); `*` matches everything (whitelist mode with `!`).
 
-**What 확장 does.** The primary lists its extensions and versions; the follower installs each one it lacks (or has at
+| Namespace | What it matches |
+|---|---|
+| `settings/<key>` | App settings rows (`default_model`, `default_workdir`, `system_model`, `image_model`, `compaction`, `retention`, `skills`, `disabled_tools`, `disabled_subagents`, `delegate_policy`, or extra keys) |
+| `mcp/<name>` | Individual MCP servers by name (merged per server on both pull and push; `settings/mcp_servers` aliases `mcp/*`) |
+| `extensions/<id>` | Server extension install, settings, client list/states, and local code (or target one aspect via `extensions/<id>/{install,settings,client,code}`) |
+| `skills/<name>[/<file>]` | `~/.agents/skills/<name>` folders and individual files inside them (excluded local files are never pruned) |
+| `subagents/<name>` | `~/.agents/subagents/<name>.md` (`subagents/<name>.md` also works) |
+| `agents-md` | `~/.agents/AGENTS.md` (`AGENTS.md` also works) |
+| `providers/<id>` | Custom model providers (`custom_providers`) |
+| `agent-extensions/<name>` | `~/.agents/extensions` files and folders (requires **직접 만든 확장도 복사**) |
+| `secrets/providers/<id>` | Model API keys (requires both secret switches) |
+| `secrets/extensions/<id>[/<key>]` | Extension secret settings (requires both secret switches) |
+
+```gitignore
+# Exclude local-only MCP servers and a desktop-only skill
+mcp/obsidian-*
+skills/browser-bridge
+settings/default_workdir
+
+# Or whitelist mode: exclude everything, then re-include specific items
+# *
+# !settings/default_model
+# !mcp/search
+# !skills/orchestrate
+```
+
+### Defaults, security switches, and compatibility
+
+- **Default follower rules** (when no `syncignore` file exists yet): syncs `settings/*` and `mcp/*`, excludes `extensions/*`, `skills/*`, `subagents/*`, `agents-md`, `providers/*`, and `agent-extensions/*`.
+- **Default primary rules**: empty (serves everything unless patterns are added).
+- **Security switches stay in the form** and can never be bypassed by `!` rules:
+  - **직접 만든 확장도 복사** (`syncLocalExtensions`, follower, off by default): copying unreviewed extension code and `~/.agents/extensions`.
+  - **API 키·토큰도 가져오기** (`syncSecrets`, follower, off) + **비밀값 내보내기 허용** (`shareSecrets`, primary, off): model API keys and extension secrets.
+  - `NEVER_SYNCED` (`device_id`, `default_approval`, `retention_state`, `session_retention_state`) and `server-sync` itself are always excluded.
+- **Backwards compatibility**: servers upgraded from pre-0.19 with legacy box settings (`syncApp`, `syncMcpServers`, `syncExtensions`, `syncAgent`, `syncProviders`) keep working seamlessly until `syncignore` is saved, at which point `syncignore` becomes the sole source of truth and obsolete keys are removed.
+
+**Extensions (`extensions/<id>`).** The primary lists its extensions and versions; the follower installs each one it lacks (or has at
 another version) from the marketplace's pinned git source through its own `POST /server-extensions/install`. One not in
 the marketplace at that version (made by hand, or a newer local build) is shown on the page and skipped, unless
 **직접 만든 확장도 복사** is checked: then its files come from the primary as they are (text files, no `node_modules`,
 without its `settings.json`/`settings.at`, which stay this server's own), are swapped in whole and loaded with
-`POST /server-extensions/reload`. The same option copies `~/.agents/extensions`. That code runs inside this server
+`POST /server-extensions/reload`. The same security switch covers `~/.agents/extensions` (`agent-extensions/*`). That code runs inside this server
 unreviewed: check it only for a primary you trust. This extension is never installed, updated or removed this way, and an
 extension only on the follower stays.
 
-The same box matches the apps' extension list and on/off states (`PUT /client-settings/:key`, so open apps reload them)
-and copies each extension's stored settings (`GET /extensions/settings`) through this server's own
+Client extensions (`extensions/<id>/client`) match the apps' extension list and on/off states (`PUT /client-settings/:key`, merging around locally excluded ids so open apps reload them)
+and extension settings (`extensions/<id>/settings`) copy each extension's stored settings (`GET /extensions/settings`) through this server's own
 `PUT /extensions/:id/settings`. Environment variables (`PIPAYA_FLAG_*`) are process environment, not settings: they are
 not synced. This extension's own settings are never copied.
 
-**스킬·도우미·AGENTS.md**: each skill folder on the primary is made identical here (text files up to 512 KB, 200 files
-and 2 MB per skill; files it lacks are removed from that folder); helper roles and AGENTS.md are made identical. A skill
+**Skills, subagents, AGENTS.md**: each skill folder on the primary is made identical here (text files up to 512 KB, 200 files
+and 2 MB per skill; files it lacks are removed from that folder unless excluded by local `syncignore`); helper roles and AGENTS.md are made identical. A skill
 or role only here, and a symlinked skill folder, stay.
 
-**모델 연결**: each custom provider's address, API type and model list, through `PUT /configuration/providers/:id`.
+**Providers (`providers/<id>`)**: each custom provider's address, API type and model list, through `PUT /configuration/providers/:id`.
 
 Paths sent by a peer are checked part by part (no `..`, no hidden files) and can only land inside the folder they
 belong to.
@@ -221,14 +251,17 @@ of the items that actually changed is saved to `extension-data/server-sync/backu
 a server without it (the old way). `server.test.ts` starts two real servers, each its own process, and runs only with a
 pipaya checkout: `PIPAYA_APP=/path/to/pipaya/server bun test`.
 
-## Methods
+## Methods and agent tool
 
-- `snapshot` — the primary's side: `{ keys, settings }`.
+- `snapshot` — the primary's side: `{ keys, settings, ignoredMcp?, extensions?, environment?, push }`.
 - `code` — the primary's side: `{ url, code }`, a fresh pairing code for this server.
 - `connect` — the follower's side: `{ url, code }` (or `{ url, token }`) connects and pulls once, returning the status.
 - `sync` — one pull now (follower only): `{ applied, ...status }`.
-- `status` — `{ role, url, intervalSeconds, keys, syncExtensions, lastSyncAt, lastApplied, lastError, status }`, so the health of a sync can be checked without reading the log.
+- `status` — `{ role, url, intervalSeconds, keys, syncExtensions, rulesFile, lastSyncAt, lastApplied, lastError, status }`, so the health of a sync can be checked without reading the log.
+- `rules` — `{ content?, paths? }` inspects `syncignore` (or dry-runs `content`) against discovered items on this server, returning `{ file, exists, role, content, warnings, gates, items, syncedCount, ignoredCount, tested? }`.
+- `setRules` — `{ content }` saves `extension-data/server-sync/syncignore` and returns the updated inspection.
 - `backups` — `{ backups: { id, at, reason, summary }[] }`, newest first.
 - `restore` — `{ id? }` restores the given backup (or the latest one when omitted) and returns `{ id, restored }`.
+- Agent tool `server_sync_rules` — lets an AI agent `inspect`, `set`, `add`, `remove`, `reset`, or `test` this server's `syncignore` rules without ever touching `settings.json` or secrets.
 
 The follower also emits an ephemeral `synced` event (`{ keys, at }`) to connected clients whenever a pull changed something.

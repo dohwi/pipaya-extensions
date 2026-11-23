@@ -1,21 +1,21 @@
 {
   "name": "pipaya-extension-server-sync",
   "version": "0.18.0",
-  "description": "Keeps two pipaya servers in step, both ways: app settings, extensions with their settings, skills/helpers/AGENTS.md, and model connections. The primary wins a conflict. Secrets only when both sides allow it.",
+  "description": "Keeps two pipaya servers in step, both ways, with .gitignore-style file-based sync rules (`syncignore`). The primary wins a conflict. Secrets and local code only when explicitly allowed.",
   "license": "MIT",
   "author": "dohwi",
   "pipaya": {
     "title": "Server Sync",
     "descriptions": {
-      "en": "Makes this server match a primary pipaya server. Connect with the link from the primary's Devices tab, then pick what to pull: app settings (models, workdir, MCP, skills on/off, tools, history), extensions with their settings, skills, helper roles and AGENTS.md, and model connections. API keys and tokens come over only if you turn that on here and the primary allows it.",
-      "ko": "이 서버를 기준 서버와 똑같이 맞춥니다. 기준 서버의 기기 탭에서 받은 연결 링크로 연결하고, 가져올 항목을 고르세요. 앱 설정(모델·작업 디렉터리·MCP·스킬 켜기/끄기·도구·대화 보관), 확장과 그 설정, 스킬·도우미 역할·AGENTS.md, 모델 연결을 가져올 수 있습니다. API 키·토큰은 여기서 켜고 기준 서버도 허용할 때만 넘어옵니다."
+      "en": "Makes this server match a primary pipaya server. Connect with the link from the primary's Devices tab, then choose what to include or exclude in detail using .gitignore-style rules (`syncignore`) from the page, file, or agent. API keys, tokens, and unreviewed local extension code only travel when their security switches are turned on.",
+      "ko": "이 서버를 기준 서버와 똑같이 맞춥니다. 기준 서버의 기기 탭에서 받은 연결 링크로 연결한 뒤, 상태 패널·파일·에이전트에서 .gitignore 방식의 동기화 규칙(`syncignore`)으로 동기화할 항목과 제외할 항목을 세밀하게 정할 수 있습니다. API 키·토큰과 직접 만든 확장 코드는 아래 보안 스위치를 켤 때만 넘어옵니다."
     },
     "settings": [
       {
         "key": "role",
         "type": "select",
         "label": "역할",
-        "description": "기준: 팔로워와 설정을 맞추고, 양쪽에서 같은 항목을 바꾸면 이 서버 값이 이깁니다. 팔로워: 아래에 체크한 항목을 기준 서버와 양방향으로 맞춥니다.",
+        "description": "기준: 팔로워와 설정을 맞추고, 양쪽에서 같은 항목을 바꾸면 이 서버 값이 이깁니다. 팔로워: 동기화 규칙(`syncignore`)에 따라 기준 서버와 양방향으로 맞춥니다.",
         "default": "primary",
         "options": [
           {
@@ -64,39 +64,6 @@
         }
       },
       {
-        "key": "syncApp",
-        "type": "boolean",
-        "label": "앱 설정",
-        "default": true,
-        "when": {
-          "key": "role",
-          "equals": "follower"
-        },
-        "description": "모델, 작업 디렉터리, 스킬 켜기·끄기, 도구·도우미 설정, 대화 압축·보관 기간. 여기서 바꿔도 기준 서버에 반영됩니다. 작업 디렉터리는 그 폴더가 이 PC에도 있을 때만 맞춥니다."
-      },
-      {
-        "key": "syncMcpServers",
-        "type": "boolean",
-        "label": "MCP 서버도 맞추기",
-        "default": true,
-        "when": {
-          "key": "role",
-          "equals": "follower"
-        },
-        "description": "‘앱 설정’이 켜져 있을 때 MCP 서버 목록도 맞춥니다. 이 PC에 설치된 프로그램으로 실행하는 MCP가 있어서 PC마다 다르게 두려면 끄세요."
-      },
-      {
-        "key": "syncExtensions",
-        "type": "boolean",
-        "label": "확장",
-        "default": false,
-        "when": {
-          "key": "role",
-          "equals": "follower"
-        },
-        "description": "기준 서버에 설치된 확장을 같은 버전으로 설치하고, 앱의 확장 목록·켜기 상태와 확장 설정 값을 맞춥니다. 확장 설정 값은 여기서 바꿔도 기준 서버에 반영됩니다(토큰·키 제외). 이 서버에만 있는 확장은 지우지 않습니다."
-      },
-      {
         "key": "syncLocalExtensions",
         "type": "boolean",
         "label": "직접 만든 확장도 복사",
@@ -105,29 +72,7 @@
           "key": "role",
           "equals": "follower"
         },
-        "description": "‘확장’이 켜져 있을 때, 마켓플레이스에 없는 확장(직접 만들었거나 ~/.agents/extensions에 둔 것)도 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요."
-      },
-      {
-        "key": "syncAgent",
-        "type": "boolean",
-        "label": "스킬·도우미·AGENTS.md",
-        "default": false,
-        "when": {
-          "key": "role",
-          "equals": "follower"
-        },
-        "description": "~/.agents의 스킬 폴더, 도우미 역할(.md), 전역 AGENTS.md. 어느 쪽에서 고치거나 새로 만들어도 다른 쪽에 반영됩니다. 처음 연결할 때는 기준 서버 것으로 맞추고, 이 서버에만 있던 것은 그대로 둡니다."
-      },
-      {
-        "key": "syncProviders",
-        "type": "boolean",
-        "label": "모델 연결",
-        "default": false,
-        "when": {
-          "key": "role",
-          "equals": "follower"
-        },
-        "description": "사용자 지정 제공자의 주소와 모델 목록. 여기서 바꿔도 기준 서버에 반영됩니다(API 키 제외)."
+        "description": "마켓플레이스 외 확장(직접 만들었거나 ~/.agents/extensions에 둔 것) 중 동기화 규칙에서 허용한 항목의 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요."
       },
       {
         "key": "syncSecrets",
@@ -171,25 +116,15 @@
         "기준 서버에 보일 이름": "Name shown on the primary",
         "예: 집 데스크톱": "e.g. Home desktop",
         "기준 서버의 기기 탭에 이 이름으로 표시됩니다. 비우면 이 PC 이름과 주소를 씁니다.": "How the primary's Devices tab lists this server. Empty: this computer's name and address.",
-        "앱 설정": "App settings",
-        "확장": "Extensions",
         "직접 만든 확장도 복사": "Also copy extensions you made yourself",
-        "스킬·도우미·AGENTS.md": "Skills, helpers and AGENTS.md",
-        "모델 연결": "Model connections",
+        "동기화 규칙에서 허용된 마켓플레이스 외 확장(직접 만들었거나 ~/.agents/extensions에 둔 것)의 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요.": "Copies code for extensions not in the marketplace (your own, or in ~/.agents/extensions) when allowed by your sync rules. It runs inside this server: turn it on only for a primary you trust.",
         "API 키·토큰도 가져오기": "Also pull API keys and tokens",
         "모델 API 키와 확장 설정의 토큰을 함께 가져옵니다. 이 서버에 이미 있는 값은 바꾸지 않습니다. 기준 서버에서도 ‘비밀값 내보내기 허용’이 켜져 있어야 합니다.": "Pulls model API keys and the tokens in extension settings. A value already on this server is never replaced. The primary must also have ‘Allow secrets to leave’ on.",
         "비밀값 내보내기 허용": "Allow secrets to leave",
         "켜면 팔로워가 요청할 때 이 서버의 모델 API 키와 확장 토큰을 건네줍니다(로그인으로 연결한 계정은 제외). 팔로워가 내 서버일 때만 켜세요. 끄면 비밀값은 절대 나가지 않습니다.": "When on, this server hands its model API keys and extension tokens to a follower that asks (accounts connected by login are excluded). Turn it on only when the follower is your own server. Off: no secret ever leaves.",
         "동기화 일시 중지": "Pause sync",
         "켜면 자동 동기화(팔로워)와 동기화 응답(기준 서버)을 멈춥니다. 백업을 복원한 뒤 다시 덮어쓰이는 것을 막을 때 쓰세요.": "Pauses automatic sync (follower) and sync responses (primary). Useful after restoring a backup so changes are not overwritten again.",
-        "기준: 팔로워와 설정을 맞추고, 양쪽에서 같은 항목을 바꾸면 이 서버 값이 이깁니다. 팔로워: 아래에 체크한 항목을 기준 서버와 양방향으로 맞춥니다.": "Primary: keeps followers in step; when both changed the same item, this server wins. Follower: keeps the boxes checked below in step with the primary, both ways.",
-        "기준 서버에 설치된 확장을 같은 버전으로 설치하고, 앱의 확장 목록·켜기 상태와 확장 설정 값을 맞춥니다. 확장 설정 값은 여기서 바꿔도 기준 서버에 반영됩니다(토큰·키 제외). 이 서버에만 있는 확장은 지우지 않습니다.": "Installs the primary's extensions at the same version and matches the apps' extension list, on/off states and extension settings. Settings changed here reach the primary too (never tokens or keys). An extension only here is never removed.",
-        "~/.agents의 스킬 폴더, 도우미 역할(.md), 전역 AGENTS.md. 어느 쪽에서 고치거나 새로 만들어도 다른 쪽에 반영됩니다. 처음 연결할 때는 기준 서버 것으로 맞추고, 이 서버에만 있던 것은 그대로 둡니다.": "Skill folders, helper roles (.md) and the global AGENTS.md in ~/.agents. An edit or a new one on either side reaches the other. On the first sync the primary's are taken, and what was only here stays here.",
-        "사용자 지정 제공자의 주소와 모델 목록. 여기서 바꿔도 기준 서버에 반영됩니다(API 키 제외).": "Address and models of custom providers. A change made here reaches the primary too (never the API key).",
-        "모델, 작업 디렉터리, 스킬 켜기·끄기, 도구·도우미 설정, 대화 압축·보관 기간. 여기서 바꿔도 기준 서버에 반영됩니다. 작업 디렉터리는 그 폴더가 이 PC에도 있을 때만 맞춥니다.": "Models, working directory, skills on/off, tools and helpers, compaction and retention. A change made here reaches the primary too. The working directory is matched only when that folder exists on this PC.",
-        "MCP 서버도 맞추기": "Also match MCP servers",
-        "‘앱 설정’이 켜져 있을 때 MCP 서버 목록도 맞춥니다. 이 PC에 설치된 프로그램으로 실행하는 MCP가 있어서 PC마다 다르게 두려면 끄세요.": "With ‘App settings’ on, matches the MCP server list too. Turn it off to keep a different list per PC (an MCP that runs a program installed on one PC only).",
-        "‘확장’이 켜져 있을 때, 마켓플레이스에 없는 확장(직접 만들었거나 ~/.agents/extensions에 둔 것)도 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요.": "With ‘Extensions’ on, also copies the code of extensions not in the marketplace (your own, or in ~/.agents/extensions). It runs inside this server: turn it on only for a primary you trust."
+        "기준: 팔로워와 설정을 맞추고, 양쪽에서 같은 항목을 바꾸면 이 서버 값이 이깁니다. 팔로워: 동기화 규칙(`syncignore`)에 따라 기준 서버와 양방향으로 맞춥니다.": "Primary: keeps followers in step; when both changed the same item, this server wins. Follower: keeps this server in step with the primary both ways according to your sync rules (`syncignore`)."
       }
     }
   },

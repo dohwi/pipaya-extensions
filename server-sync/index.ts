@@ -66,12 +66,14 @@ interface DatabaseLike {
 interface Snapshot {
 	keys: string[];
 	settings: Record<string, unknown>;
+	/** MCP server names hidden by the primary's own syncignore (so a follower never mistakes them for deleted). */
+	ignoredMcp?: string[];
 	/** Extension id -> its settings without credentials; only when the follower asked for them. */
 	extensions?: Record<string, Record<string, unknown>>;
 	/** The rest of the environment, each part only when the follower asked for it (0.10.0+). */
 	environment?: Environment;
-	/** 1 when this primary takes a follower's own changes (`push`, 0.14.0+) */
-	push?: 1;
+	/** 1 when this primary takes a follower's own changes (`push`, 0.14.0+); 2 adds per-server `mcp` push (0.19.0+). */
+	push?: number;
 }
 
 /** One installed extension that runs inside the server: enough for the follower to install the same version from the marketplace. */
@@ -123,6 +125,8 @@ interface Status {
 	keys: string[];
 	/** Whether this follower also pulls extension settings. */
 	syncExtensions: boolean;
+	/** Path to this server's `.gitignore`-style `syncignore` file. */
+	rulesFile?: string;
 	/** Unix ms of the last successful pull (follower only). */
 	lastSyncAt: number | null;
 	/** Keys the last successful pull changed. */
@@ -304,10 +308,11 @@ function writeIfChanged(file: string, text: string): boolean {
 }
 
 /**
- * Make each folder the primary has the same as there (files it lacks are removed from that folder). A folder only here
- * stays: a follower keeps what it added itself. A symlinked folder here is someone's own link and is left alone.
+ * Make each folder the primary has the same as there (files it lacks are removed from that folder, unless `preserve`
+ * says a file is excluded by local sync rules and must stay). A folder only here stays: a follower keeps what it added
+ * itself. A symlinked folder here is someone's own link and is left alone.
  */
-function applyFolders(root: string, theirs: Record<string, FileSet>, label: string): string[] {
+function applyFolders(root: string, theirs: Record<string, FileSet>, label: string, preserve?: (name: string, rel: string) => boolean): string[] {
 	const changed: string[] = [];
 	for (const [name, files] of Object.entries(theirs)) {
 		if (!SAFE_NAME.test(name) || !plain(files)) continue;
@@ -324,7 +329,8 @@ function applyFolders(root: string, theirs: Record<string, FileSet>, label: stri
 			for (const f of readdirSync(sub, { withFileTypes: true })) {
 				const path = join(sub, f.name);
 				if (f.isDirectory()) { prune(path); if (!readdirSync(path).length) rmSync(path, { recursive: true, force: true }); continue; }
-				if (f.isFile() && SAFE_NAME.test(f.name) && !keep.has(relative(dir, path).split(sep).join("/"))) { rmSync(path, { force: true }); touched = true; }
+				const rel = relative(dir, path).split(sep).join("/");
+				if (f.isFile() && SAFE_NAME.test(f.name) && !keep.has(rel) && !preserve?.(name, rel)) { rmSync(path, { force: true }); touched = true; }
 			}
 		};
 		prune(dir);
@@ -397,8 +403,324 @@ export function decide(p: string, f: string, b: SyncBase | undefined, o: { first
 }
 
 /** The kinds of item that sync both ways, and how each is hashed the same way on both servers. */
-type Kind = "rows" | "ext" | "skill" | "helper" | "agentsMd" | "provider";
+type Kind = "rows" | "mcp" | "ext" | "skill" | "helper" | "agentsMd" | "provider";
 const providerHash = (row: Record<string, unknown> | undefined) => itemHash(row ? Object.fromEntries(Object.entries(publicOf(row)).filter(([k]) => k !== "id")) : undefined);
+
+/** Known top-level namespaces in `syncignore` (used only for typo warnings; unknown ones still compile). */
+export const SYNC_NAMESPACES = new Set([
+	"settings", "mcp", "extensions", "skills", "subagents", "agents-md", "providers", "agent-extensions", "secrets",
+]);
+const MAX_RULES_BYTES = 64 * 1024;
+const MAX_RULES_COUNT = 500;
+const MAX_RULE_LINE = 200;
+
+export interface SyncRule {
+	line: number;
+	raw: string;
+	negate: boolean;
+	pattern: string;
+	anchored: boolean;
+	matchAll: boolean;
+}
+
+export interface SyncRuleWarning {
+	line: number;
+	raw: string;
+	message: Text;
+}
+
+export interface ParsedSyncRules {
+	rules: SyncRule[];
+	warnings: SyncRuleWarning[];
+}
+
+// ReDoS-proof O(P*S) glob matcher supporting `**/` (zero or more directory segments), `**` (any chars),
+// `*` (any non-`/` chars), `?` (one non-`/` char), and literal characters without regex compilation.
+function globMatch(pat: string, str: string): boolean {
+	type Tok = { kind: "lit"; ch: string } | { kind: "q" } | { kind: "star" } | { kind: "dstar" } | { kind: "dstarSlash" };
+	const toks: Tok[] = [];
+	for (let i = 0; i < pat.length; i++) {
+		const ch = pat[i]!;
+		if (ch === "*") {
+			if (pat[i + 1] === "*") {
+				while (pat[i + 1] === "*") i++;
+				if (pat[i + 1] === "/") {
+					i++;
+					if (toks[toks.length - 1]?.kind !== "dstarSlash") toks.push({ kind: "dstarSlash" });
+				} else if (toks[toks.length - 1]?.kind !== "dstar") {
+					toks.push({ kind: "dstar" });
+				}
+			} else if (toks[toks.length - 1]?.kind !== "star") {
+				toks.push({ kind: "star" });
+			}
+		} else if (ch === "?") {
+			toks.push({ kind: "q" });
+		} else {
+			toks.push({ kind: "lit", ch });
+		}
+	}
+	const n = str.length;
+	let dp = new Uint8Array(n + 1);
+	dp[0] = 1;
+	for (const tok of toks) {
+		const next = new Uint8Array(n + 1);
+		if (tok.kind === "lit") {
+			for (let j = 0; j < n; j++) if (dp[j] && str[j] === tok.ch) next[j + 1] = 1;
+		} else if (tok.kind === "q") {
+			for (let j = 0; j < n; j++) if (dp[j] && str[j] !== "/") next[j + 1] = 1;
+		} else if (tok.kind === "star") {
+			for (let j = 0; j <= n; j++) {
+				if (dp[j]) next[j] = 1;
+				if (j < n && next[j] && str[j] !== "/") next[j + 1] = 1;
+			}
+		} else if (tok.kind === "dstar") {
+			let seen = 0;
+			for (let j = 0; j <= n; j++) {
+				if (dp[j]) seen = 1;
+				if (seen) next[j] = 1;
+			}
+		} else {
+			// `**/`: matches empty string OR any prefix ending with `/`
+			let seen = 0;
+			for (let j = 0; j <= n; j++) {
+				if (dp[j]) { next[j] = 1; seen = 1; }
+				if (j < n && seen && str[j] === "/") next[j + 1] = 1;
+			}
+		}
+		dp = next;
+	}
+	return dp[n] === 1;
+}
+
+const normalizeSyncPathAlias = (pat: string): string => {
+	if (/^agents\.md$/i.test(pat)) return "agents-md";
+	if (/^subagents\/.+\.md$/i.test(pat)) return pat.replace(/\.md$/i, "");
+	if (pat === "settings/mcp_servers") return "mcp/*";
+	return pat;
+};
+
+/**
+ * Parse `.gitignore`-style sync rules. Blank lines and `#` comments are ignored; `!` re-includes; `*`, `**`, `?` are
+ * globs; last matching rule wins. Ergonomic aliases (`AGENTS.md` -> `agents-md`, `subagents/<x>.md` -> `subagents/<x>`,
+ * `settings/mcp_servers` -> `mcp/*`) are normalized so natural spellings work without surprises.
+ */
+export function parseSyncRules(text: string): ParsedSyncRules {
+	const rules: SyncRule[] = [];
+	const warnings: SyncRuleWarning[] = [];
+	if (typeof text !== "string" || !text) return { rules, warnings };
+	const clipped = text.length > MAX_RULES_BYTES ? text.slice(0, MAX_RULES_BYTES) : text;
+	if (text.length > MAX_RULES_BYTES) {
+		warnings.push({
+			line: 0,
+			raw: "",
+			message: { ko: "규칙 파일이 너무 커서 앞 64KB만 적용합니다.", en: "Rules file exceeds 64 KB; only the first 64 KB was parsed." },
+		});
+	}
+	const lines = clipped.split(/\r?\n/);
+	for (let idx = 0; idx < lines.length; idx++) {
+		const lineNo = idx + 1;
+		const rawLine = lines[idx]!;
+		// Trim leading whitespace and unescaped trailing whitespace.
+		let s = rawLine.replace(/^\s+/, "").replace(/(?<!\\)\s+$/, "").replace(/\\ /g, " ");
+		if (!s || s.startsWith("#")) continue;
+		if (rules.length >= MAX_RULES_COUNT) {
+			warnings.push({
+				line: lineNo,
+				raw: rawLine.trim(),
+				message: { ko: `규칙이 최대 개수(${MAX_RULES_COUNT})를 넘어 나머지를 건너뛰었습니다.`, en: `Exceeded maximum rule count (${MAX_RULES_COUNT}); remaining lines skipped.` },
+			});
+			break;
+		}
+		let negate = false;
+		if (s.startsWith("!")) {
+			negate = true;
+			s = s.slice(1).trim();
+		} else if (s.startsWith("\\#") || s.startsWith("\\!")) {
+			s = s.slice(1);
+		}
+		if (!s) {
+			warnings.push({
+				line: lineNo,
+				raw: rawLine.trim(),
+				message: { ko: `${lineNo}행: '!' 뒤에 패턴이 비어 있습니다.`, en: `Line ${lineNo}: empty pattern after '!'.` },
+			});
+			continue;
+		}
+		if (s.length > MAX_RULE_LINE) {
+			warnings.push({
+				line: lineNo,
+				raw: s.slice(0, 40),
+				message: { ko: `${lineNo}행: 패턴이 너무 길어 건너뛰었습니다.`, en: `Line ${lineNo}: pattern too long; skipped.` },
+			});
+			continue;
+		}
+		const leadingSlash = s.startsWith("/");
+		let pat = s.replace(/^\/+/, "").replace(/\/+$/, "").replace(/\/{2,}/g, "/").replace(/\*{3,}/g, "**");
+		if (!pat) continue;
+		pat = normalizeSyncPathAlias(pat);
+		const matchAll = pat === "*" || pat === "**";
+		const anchored = !matchAll && (leadingSlash || pat.includes("/"));
+		if (anchored) {
+			const head = pat.split("/")[0]!;
+			if (head && !head.includes("*") && !head.includes("?") && !SYNC_NAMESPACES.has(head)) {
+				warnings.push({
+					line: lineNo,
+					raw: rawLine.trim(),
+					message: { ko: `${lineNo}행: 알 수 없는 네임스페이스 '${head}'.`, en: `Line ${lineNo}: unknown namespace '${head}'.` },
+				});
+			}
+		}
+		rules.push({ line: lineNo, raw: rawLine.trim(), negate, pattern: pat, anchored, matchAll });
+	}
+	return { rules, warnings };
+}
+
+const ruleMatches = (rule: SyncRule, path: string): boolean => {
+	if (rule.matchAll) return true;
+	const segs = path.split("/");
+	if (!rule.anchored) return segs.some((seg) => globMatch(rule.pattern, seg));
+	let prefix = "";
+	for (let i = 0; i < segs.length; i++) {
+		prefix = i === 0 ? segs[0]! : `${prefix}/${segs[i]!}`;
+		if (globMatch(rule.pattern, prefix)) return true;
+	}
+	return false;
+};
+
+/** Evaluate `.gitignore`-style rules against a canonical sync path (last match wins). */
+export function matchSyncPath(rules: readonly SyncRule[], path: string): { ignored: boolean; matchedBy: SyncRule | null } {
+	let ignored = false;
+	let matchedBy: SyncRule | null = null;
+	for (const rule of rules) {
+		if (ruleMatches(rule, path)) {
+			ignored = !rule.negate;
+			matchedBy = rule;
+		}
+	}
+	return { ignored, matchedBy };
+}
+
+/**
+ * Whether any item under `ns` (which may be multi-segment like `"secrets/providers"`, plus optional trailing sub-aspect
+ * `sub` such as `"settings"` / `"install"` / `"client"` / `"code"` for `"extensions"`) might be included by `rules`.
+ */
+export function mayIncludeNamespace(rules: readonly SyncRule[], ns: string, sub?: string): boolean {
+	if (ns === "agents-md") return !matchSyncPath(rules, "agents-md").ignored;
+	const probe = sub ? `${ns}/__probe__/${sub}` : `${ns}/__probe__`;
+	if (!matchSyncPath(rules, probe).ignored) return true;
+	const nsParts = ns.split("/");
+	for (const rule of rules) {
+		if (!rule.negate) continue;
+		if (rule.matchAll || !rule.anchored) return true;
+		const parts = rule.pattern.split("/");
+		let prefixOk = true;
+		let wildcardPrefix = false;
+		for (let i = 0; i < Math.min(nsParts.length, parts.length); i++) {
+			if (parts[i] === "**") { wildcardPrefix = true; break; }
+			if (!globMatch(parts[i]!, nsParts[i]!)) { prefixOk = false; break; }
+		}
+		if (!prefixOk) continue;
+		if (wildcardPrefix || !sub) return true;
+		const subIdx = nsParts.length + 1;
+		if (parts.length <= subIdx) return true;
+		const seg = parts[subIdx]!;
+		if (seg === "**" || globMatch(seg, sub)) return true;
+	}
+	return false;
+}
+
+const RULES_HEADER = [
+	"# server-sync rules (.gitignore style: last matching rule wins; ! re-includes)",
+	"# Matching paths are excluded from both pull and push on this server.",
+	"#",
+	"# Namespaces:",
+	"#   settings/<key>             default_model, default_workdir, system_model, image_model,",
+	"#                              compaction, retention, skills, disabled_tools,",
+	"#                              disabled_subagents, delegate_policy",
+	"#   mcp/<name>                 individual MCP server by name",
+	"#   extensions/<id>            extension install, settings, client state, code",
+	"#                              (or extensions/<id>/{install,settings,client,code})",
+	"#   skills/<name>[/<file>]     ~/.agents/skills/<name>",
+	"#   subagents/<name>           ~/.agents/subagents/<name>.md",
+	"#   agents-md                  ~/.agents/AGENTS.md",
+	"#   providers/<id>             custom model providers",
+	"#   agent-extensions/<name>    ~/.agents/extensions (requires local extensions switch)",
+	"#   secrets/providers/<id>     model API keys (requires secrets switch on both sides)",
+	"#   secrets/extensions/<id>    extension tokens (requires secrets switch on both sides)",
+].join("\n");
+
+const LEGACY_SCOPE_KEYS = ["syncApp", "syncMcpServers", "syncExtensions", "syncAgent", "syncProviders"] as const;
+
+/** Default `syncignore` text for a server role, or derived from pre-0.19 legacy box settings when no file exists yet. */
+export function defaultRulesText(role: "primary" | "follower", legacySettings?: Record<string, unknown>): string {
+	if (role === "primary") {
+		return `${RULES_HEADER}\n#\n# Primary serves everything by default. Add patterns below to hide items from followers:\n`;
+	}
+	const s = legacySettings ?? {};
+	const hasLegacy = LEGACY_SCOPE_KEYS.some((k) => k in s);
+	const lines: string[] = [];
+	if (!hasLegacy) {
+		lines.push(
+			"# By default, app settings and MCP servers sync.",
+			"# Remove a line (or add !pattern below it) to include more items:",
+			"extensions/*",
+			"skills/*",
+			"subagents/*",
+			"agents-md",
+			"providers/*",
+			"agent-extensions/*",
+		);
+	} else {
+		if (s.syncApp === false) {
+			for (const k of GROUPS[0].keys) lines.push(`settings/${k}`);
+			lines.push("mcp/*");
+		} else if (s.syncMcpServers === false) {
+			lines.push("mcp/*");
+		}
+		if (s.syncExtensions !== true) {
+			lines.push("extensions/*", "agent-extensions/*");
+		}
+		if (s.syncAgent !== true) {
+			lines.push("skills/*", "subagents/*", "agents-md");
+		}
+		if (s.syncProviders !== true) {
+			lines.push("providers/*");
+		}
+	}
+	return `${RULES_HEADER}\n#\n${lines.join("\n")}${lines.length ? "\n" : ""}`;
+}
+
+/** Index an `mcp_servers` row array by trimmed server name. */
+function mcpMap(value: unknown): Record<string, Record<string, unknown>> {
+	const out: Record<string, Record<string, unknown>> = {};
+	if (!Array.isArray(value)) return out;
+	for (const entry of value) {
+		if (!plain(entry) || typeof entry.name !== "string") continue;
+		const name = entry.name.trim();
+		if (name) out[name] = entry;
+	}
+	return out;
+}
+
+/** Rebuild an `mcp_servers` array preserving existing order for retained entries and appending new ones. */
+function mcpArray(current: unknown, next: Record<string, Record<string, unknown>>): Record<string, unknown>[] {
+	const seen = new Set<string>();
+	const out: Record<string, unknown>[] = [];
+	if (Array.isArray(current)) {
+		for (const entry of current) {
+			if (!plain(entry) || typeof entry.name !== "string") continue;
+			const name = entry.name.trim();
+			if (name && name in next && !seen.has(name)) {
+				out.push(next[name]!);
+				seen.add(name);
+			}
+		}
+	}
+	for (const [name, entry] of Object.entries(next)) {
+		if (!seen.has(name)) out.push(entry);
+	}
+	return out;
+}
 
 export default (pi: any) => {
 	let db: Database | undefined;
@@ -617,16 +939,76 @@ export default (pi: any) => {
 		return { url, token, interval: Math.max(15, Number.isFinite(interval) && interval > 0 ? Math.floor(interval) : 60) };
 	};
 
+	/**
+	 * This server's `.gitignore`-style sync rules file (`extension-data/server-sync/syncignore`).
+	 * Plain UTF-8 text (never synced to peers), editable from the UI, terminal, or AI agent.
+	 * When the file does not exist yet, rules fall back to defaults (or pre-0.19 legacy box settings).
+	 */
+	const rulesFile = () => join(dirname(peerFile()), "syncignore");
+	const hasRulesFile = () => existsSync(rulesFile());
+	const readRulesText = (): string => {
+		const file = rulesFile();
+		if (existsSync(file)) {
+			try { return readFileSync(file, "utf8"); } catch { /* unreadable: fall back to defaults */ }
+		}
+		return defaultRulesText(role(), settings());
+	};
+	const writeRulesText = (text: string) => {
+		const file = rulesFile();
+		mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+		const normalized = text.endsWith("\n") || !text ? text : `${text}\n`;
+		const tmp = `${file}.${randomBytes(4).toString("hex")}.tmp`;
+		writeFileSync(tmp, normalized, { mode: 0o644 });
+		chmodSync(tmp, 0o644);
+		renameSync(tmp, file);
+		// Once the file exists it is the sole source of truth: drop any obsolete pre-0.19 scope checkboxes.
+		const s = settings();
+		if (LEGACY_SCOPE_KEYS.some((k) => k in s)) {
+			const cleaned = Object.fromEntries(Object.entries(withoutToken(s)).filter(([k]) => !(LEGACY_SCOPE_KEYS as readonly string[]).includes(k)));
+			pi.settings.set(cleaned);
+		}
+	};
+	const activeParsedRules = (overrideText?: string): ParsedSyncRules => parseSyncRules(overrideText ?? readRulesText());
+	const activeRules = (): SyncRule[] => activeParsedRules().rules;
+	const isIgnoredPath = (rules: readonly SyncRule[], path: string): boolean => matchSyncPath(rules, path).ignored;
+
+	/** Filter a folder map (`skills` or `agent-extensions`) file-by-file against `rules`. */
+	const filterFoldersByRules = (rules: readonly SyncRule[], ns: string, folders: Record<string, FileSet>): Record<string, FileSet> => {
+		const out: Record<string, FileSet> = {};
+		for (const [name, files] of Object.entries(folders)) {
+			if (!plain(files)) continue;
+			const kept: FileSet = {};
+			for (const [rel, text] of Object.entries(files)) {
+				if (!isIgnoredPath(rules, `${ns}/${name}/${rel}`)) kept[rel] = text;
+			}
+			if (Object.keys(kept).length) out[name] = kept;
+		}
+		return out;
+	};
+	/** Filter client extensions list + states against `extensions/<id>/client` rules. */
+	const filterClientExtensionsByRules = (rules: readonly SyncRule[], data: { list: unknown; states: unknown }): { list: unknown; states: unknown } => {
+		const list = Array.isArray(data.list)
+			? data.list.filter((item) => {
+				const id = plain(item) && plain(item.manifest) && typeof item.manifest.id === "string" ? item.manifest.id : "";
+				return id ? !isIgnoredPath(rules, `extensions/${id}/client`) : !isIgnoredPath(rules, "extensions/__unknown__/client");
+			})
+			: data.list;
+		const states = plain(data.states)
+			? Object.fromEntries(Object.entries(data.states).filter(([id]) => !isIgnoredPath(rules, `extensions/${id}/client`)))
+			: data.states;
+		return { list, states };
+	};
+
 	const keys = (): string[] => effectiveKeys(String(settings().keys ?? ""));
-	/** A group is pulled unless the follower unchecked it (an older saved setting has no box at all: pull). */
-	const picked = (field: string) => settings()[field] !== false;
-	/** Of the keys the primary mirrors, the ones this follower picked. A key in no group (a listed extra) always comes along. */
-	const pickedKeys = (list: readonly string[]): string[] =>
-		list.filter((k) => !GROUPED.has(k) || GROUPS.some((g) => (g.keys as readonly string[]).includes(k) && picked(g.field) && (!("within" in g) || picked(g.within))));
-	/** Pull secrets too (a model API key, an extension's own token): its own box, off, and the primary must allow it. */
+	/** Of the keys in `list`, the ones allowed by `rules` (`mcp_servers` is kept whenever any `mcp/*` may be included). */
+	const allowedKeys = (list: readonly string[], rules: readonly SyncRule[] = activeRules()): string[] =>
+		list.filter((k) => (k === "mcp_servers" ? mayIncludeNamespace(rules, "mcp") : !isIgnoredPath(rules, `settings/${k}`)));
+	/** Pull secrets too (a model API key, an extension's own token): security gate, off by default, primary must allow it. */
 	const wantSecrets = () => settings().syncSecrets === true;
-	/** Extension settings values travel with the extensions: one box, "확장". */
-	const syncExtensions = () => settings().syncExtensions === true;
+	/** Copy unreviewed extension code & `~/.agents/extensions`: security gate, off by default. */
+	const wantLocalExtensions = () => settings().syncLocalExtensions === true;
+	/** Whether extension settings may sync on this follower. */
+	const syncExtensions = (rules: readonly SyncRule[] = activeRules()) => mayIncludeNamespace(rules, "extensions", "settings");
 	/** Pause automatic sync (follower) and sync responses (primary). */
 	const isPaused = () => settings().paused === true;
 
@@ -1038,17 +1420,125 @@ export default (pi: any) => {
 		}];
 	};
 
+	let editingRules = false;
+	let rulesDraft = "";
+	let rulesDraftRevision = 0;
+	interface DiscoveredSyncItem {
+		path: string;
+		synced: boolean;
+		matchedBy: string | null;
+	}
+	interface RulesInspection {
+		file: string;
+		exists: boolean;
+		role: "primary" | "follower";
+		content: string;
+		warnings: SyncRuleWarning[];
+		gates: { syncLocalExtensions: boolean; syncSecrets: boolean; shareSecrets: boolean };
+		items: DiscoveredSyncItem[];
+		syncedCount: number;
+		ignoredCount: number;
+	}
+	let rulesPreviewCache: RulesInspection | null = null;
+
+	const rulesButton = (open: boolean): unknown[] =>
+		open ? [] : [{
+			type: "button", id: "rules-open", variant: "secondary", disabled: pulling || busy,
+			label: { ko: "동기화 규칙", en: "Sync rules" },
+		}];
+
+	const rulesCardNodes = (): unknown[] => {
+		if (!editingRules) return [];
+		const preview = rulesPreviewCache;
+		const parsed = parseSyncRules(rulesDraft);
+		const warnings = preview?.warnings ?? parsed.warnings;
+		const items = preview?.items ?? [];
+		// Show excluded items first so the user immediately verifies what will be skipped, then synced items (max 20 rows).
+		const ordered = [...items.filter((i) => !i.synced), ...items.filter((i) => i.synced)].slice(0, 20);
+		const rows = ordered.map((item, idx) => ({
+			id: `rp${idx}`,
+			cells: [
+				item.path,
+				item.synced ? { ko: "동기화", en: "Sync" } : { ko: "제외", en: "Excluded" },
+				item.matchedBy ?? { ko: "(기본)", en: "(default)" },
+			],
+		}));
+		const summaryText: Text = preview
+			? {
+				ko: `현재 서버 항목 기준: 동기화 ${preview.syncedCount}개 · 제외 ${preview.ignoredCount}개${items.length > 20 ? " (상위 20개 표시)" : ""}`,
+				en: `On this server: ${preview.syncedCount} synced · ${preview.ignoredCount} excluded${items.length > 20 ? " (showing 20)" : ""}`,
+			}
+			: { ko: "항목 미리보기를 불러오는 중…", en: "Loading preview…" };
+		return [{
+			type: "card", id: "rules-editor",
+			title: { ko: "동기화 규칙 (syncignore)", en: "Sync rules (syncignore)" },
+			description: {
+				ko: `파일: ${rulesFile()} · .gitignore 문법(# 주석, * / ** 와일드카드, ! 다시 포함, 아래 규칙 우선)`,
+				en: `File: ${rulesFile()} · .gitignore syntax (# comment, * / ** globs, ! re-include, last rule wins)`,
+			},
+			children: [
+				{
+					type: "form", id: "rules-form",
+					submitLabel: { ko: "규칙 저장", en: "Save rules" },
+					disabled: pulling || busy,
+					children: [
+						{
+							type: "textarea", id: `rules-text-${rulesDraftRevision}`,
+							label: { ko: "제외/포함 규칙", en: "Exclude / include rules" },
+							value: rulesDraft,
+							rows: 10,
+							maxLength: MAX_RULES_BYTES,
+							placeholder: {
+								ko: "# 예: skills/browser-bridge\n# mcp/local-*\n# settings/default_model",
+								en: "# e.g. skills/browser-bridge\n# mcp/local-*\n# settings/default_model",
+							},
+						},
+					],
+				},
+				...(warnings.length ? [{
+					type: "alert", id: "rules-warn", tone: "warning",
+					title: { ko: "규칙 확인 필요", en: "Check rules" },
+					text: {
+						ko: warnings.slice(0, 5).map((w) => w.message.ko).join("\n"),
+						en: warnings.slice(0, 5).map((w) => w.message.en).join("\n"),
+					},
+				}] : []),
+				{ type: "text", id: "rules-summary", size: "small", tone: "neutral", text: summaryText },
+				...(rows.length ? [{
+					type: "table", id: "rules-preview",
+					columns: [
+						{ id: "path", label: { ko: "경로", en: "Path" } },
+						{ id: "state", label: { ko: "동작", en: "Action" } },
+						{ id: "rule", label: { ko: "적용 규칙", en: "Matched rule" } },
+					],
+					rows,
+				}] : []),
+				{
+					type: "stack", id: "rules-actions", direction: "horizontal", gap: "small",
+					children: [
+						{ type: "button", id: "rules-reset", variant: "secondary", disabled: pulling || busy, label: { ko: "기본값 불러오기", en: "Load defaults" } },
+						{ type: "button", id: "rules-cancel", variant: "secondary", disabled: pulling || busy, label: { ko: "닫기", en: "Close" } },
+					],
+				},
+			],
+		}];
+	};
+
 	/** The extension's page (`pi.ui`): the state, the numbers that matter and what can be done now. */
 	const panel = () => {
 		const backups = listBackups();
 		const restoreCard = restoreCardNodes(backups);
+		const rulesCard = rulesCardNodes();
 		const confirming = restoreCard.length > 0;
+		const rules = activeRules();
+		const extEnabled = mayIncludeNamespace(rules, "extensions");
 		if (role() === "primary") {
 			const url = publicUrl();
 			const flist = followerList();
 			const secretsOn = settings().shareSecrets === true;
 			const primaryActions: unknown[] = [
 				...(isPaused() ? [{ type: "button", id: "resume-sync", variant: "primary", disabled: pulling || busy, label: { ko: "동기화 다시 시작", en: "Resume sync" } }] : []),
+				...rulesButton(editingRules),
 				...backupButton(backups, confirming),
 			];
 			const addrKo = url ? hostOf(url) : "로컬 전용";
@@ -1076,6 +1566,7 @@ export default (pi: any) => {
 					}),
 					emptyText: { ko: "연결된 팔로워가 없습니다. 기기 탭 → [연결 링크 복사]로 연결하세요.", en: "No followers yet. Connect via Devices → [Copy connection link]." } },
 					...(primaryActions.length ? [{ type: "stack", id: "actions", direction: "horizontal", gap: "small", children: primaryActions }] : []),
+					...rulesCard,
 					...restoreCard,
 				],
 			};
@@ -1119,7 +1610,7 @@ export default (pi: any) => {
 		];
 		if (!token) {
 			children.push({ type: "text", id: "how", size: "small", tone: "neutral", text: { ko: "기준 서버의 기기 탭 → [연결 링크 복사]로 받은 링크를 아래 ‘연결 링크’에 붙여넣고 저장하세요.", en: "Paste the link from the primary's Devices tab → [Copy connection link] into ‘Connection link’ below, then save." } });
-			const offActions = backupButton(backups, confirming);
+			const offActions = [...rulesButton(editingRules), ...backupButton(backups, confirming)];
 			if (offActions.length) children.push({ type: "stack", id: "actions", direction: "horizontal", gap: "small", children: offActions });
 		} else {
 			if (lastApplied.length) {
@@ -1135,13 +1626,15 @@ export default (pi: any) => {
 				isPaused()
 					? { type: "button", id: "resume-sync", variant: "primary", disabled: pulling || busy, label: { ko: "동기화 다시 시작", en: "Resume sync" } }
 					: { type: "button", id: "sync", variant: "primary", disabled: pulling || busy, label: pulling ? { ko: "동기화 중…", en: "Syncing…" } : { ko: "지금 동기화", en: "Sync now" } },
+				...rulesButton(editingRules),
 				...backupButton(backups, confirming),
 				{ type: "button", id: "disconnect", variant: "secondary", disabled: pulling, label: { ko: "연결 해제", en: "Disconnect" } },
 			] });
 		}
+		children.push(...rulesCard);
 		children.push(...restoreCard);
 		if (lastError) children.push({ type: "alert", id: "error", tone: "danger", title: errorTitle(lastError), text: lastError });
-		if (token && needsInput.length && settings().syncExtensions === true) {
+		if (token && needsInput.length && extEnabled) {
 			// The alert carries the sentence; the list under it names each extension and what it lacks (an alert's text
 			// is one paragraph, so a list inside it would run together).
 			// What is true depends on the box: with 비밀값 on, whatever the primary holds already came, so the primary has no
@@ -1164,65 +1657,115 @@ export default (pi: any) => {
 				ko: `이 서버가 받아들이지 않은 항목이 있어 이 서버 값을 그대로 둡니다: ${refusedRows.map((r) => `${keyLabel(r.key).ko} (${r.reason})`).join(", ")}. 기준 서버의 모델 연결 등을 이 서버에도 맞추면 다음 동기화 때 다시 가져옵니다.`,
 				en: `This server did not accept some items and keeps its own: ${refusedRows.map((r) => `${keyLabel(r.key).en} (${r.reason})`).join(", ")}. Once it has what they need (a model connection, say), the next sync takes them.`,
 			} });
-		if (token && unlisted.length && settings().syncExtensions === true) children.push({ type: "alert", id: "unlisted", tone: "warning",
+		if (token && unlisted.length && extEnabled) children.push({ type: "alert", id: "unlisted", tone: "warning",
 			title: { ko: "마켓플레이스에 없는 확장은 설치하지 않았습니다", en: "Extensions not in the marketplace were not installed" },
 			text: { ko: `${unlisted.join(", ")} — 기준 서버에서 복사하려면 아래 ‘직접 만든 확장도 복사’를 켜세요.`, en: `${unlisted.join(", ")} — to copy them from the primary, turn on ‘Also copy extensions you made yourself’ below.` } });
 		return { type: "stack", id: "status", gap: "small", children };
 	};
 
-	const status = (): Status => ({
-		role: role(),
-		url: cfg().url,
-		intervalSeconds: cfg().interval,
-		keys: role() === "follower" ? pickedKeys(keys()) : keys(),
-		syncExtensions: role() === "follower" && syncExtensions(),
-		lastSyncAt,
-		lastApplied,
-		lastError,
-		status: statusText(),
-		...(role() === "primary" ? { followers: followerList().map((f) => ({ name: f.name, url: f.url, lastSyncAt: f.lastAt })) } : {}),
-	});
+	const status = (): Status => {
+		const rules = activeRules();
+		return {
+			role: role(),
+			url: cfg().url,
+			intervalSeconds: cfg().interval,
+			keys: allowedKeys(keys(), rules),
+			syncExtensions: role() === "follower" && syncExtensions(rules),
+			rulesFile: rulesFile(),
+			lastSyncAt,
+			lastApplied,
+			lastError,
+			status: statusText(),
+			...(role() === "primary" ? { followers: followerList().map((f) => ({ name: f.name, url: f.url, lastSyncAt: f.lastAt })) } : {}),
+		};
+	};
 
 	// ---- what a peer reads: the rows this server mirrors and the keys they cover ----
 
 	pi.registerMethod("snapshot", async (params: unknown): Promise<Snapshot> => {
 		if (isPaused()) throw new Error("sync is paused on the primary");
-		const list = keys();
-		const snap: Snapshot = { keys: list, settings: readSettings(dbo(), list), push: 1 };
+		const rules = activeRules();
+		const list = allowedKeys(keys(), rules);
+		const rawSettings = readSettings(dbo(), list);
+		let ignoredMcp: string[] | undefined;
+		if ("mcp_servers" in rawSettings) {
+			const allMcp = mcpMap(rawSettings.mcp_servers);
+			const kept: Record<string, Record<string, unknown>> = {};
+			const hidden: string[] = [];
+			for (const [name, entry] of Object.entries(allMcp)) {
+				if (isIgnoredPath(rules, `mcp/${name}`)) hidden.push(name);
+				else kept[name] = entry;
+			}
+			if (hidden.length) {
+				rawSettings.mcp_servers = mcpArray(rawSettings.mcp_servers, kept);
+				ignoredMcp = hidden;
+			}
+		}
+		const snap: Snapshot = {
+			keys: list,
+			settings: rawSettings,
+			...(ignoredMcp?.length ? { ignoredMcp } : {}),
+			push: 2,
+		};
 		// A follower (0.17.0+) says who it is: the page lists it. Only on a primary; a code fetch (`codeOf`) sends nothing.
 		const from = role() === "primary" && plain(params) ? followerFrom(params.from) : null;
 		if (from) sawFollower(from);
 		// Only when the follower asks: most never want them, and they are the bulkiest part.
 		// Secrets of extensions (their own settings file) go only when this server's owner allows it AND the follower asked.
-		if (plain(params) && params.extensions === true) snap.extensions = shareable(await extensionSettings(), settings().shareSecrets === true && params.secrets === true);
+		if (plain(params) && params.extensions === true) {
+			const withSec = settings().shareSecrets === true && params.secrets === true;
+			const all = shareable(await extensionSettings(), withSec);
+			const filtered: Record<string, Record<string, unknown>> = {};
+			for (const [id, val] of Object.entries(all)) {
+				if (isIgnoredPath(rules, `extensions/${id}/settings`)) continue;
+				filtered[id] = withSec
+					? Object.fromEntries(Object.entries(val).filter(([k]) => !CREDENTIAL_KEY.test(k) || (!isIgnoredPath(rules, `secrets/extensions/${id}`) && !isIgnoredPath(rules, `secrets/extensions/${id}/${k}`))))
+					: val;
+			}
+			snap.extensions = filtered;
+		}
 		const asked = plain(params) && Array.isArray(params.parts) ? params.parts.filter((p): p is Part => typeof p === "string" && p in PARTS) : [];
 		// The code of extensions, for those the follower cannot get from the marketplace: only the ids it names.
-		const codeOf = plain(params) && Array.isArray(params.codeOf) ? params.codeOf.filter((x): x is string => typeof x === "string" && EXTENSION_ID.test(x) && x !== SELF_ID).slice(0, 50) : [];
-		if (asked.length) snap.environment = await readEnvironment(asked);
+		const codeOf = plain(params) && Array.isArray(params.codeOf)
+			? params.codeOf.filter((x): x is string => typeof x === "string" && EXTENSION_ID.test(x) && x !== SELF_ID && !isIgnoredPath(rules, `extensions/${x}/code`) && !isIgnoredPath(rules, `extensions/${x}/install`)).slice(0, 50)
+			: [];
+		if (asked.length) snap.environment = await readEnvironment(asked, rules);
 		if (codeOf.length) {
 			const env = (snap.environment ??= {});
-			const list = env.serverExtensions ?? (await installedServerExtensions());
-			env.serverExtensions = list.map((e) => (codeOf.includes(e.id) ? { ...e, files: extensionFiles(e.id) } : e));
+			const srvList = env.serverExtensions ?? (await installedServerExtensions()).filter((e) => !isIgnoredPath(rules, `extensions/${e.id}/install`));
+			env.serverExtensions = srvList.map((e) => (codeOf.includes(e.id) ? { ...e, files: extensionFiles(e.id) } : e));
 		}
 		return snap;
 	});
 
-	/** This server's environment parts, as a follower asked for them. */
-	const readEnvironment = async (parts: readonly Part[]): Promise<Environment> => {
+	/** This server's environment parts, as a follower asked for them (filtered by this server's sync rules). */
+	const readEnvironment = async (parts: readonly Part[], rules: readonly SyncRule[] = activeRules()): Promise<Environment> => {
 		const env: Environment = {};
 		const home = typeof pi.home === "string" && pi.home ? pi.home : homedir();
 		for (const part of parts) {
 			try {
-				if (part === "serverExtensions") env.serverExtensions = await installedServerExtensions();
-				else if (part === "clientExtensions") env.clientExtensions = await clientExtensionRows();
-				else if (part === "skills") env.skills = readFolders(join(home, ".agents", "skills"));
-				else if (part === "subagents") env.subagents = readFiles(join(home, ".agents", "subagents"), /\.md$/);
-				else if (part === "agentsMd") env.agentsMd = readText(join(home, ".agents", "AGENTS.md"));
-				else if (part === "providers") env.providers = await providerRows();
-				else if (part === "apiKeys") env.apiKeys = apiKeyRows();
-				else if (part === "agentExtensions") {
+				if (part === "serverExtensions") {
+					env.serverExtensions = (await installedServerExtensions()).filter((e) => !isIgnoredPath(rules, `extensions/${e.id}/install`));
+				} else if (part === "clientExtensions") {
+					env.clientExtensions = filterClientExtensionsByRules(rules, await clientExtensionRows());
+				} else if (part === "skills") {
+					env.skills = filterFoldersByRules(rules, "skills", readFolders(join(home, ".agents", "skills")));
+				} else if (part === "subagents") {
+					const all = readFiles(join(home, ".agents", "subagents"), /\.md$/);
+					env.subagents = Object.fromEntries(Object.entries(all).filter(([name]) => !isIgnoredPath(rules, `subagents/${name.replace(/\.md$/i, "")}`)));
+				} else if (part === "agentsMd") {
+					if (!isIgnoredPath(rules, "agents-md")) env.agentsMd = readText(join(home, ".agents", "AGENTS.md"));
+				} else if (part === "providers") {
+					const all = await providerRows();
+					env.providers = Object.fromEntries(Object.entries(all).filter(([id]) => !isIgnoredPath(rules, `providers/${id}`)));
+				} else if (part === "apiKeys") {
+					const all = apiKeyRows();
+					env.apiKeys = Object.fromEntries(Object.entries(all).filter(([id]) => !isIgnoredPath(rules, `secrets/providers/${id}`)));
+				} else if (part === "agentExtensions") {
 					const dir = join(home, ".agents", "extensions");
-					env.agentExtensions = { files: readFiles(dir, /\.(ts|js|mjs)$/), folders: readFolders(dir) };
+					const files = Object.fromEntries(Object.entries(readFiles(dir, /\.(ts|js|mjs)$/)).filter(([name]) => !isIgnoredPath(rules, `agent-extensions/${name}`)));
+					const folders = filterFoldersByRules(rules, "agent-extensions", readFolders(dir));
+					env.agentExtensions = { files, folders };
 				}
 			} catch (e) {
 				log(`snapshot ${part}: ${e instanceof Error ? e.message : String(e)}`);
@@ -1297,15 +1840,34 @@ export default (pi: any) => {
 	pi.registerMethod("status", () => status());
 
 	const agentsHome = () => (typeof pi.home === "string" && pi.home ? pi.home : homedir());
-	/** This server's items of one two-way kind, by id (rows: the mirrored keys; agentsMd: the one id "AGENTS.md"). */
-	const localItems = async (kind: Kind, list: readonly string[]): Promise<Record<string, unknown>> => {
+	/** This server's items of one two-way kind, by id (filtered by `rules` when provided). */
+	const localItems = async (kind: Kind, list: readonly string[], rules?: readonly SyncRule[], skipMcp?: ReadonlySet<string>): Promise<Record<string, unknown>> => {
 		const home = agentsHome();
 		if (kind === "rows") return readSettings(dbo(), list);
-		if (kind === "ext") return shareable(await extensionSettings());
-		if (kind === "skill") return readFolders(join(home, ".agents", "skills"));
-		if (kind === "helper") return readFiles(join(home, ".agents", "subagents"), /\.md$/);
-		if (kind === "agentsMd") { const t = readText(join(home, ".agents", "AGENTS.md")); return t === null ? {} : { "AGENTS.md": t }; }
-		return providerRows();
+		if (kind === "mcp") {
+			const all = mcpMap(readSettings(dbo(), ["mcp_servers"]).mcp_servers);
+			if (!rules && !skipMcp) return all;
+			return Object.fromEntries(Object.entries(all).filter(([name]) => (!rules || !isIgnoredPath(rules, `mcp/${name}`)) && !skipMcp?.has(name)));
+		}
+		if (kind === "ext") {
+			const all = shareable(await extensionSettings());
+			return rules ? Object.fromEntries(Object.entries(all).filter(([id]) => !isIgnoredPath(rules, `extensions/${id}/settings`))) : all;
+		}
+		if (kind === "skill") {
+			const all = readFolders(join(home, ".agents", "skills"));
+			return rules ? filterFoldersByRules(rules, "skills", all) : all;
+		}
+		if (kind === "helper") {
+			const all = readFiles(join(home, ".agents", "subagents"), /\.md$/);
+			return rules ? Object.fromEntries(Object.entries(all).filter(([name]) => !isIgnoredPath(rules, `subagents/${name.replace(/\.md$/i, "")}`))) : all;
+		}
+		if (kind === "agentsMd") {
+			if (rules && isIgnoredPath(rules, "agents-md")) return {};
+			const t = readText(join(home, ".agents", "AGENTS.md"));
+			return t === null ? {} : { "AGENTS.md": t };
+		}
+		const all = await providerRows();
+		return rules ? Object.fromEntries(Object.entries(all).filter(([id]) => !isIgnoredPath(rules, `providers/${id}`))) : all;
 	};
 	const hashOfItem = (kind: Kind, v: unknown): string =>
 		kind === "ext" ? itemHash(plain(v) ? publicOf(v) : undefined) : kind === "provider" ? providerHash(plain(v) ? v : undefined) : itemHash(v);
@@ -1314,20 +1876,23 @@ export default (pi: any) => {
 
 	/**
 	 * A follower's own changes, made there since the last sync (it decided that; the primary wins a conflict by sending
-	 * its value back on the next pull). Taken only on the primary, only for what this server mirrors anyway, and never a
-	 * secret, an install or code: settings rows, the public settings of extensions installed here, skill/helper/AGENTS.md
-	 * text and model connections. Each goes through this server's own route or the same writes a pull does, so this
-	 * server's apps hear about it. The caller is a paired device (the follower's token), like any client of this server.
+	 * its value back on the next pull). Taken only on the primary, only for what this server mirrors anyway (and not
+	 * excluded by this server's `syncignore`), and never a secret, an install or code: settings rows, individual MCP
+	 * servers, the public settings of extensions installed here, skill/helper/AGENTS.md text and model connections.
+	 * Each goes through this server's own route or the same writes a pull does, so this server's apps hear about it.
+	 * The caller is a paired device (the follower's token), like any client of this server.
 	 */
 	pi.registerMethod("push", async (params: unknown) => {
 		if (role() !== "primary") throw new Error("this server is not a primary");
 		if (isPaused()) throw new Error("sync is paused on the primary");
 		if (!plain(params)) throw new Error("nothing to push");
+		const rules = activeRules();
 		const changed: string[] = [];
-		const list = keys();
+		const list = allowedKeys(keys(), rules);
 		let refused: string[] = [];
+		const hasMcpParam = plain(params.mcp);
 		const before = await captureBefore({
-			rowKeys: (plain(params.settings) || Array.isArray(params.deleted)) ? list : undefined,
+			rowKeys: (plain(params.settings) || Array.isArray(params.deleted) || hasMcpParam) ? list : undefined,
 			extensions: plain(params.extensions),
 			skills: plain(params.skills),
 			subagents: plain(params.subagents),
@@ -1337,15 +1902,61 @@ export default (pi: any) => {
 		if (plain(params.settings) || Array.isArray(params.deleted)) {
 			const rows = plain(params.settings) ? params.settings : {};
 			const gone = Array.isArray(params.deleted) ? params.deleted.filter((k): k is string => typeof k === "string") : [];
-			const touched = [...Object.keys(rows), ...gone].filter((k) => list.includes(k));
-			const next: Record<string, unknown> = { ...readSettings(dbo(), touched) };
-			for (const k of touched) if (k in rows && fitsHere(k, rows[k])) next[k] = rows[k];
-			for (const k of gone) if (list.includes(k)) delete next[k];
+			const touched = [...new Set([...Object.keys(rows), ...gone])].filter((k) => list.includes(k) && !(k === "mcp_servers" && hasMcpParam));
+			const curRows = readSettings(dbo(), touched);
+			const next: Record<string, unknown> = { ...curRows };
+			for (const k of touched) {
+				if (k === "mcp_servers") {
+					// Legacy follower pushing whole mcp_servers row: preserve MCP servers ignored on primary.
+					const curMcp = mcpMap(curRows.mcp_servers);
+					const keptIgnored = Object.fromEntries(Object.entries(curMcp).filter(([n]) => isIgnoredPath(rules, `mcp/${n}`)));
+					if (k in rows) {
+						const incoming = Object.fromEntries(Object.entries(mcpMap(rows[k])).filter(([n]) => !isIgnoredPath(rules, `mcp/${n}`)));
+						next[k] = mcpArray(curRows.mcp_servers, { ...keptIgnored, ...incoming });
+					} else if (gone.includes(k)) {
+						if (Object.keys(keptIgnored).length) next[k] = mcpArray(curRows.mcp_servers, keptIgnored);
+						else delete next[k];
+					}
+					continue;
+				}
+				if (k in rows && fitsHere(k, rows[k])) next[k] = rows[k];
+				else if (gone.includes(k)) delete next[k];
+			}
 			// A value this server refuses (a model it does not have) stays its own, and the primary wins it back on the
 			// next pull: its hash below is one that matches nothing, so the follower sees the primary's value as changed.
 			const res = await applyRows(touched, next);
 			changed.push(...res.changed);
 			refused = res.refused.map((r) => r.key);
+		}
+		const pushedMcpNames: string[] = [];
+		let mcpRefused = false;
+		if (hasMcpParam && list.includes("mcp_servers")) {
+			const p = params.mcp as Record<string, unknown>;
+			const upserted = plain(p.upserted) ? p.upserted : {};
+			const deleted = Array.isArray(p.deleted) ? p.deleted.filter((x): x is string => typeof x === "string") : [];
+			const curRaw = readSettings(dbo(), ["mcp_servers"]).mcp_servers;
+			const nextMap = mcpMap(curRaw);
+			let touchedMcp = false;
+			for (const [name, val] of Object.entries(upserted)) {
+				const trimmed = name.trim();
+				if (!trimmed || !plain(val) || isIgnoredPath(rules, `mcp/${trimmed}`)) continue;
+				nextMap[trimmed] = { ...val, name: trimmed };
+				pushedMcpNames.push(trimmed);
+				touchedMcp = true;
+			}
+			for (const name of deleted) {
+				const trimmed = name.trim();
+				if (!trimmed || isIgnoredPath(rules, `mcp/${trimmed}`)) continue;
+				delete nextMap[trimmed];
+				pushedMcpNames.push(trimmed);
+				touchedMcp = true;
+			}
+			if (touchedMcp) {
+				const merged = mcpArray(curRaw, nextMap);
+				const res = await applyRows(["mcp_servers"], merged.length ? { mcp_servers: merged } : {});
+				changed.push(...res.changed);
+				if (res.refused.some((r) => r.key === "mcp_servers")) mcpRefused = true;
+			}
 		}
 		if (plain(params.extensions)) {
 			const all = await extensionSettings();
@@ -1353,6 +1964,7 @@ export default (pi: any) => {
 			const installed = new Set((await installedServerExtensions()).map((e) => e.id));
 			for (const [id, value] of Object.entries(params.extensions)) {
 				if (id === SELF_ID || !EXTENSION_ID.test(id) || !plain(value) || !(id in all || installed.has(id))) continue;
+				if (isIgnoredPath(rules, `extensions/${id}/settings`)) continue;
 				const current = all[id] ?? {};
 				// never a secret from the follower, and this server's own secrets stay
 				const next = { ...publicOf(value), ...Object.fromEntries(Object.entries(current).filter(([k]) => CREDENTIAL_KEY.test(k))) };
@@ -1363,11 +1975,23 @@ export default (pi: any) => {
 			}
 		}
 		const home = agentsHome();
-		if (plain(params.skills)) changed.push(...applyFolders(join(home, ".agents", "skills"), params.skills as Record<string, FileSet>, "skill"));
-		if (plain(params.subagents)) changed.push(...applyFiles(join(home, ".agents", "subagents"), params.subagents as FileSet, /\.md$/, "helper"));
-		if (typeof params.agentsMd === "string") changed.push(...applyText(join(home, ".agents", "AGENTS.md"), params.agentsMd, "agents-md"));
+		if (plain(params.skills)) {
+			const allowedSkills = filterFoldersByRules(rules, "skills", params.skills as Record<string, FileSet>);
+			changed.push(...applyFolders(join(home, ".agents", "skills"), allowedSkills, "skill", (name, rel) => isIgnoredPath(rules, `skills/${name}/${rel}`)));
+		}
+		if (plain(params.subagents)) {
+			const allowedSub = Object.fromEntries(Object.entries(params.subagents as FileSet).filter(([name]) => !isIgnoredPath(rules, `subagents/${name.replace(/\.md$/i, "")}`)));
+			changed.push(...applyFiles(join(home, ".agents", "subagents"), allowedSub, /\.md$/, "helper"));
+		}
+		if (typeof params.agentsMd === "string" && !isIgnoredPath(rules, "agents-md")) {
+			changed.push(...applyText(join(home, ".agents", "AGENTS.md"), params.agentsMd, "agents-md"));
+		}
 		if (plain(params.providers)) {
-			const clean = Object.fromEntries(Object.entries(params.providers).filter(([, v]) => plain(v)).map(([id, v]) => [id, publicOf(v as Record<string, unknown>)]));
+			const clean = Object.fromEntries(
+				Object.entries(params.providers)
+					.filter(([id, v]) => plain(v) && !isIgnoredPath(rules, `providers/${id}`))
+					.map(([id, v]) => [id, publicOf(v as Record<string, unknown>)]),
+			);
 			changed.push(...(await applyProviders(clean)));
 		}
 		if (changed.length) {
@@ -1380,6 +2004,7 @@ export default (pi: any) => {
 		// comparison starts from there, so a value this server stores a little differently is not a change.
 		const sent: Partial<Record<Kind, string[]>> = {
 			rows: [...Object.keys(plain(params.settings) ? params.settings : {}), ...(Array.isArray(params.deleted) ? params.deleted.filter((k): k is string => typeof k === "string") : [])],
+			mcp: [...new Set(pushedMcpNames)],
 			ext: Object.keys(plain(params.extensions) ? params.extensions : {}),
 			skill: Object.keys(plain(params.skills) ? params.skills : {}),
 			helper: Object.keys(plain(params.subagents) ? params.subagents : {}),
@@ -1389,8 +2014,11 @@ export default (pi: any) => {
 		const hashes: Partial<Record<Kind, Record<string, string>>> = {};
 		for (const [kind, ids] of Object.entries(sent) as [Kind, string[]][]) {
 			if (!ids.length) continue;
-			const now = await localItems(kind, kind === "rows" ? ids.filter((k) => list.includes(k)) : []);
-			hashes[kind] = Object.fromEntries(ids.map((id) => [id, kind === "rows" && refused.includes(id) ? "refused" : hashOfItem(kind, now[id])]));
+			const now = await localItems(kind, kind === "rows" ? ids.filter((k) => list.includes(k)) : [], rules);
+			hashes[kind] = Object.fromEntries(ids.map((id) => [
+				id,
+				(kind === "rows" && refused.includes(id)) || (kind === "mcp" && mcpRefused) ? "refused" : hashOfItem(kind, now[id]),
+			]));
 		}
 		return { applied: changed, hashes };
 	});
@@ -1466,14 +2094,22 @@ export default (pi: any) => {
 	const syncNow = async (): Promise<string[]> => {
 		const { url, token } = cfg();
 		if (!url || !token) throw new Error("set the peer server URL and its admin token first");
-		const withExtensions = syncExtensions();
-		// Copying unlisted code is a sub-option of installing server extensions: it means nothing without it.
-		const parts = (Object.keys(PARTS) as Part[]).filter((p) => settings()[PARTS[p]] === true && (p !== "agentExtensions" || settings().syncExtensions === true) && (p !== "apiKeys" || settings().syncSecrets === true));
+		const rules = activeRules();
+		const withExtensions = syncExtensions(rules);
+		const parts: Part[] = [];
+		if (mayIncludeNamespace(rules, "extensions", "install")) parts.push("serverExtensions");
+		if (mayIncludeNamespace(rules, "extensions", "client")) parts.push("clientExtensions");
+		if (mayIncludeNamespace(rules, "skills")) parts.push("skills");
+		if (mayIncludeNamespace(rules, "subagents")) parts.push("subagents");
+		if (mayIncludeNamespace(rules, "agents-md")) parts.push("agentsMd");
+		if (mayIncludeNamespace(rules, "providers")) parts.push("providers");
+		if (wantSecrets() && mayIncludeNamespace(rules, "secrets/providers")) parts.push("apiKeys");
+		if (wantLocalExtensions() && mayIncludeNamespace(rules, "agent-extensions")) parts.push("agentExtensions");
 		const res = await fetch(`${url}/server-extensions/server-sync/methods/snapshot`, {
 			method: "POST",
 			headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
 			body: JSON.stringify({
-				...(withExtensions ? { extensions: true, ...(wantSecrets() ? { secrets: true } : {}) } : {}),
+				...(withExtensions ? { extensions: true, ...(wantSecrets() && mayIncludeNamespace(rules, "secrets/extensions") ? { secrets: true } : {}) } : {}),
 				...(parts.length ? { parts } : {}),
 				// who is pulling, for the primary's page: never the token or anything secret
 				from: { id: selfId(), name: followerLabel(), url: publicUrl(), interval: cfg().interval },
@@ -1482,31 +2118,36 @@ export default (pi: any) => {
 		});
 		if (res.status === 401 || res.status === 403) throw new Error(`the peer refused the token (${res.status})`);
 		if (!res.ok) throw new Error(`the peer answered ${res.status}`);
-		const body = (await res.json()) as { result?: { keys?: unknown; settings?: unknown; extensions?: unknown; environment?: unknown; push?: unknown } };
+		const body = (await res.json()) as { result?: { keys?: unknown; settings?: unknown; ignoredMcp?: unknown; extensions?: unknown; environment?: unknown; push?: unknown } };
 		const peer = body.result?.settings;
 		if (!peer || typeof peer !== "object" || Array.isArray(peer)) throw new Error("the peer returned no settings");
-		const list = pickedKeys(mirrorKeys(body.result?.keys, keys()));
+		const allAllowed = allowedKeys(mirrorKeys(body.result?.keys, keys()), rules);
+		const list = allAllowed.filter((k) => k !== "mcp_servers");
+		const syncMcp = allAllowed.includes("mcp_servers");
+		const primaryIgnoredMcp = new Set(Array.isArray(body.result?.ignoredMcp) ? body.result.ignoredMcp.filter((x): x is string => typeof x === "string") : []);
 		const changed: string[] = [];
-		// Two ways only with a primary that takes changes (0.14.0+); an older one is pulled from, as before.
-		const twoWay = body.result?.push === 1;
+		// Two ways only with a primary that takes changes (0.14.0+); push >= 2 supports per-server MCP push (0.19.0+).
+		const pushVersion = typeof body.result?.push === "number" ? body.result.push : 0;
+		const twoWay = pushVersion >= 1;
 		const base = readBase(url);
 		const planned: Kind[] = [];
 		/** Decide every item of one kind: what comes down, what goes up; the items already equal are recorded at once. */
 		const plan = async (kind: Kind, theirs: Record<string, unknown>, ids?: readonly string[]) => {
 			planned.push(kind);
-			const mine = await localItems(kind, list);
+			const mine = await localItems(kind, list, rules, kind === "mcp" ? primaryIgnoredMcp : undefined);
 			const items = (base.items[kind] ??= {});
 			const p = hashesOf(kind, theirs);
 			const f = hashesOf(kind, mine);
 			const first = !twoWay || !base.seen.includes(kind);
 			const known = base.items[kind] ?? {};
 			const out = { pull: [] as string[], push: [] as string[], mine, p };
+			const deletes = kind === "rows" || kind === "mcp";
 			for (const id of ids ?? [...new Set([...Object.keys(theirs), ...Object.keys(mine)])]) {
 				const hp = p[id] ?? "";
 				const hf = f[id] ?? "";
-				// a row never seen while its box was on (just turned on again) also starts by pulling
-				const fresh = kind === "rows" && base.seen.includes("rows") && !(id in known) && (hp !== "" || hf === "");
-				const d = decide(hp, hf, items[id], { first: first || fresh, deletes: kind === "rows" });
+				// a row or MCP server never seen while enabled (just re-included) starts by pulling
+				const fresh = deletes && base.seen.includes(kind) && !(id in known) && (hp !== "" || hf === "");
+				const d = decide(hp, hf, items[id], { first: first || fresh, deletes });
 				if (d === "pull") out.pull.push(id);
 				else if (d === "push" && twoWay) out.push.push(id);
 				else if (d === "keep") items[id] = "local";
@@ -1518,7 +2159,7 @@ export default (pi: any) => {
 		/** After pulling: both sides now hold the primary's value, hashed as each stores it. */
 		const settle = async (kind: Kind, ids: readonly string[], p: Record<string, string>) => {
 			if (!ids.length) return;
-			const now = hashesOf(kind, await localItems(kind, list));
+			const now = hashesOf(kind, await localItems(kind, list, rules, kind === "mcp" ? primaryIgnoredMcp : undefined));
 			const items = (base.items[kind] ??= {});
 			for (const id of ids) {
 				const hp = p[id] ?? "";
@@ -1530,7 +2171,7 @@ export default (pi: any) => {
 		/** What goes up, gathered over every kind and sent once the pulls are done. */
 		const up: { kind: Kind; ids: string[]; mine: Record<string, unknown> }[] = [];
 		const peerRows = Object.fromEntries(list.filter((k) => k in peer).map((k) => [k, (peer as Record<string, unknown>)[k]]));
-		// A row whose box is off forgets its history: turned on again, it starts by pulling (its first sync again).
+		// Excluded items forget their baseline: if re-included later, they start cleanly by pulling.
 		for (const k of Object.keys(base.items.rows ?? {})) if (!list.includes(k)) delete base.items.rows![k];
 		const rows = await plan("rows", peerRows, list);
 		const unfit = rows.pull.filter((k) => !fitsHere(k, peerRows[k]));
@@ -1539,11 +2180,25 @@ export default (pi: any) => {
 			for (const k of unfit) (base.items.rows ??= {})[k] = "local";
 			skippedPaths = unfit.map((k) => String(peerRows[k]));
 		} else skippedPaths = [];
+
+		// Individual MCP server sync (per-server merge, baseline, and push).
+		let mcpPlan: { pull: string[]; push: string[]; mine: Record<string, unknown>; p: Record<string, string> } | null = null;
+		let peerMcp: Record<string, Record<string, unknown>> = {};
+		if (syncMcp) {
+			const rawPeerMcp = "mcp_servers" in peer ? mcpMap((peer as Record<string, unknown>).mcp_servers) : {};
+			peerMcp = Object.fromEntries(Object.entries(rawPeerMcp).filter(([name]) => !isIgnoredPath(rules, `mcp/${name}`) && !primaryIgnoredMcp.has(name)));
+			for (const name of Object.keys(base.items.mcp ?? {})) {
+				if (isIgnoredPath(rules, `mcp/${name}`) || primaryIgnoredMcp.has(name)) delete base.items.mcp![name];
+			}
+			mcpPlan = await plan("mcp", peerMcp);
+		}
+
 		// Server extensions first: a pulled extension's settings need the extension installed to mean anything.
 		// A primary older than 0.10.0 sends no environment: nothing to do, not an error.
 		const env = plain(body.result?.environment) ? (body.result.environment as Environment) : {};
+		const beforeRowKeys = [...rows.pull, ...(mcpPlan?.pull.length ? ["mcp_servers"] : [])];
 		const before = await captureBefore({
-			rowKeys: rows.pull.length ? rows.pull : undefined,
+			rowKeys: beforeRowKeys.length ? beforeRowKeys : undefined,
 			extensions: withExtensions && plain(body.result?.extensions),
 			clientExtensions: parts.includes("clientExtensions") && plain(env.clientExtensions),
 			skills: parts.includes("skills") && plain(env.skills),
@@ -1558,6 +2213,25 @@ export default (pi: any) => {
 		refusedRows = applied.refused;
 		await settle("rows", rows.pull.filter((k) => !applied.refused.some((r) => r.key === k)), rows.p);
 		up.push({ kind: "rows", ids: rows.push, mine: rows.mine });
+
+		if (mcpPlan) {
+			if (mcpPlan.pull.length) {
+				const curRaw = readSettings(dbo(), ["mcp_servers"]).mcp_servers;
+				const nextMap = mcpMap(curRaw);
+				for (const name of mcpPlan.pull) {
+					if (name in peerMcp) nextMap[name] = peerMcp[name]!;
+					else delete nextMap[name];
+				}
+				const hasKept = Object.keys(nextMap).length > 0;
+				const mergedVal = hasKept ? { mcp_servers: mcpArray(curRaw, nextMap) } : ("mcp_servers" in peer ? { mcp_servers: [] } : {});
+				const mcpApplied = await applyRows(["mcp_servers"], mergedVal);
+				changed.push(...mcpApplied.changed);
+				if (mcpApplied.refused.length) refusedRows = [...refusedRows, ...mcpApplied.refused];
+				else await settle("mcp", mcpPlan.pull, mcpPlan.p);
+			}
+			up.push({ kind: "mcp", ids: mcpPlan.push, mine: mcpPlan.mine });
+		}
+
 		if (parts.includes("serverExtensions") && Array.isArray(env.serverExtensions)) {
 			const fetchCode = async (ids: string[]): Promise<InstalledExtension[]> => {
 				const r = await fetch(`${url}/server-extensions/server-sync/methods/snapshot`, {
@@ -1570,12 +2244,20 @@ export default (pi: any) => {
 				const b = (await r.json()) as { result?: { environment?: { serverExtensions?: unknown } } };
 				return Array.isArray(b.result?.environment?.serverExtensions) ? (b.result.environment.serverExtensions as InstalledExtension[]) : [];
 			};
-			changed.push(...(await applyServerExtensions(env.serverExtensions, fetchCode)));
+			changed.push(...(await applyServerExtensions(env.serverExtensions, fetchCode, rules)));
 		}
 		const pick = <T,>(from: Record<string, T>, ids: readonly string[]) => Object.fromEntries(ids.filter((id) => id in from).map((id) => [id, from[id]!]));
 		// A primary older than 0.8.0 sends no extensions: nothing to do, not an error.
 		if (withExtensions && plain(body.result?.extensions)) {
-			const theirs = body.result.extensions as Record<string, Record<string, unknown>>;
+			const rawTheirs = body.result.extensions as Record<string, Record<string, unknown>>;
+			const theirs: Record<string, Record<string, unknown>> = {};
+			for (const [id, v] of Object.entries(rawTheirs)) {
+				if (!plain(v) || isIgnoredPath(rules, `extensions/${id}/settings`)) continue;
+				theirs[id] = wantSecrets()
+					? Object.fromEntries(Object.entries(v).filter(([k]) => !CREDENTIAL_KEY.test(k) || (!isIgnoredPath(rules, `secrets/extensions/${id}`) && !isIgnoredPath(rules, `secrets/extensions/${id}/${k}`))))
+					: v;
+			}
+			for (const id of Object.keys(base.items.ext ?? {})) if (isIgnoredPath(rules, `extensions/${id}/settings`)) delete base.items.ext![id];
 			const ext = await plan("ext", theirs);
 			changed.push(...(await applyExtensions(pick(theirs, ext.pull))));
 			// A secret the primary sent (비밀값 on both sides) fills a gap here even when nothing else differs.
@@ -1594,22 +2276,28 @@ export default (pi: any) => {
 			up.push({ kind: "ext", ids: ext.push, mine: ext.mine });
 		}
 		const home = agentsHome();
-		if (parts.includes("clientExtensions") && plain(env.clientExtensions)) changed.push(...(await applyClientExtensions(env.clientExtensions)));
+		if (parts.includes("clientExtensions") && plain(env.clientExtensions)) changed.push(...(await applyClientExtensions(env.clientExtensions, rules)));
 		if (parts.includes("skills") && plain(env.skills)) {
-			const theirs = env.skills as Record<string, FileSet>;
+			const theirs = filterFoldersByRules(rules, "skills", env.skills as Record<string, FileSet>);
+			for (const name of Object.keys(base.items.skill ?? {})) {
+				if (isIgnoredPath(rules, `skills/${name}`) && !(name in theirs)) delete base.items.skill![name];
+			}
 			const r = await plan("skill", theirs);
-			changed.push(...applyFolders(join(home, ".agents", "skills"), pick(theirs, r.pull), "skill"));
+			changed.push(...applyFolders(join(home, ".agents", "skills"), pick(theirs, r.pull), "skill", (name, rel) => isIgnoredPath(rules, `skills/${name}/${rel}`)));
 			await settle("skill", r.pull, r.p);
 			up.push({ kind: "skill", ids: r.push, mine: r.mine });
 		}
 		if (parts.includes("subagents") && plain(env.subagents)) {
-			const theirs = env.subagents as FileSet;
+			const theirs = Object.fromEntries(Object.entries(env.subagents as FileSet).filter(([name]) => !isIgnoredPath(rules, `subagents/${name.replace(/\.md$/i, "")}`)));
+			for (const name of Object.keys(base.items.helper ?? {})) {
+				if (isIgnoredPath(rules, `subagents/${name.replace(/\.md$/i, "")}`)) delete base.items.helper![name];
+			}
 			const r = await plan("helper", theirs);
 			changed.push(...applyFiles(join(home, ".agents", "subagents"), pick(theirs, r.pull), /\.md$/, "helper"));
 			await settle("helper", r.pull, r.p);
 			up.push({ kind: "helper", ids: r.push, mine: r.mine });
 		}
-		if (parts.includes("agentsMd") && "agentsMd" in env) {
+		if (parts.includes("agentsMd") && "agentsMd" in env && !isIgnoredPath(rules, "agents-md")) {
 			const theirs: Record<string, string> = typeof env.agentsMd === "string" ? { "AGENTS.md": env.agentsMd } : {};
 			const r = await plan("agentsMd", theirs, ["AGENTS.md"]);
 			if (r.pull.length) changed.push(...applyText(join(home, ".agents", "AGENTS.md"), theirs["AGENTS.md"] ?? null, "agents-md"));
@@ -1617,7 +2305,8 @@ export default (pi: any) => {
 			up.push({ kind: "agentsMd", ids: r.push, mine: r.mine });
 		}
 		if (parts.includes("providers") && plain(env.providers)) {
-			const theirs = env.providers as Record<string, Record<string, unknown>>;
+			const theirs = Object.fromEntries(Object.entries(env.providers as Record<string, Record<string, unknown>>).filter(([id]) => !isIgnoredPath(rules, `providers/${id}`)));
+			for (const id of Object.keys(base.items.provider ?? {})) if (isIgnoredPath(rules, `providers/${id}`)) delete base.items.provider![id];
 			const r = await plan("provider", theirs);
 			changed.push(...(await applyProviders(pick(theirs, r.pull))));
 			await settle("provider", r.pull, r.p);
@@ -1645,11 +2334,29 @@ export default (pi: any) => {
 		};
 		const batches: Record<string, unknown>[] = [];
 		const main: Record<string, unknown> = {};
+		let legacyMcpFallback = false;
 		for (const { kind, ids, mine } of up) {
 			if (!ids.length) continue;
 			if (kind === "rows") {
 				main.settings = pick(mine, ids);
 				main.deleted = ids.filter((id) => !(id in mine));
+			} else if (kind === "mcp") {
+				if (pushVersion >= 2) {
+					main.mcp = {
+						upserted: pick(mine, ids),
+						deleted: ids.filter((id) => !(id in mine)),
+					};
+				} else {
+					// Pre-0.19 primary only accepts whole `mcp_servers` row: only push if no local MCP servers are hidden.
+					const fullLocal = mcpMap(readSettings(dbo(), ["mcp_servers"]).mcp_servers);
+					const hasHiddenLocal = Object.keys(fullLocal).some((n) => isIgnoredPath(rules, `mcp/${n}`) || primaryIgnoredMcp.has(n));
+					if (!hasHiddenLocal) {
+						const arr = mcpArray(readSettings(dbo(), ["mcp_servers"]).mcp_servers, mine as Record<string, Record<string, unknown>>);
+						if (arr.length) main.settings = { ...(plain(main.settings) ? main.settings : {}), mcp_servers: arr };
+						else main.deleted = [...(Array.isArray(main.deleted) ? main.deleted : []), "mcp_servers"];
+						legacyMcpFallback = true;
+					}
+				}
 			} else if (kind === "ext") main.extensions = Object.fromEntries(ids.filter((id) => id in mine).map((id) => [id, publicOf(mine[id] as Record<string, unknown>)]));
 			else if (kind === "helper") main.subagents = pick(mine, ids);
 			else if (kind === "agentsMd") { if (typeof mine["AGENTS.md"] === "string") main.agentsMd = mine["AGENTS.md"]; }
@@ -1663,7 +2370,17 @@ export default (pi: any) => {
 			changed.push(...res.applied.map((k) => `up:${k}`));
 			for (const { kind, ids, mine } of up) {
 				const got = res.hashes[kind];
-				if (!got) continue;
+				if (!got) {
+					if (kind === "mcp" && legacyMcpFallback && res.hashes.rows && "mcp_servers" in res.hashes.rows && res.hashes.rows.mcp_servers !== "refused") {
+						const items = (base.items.mcp ??= {});
+						const f = hashesOf("mcp", mine);
+						for (const id of ids) {
+							if (!f[id]) delete items[id];
+							else items[id] = { p: f[id]!, f: f[id]! };
+						}
+					}
+					continue;
+				}
 				const items = (base.items[kind] ??= {});
 				const f = hashesOf(kind, mine);
 				for (const id of ids) {
@@ -1675,13 +2392,20 @@ export default (pi: any) => {
 			}
 			writeBase(base);
 		}
-		if (parts.includes("apiKeys") && plain(env.apiKeys)) changed.push(...(await applyApiKeys(env.apiKeys as Record<string, string>)));
+		if (parts.includes("apiKeys") && plain(env.apiKeys)) {
+			const allowedKeysMap = Object.fromEntries(Object.entries(env.apiKeys as Record<string, string>).filter(([id]) => !isIgnoredPath(rules, `secrets/providers/${id}`)));
+			changed.push(...(await applyApiKeys(allowedKeysMap)));
+		}
 		if (parts.includes("agentExtensions") && plain(env.agentExtensions)) {
 			const dir = join(home, ".agents", "extensions");
 			const a = env.agentExtensions as { files?: unknown; folders?: unknown };
+			const allowedFiles = plain(a.files)
+				? Object.fromEntries(Object.entries(a.files as FileSet).filter(([name]) => !isIgnoredPath(rules, `agent-extensions/${name}`)))
+				: {};
+			const allowedFolders = plain(a.folders) ? filterFoldersByRules(rules, "agent-extensions", a.folders as Record<string, FileSet>) : {};
 			const copied = [
-				...(plain(a.files) ? applyFiles(dir, a.files as FileSet, /\.(ts|js|mjs)$/, "agent-ext") : []),
-				...(plain(a.folders) ? applyFolders(dir, a.folders as Record<string, FileSet>, "agent-ext") : []),
+				...applyFiles(dir, allowedFiles, /\.(ts|js|mjs)$/, "agent-ext"),
+				...applyFolders(dir, allowedFolders, "agent-ext", (name, rel) => isIgnoredPath(rules, `agent-extensions/${name}/${rel}`)),
 			];
 			if (copied.length) {
 				const res = await own("POST", "/server-extensions/reload", {});
@@ -1696,10 +2420,10 @@ export default (pi: any) => {
 	 * Install what the primary has and this server lacks (or has at another version), from the marketplace's pinned git
 	 * source, through this server's own install route. Never removes one: an extension only here stays.
 	 */
-	const applyServerExtensions = async (theirs: InstalledExtension[], fetchCode: (ids: string[]) => Promise<InstalledExtension[]>): Promise<string[]> => {
+	const applyServerExtensions = async (theirs: InstalledExtension[], fetchCode: (ids: string[]) => Promise<InstalledExtension[]>, rules: readonly SyncRule[] = []): Promise<string[]> => {
 		const mineList = await installedServerExtensions();
 		const mine = new Map(mineList.map((e) => [e.id, e.version]));
-		const wanted = theirs.filter((e) => plain(e) && typeof e.id === "string" && EXTENSION_ID.test(e.id) && e.id !== SELF_ID && typeof e.version === "string" && mine.get(e.id) !== e.version);
+		const wanted = theirs.filter((e) => plain(e) && typeof e.id === "string" && EXTENSION_ID.test(e.id) && e.id !== SELF_ID && !isIgnoredPath(rules, `extensions/${e.id}/install`) && typeof e.version === "string" && mine.get(e.id) !== e.version);
 		if (!wanted.length) { unlisted = []; return []; }
 		let catalog: Record<string, any>[] = [];
 		try { catalog = await fetchCatalog(); } catch (e) { log(`marketplace: ${e instanceof Error ? e.message : String(e)}`); }
@@ -1715,11 +2439,12 @@ export default (pi: any) => {
 		}
 		// Not in the marketplace at that version (a hand-made or newer local build): its code comes from the primary, but
 		// only with its own box checked, since it is code nobody reviewed that runs inside this server.
-		if (missing.length && settings().syncLocalExtensions === true) {
-			const withCode = await fetchCode(missing.map((e) => e.id));
+		const copyable = missing.filter((e) => !isIgnoredPath(rules, `extensions/${e.id}/code`));
+		if (copyable.length && wantLocalExtensions()) {
+			const withCode = await fetchCode(copyable.map((e) => e.id));
 			let copied = false;
 			for (const e of withCode) {
-				if (!plain(e) || !missing.some((m) => m.id === e.id) || !plain(e.files) || !Object.keys(e.files).length) continue;
+				if (!plain(e) || !copyable.some((m) => m.id === e.id) || !plain(e.files) || !Object.keys(e.files).length) continue;
 				if (copyExtension(e.id, e.files as FileSet)) { changed.push(`srv:${e.id}`); copied = true; }
 			}
 			// The server loads extensions from disk on reload: the copied code starts now.
@@ -1729,7 +2454,7 @@ export default (pi: any) => {
 			}
 			unlisted = [];
 		} else {
-			unlisted = missing.map((e) => `${e.id} ${e.version}`);
+			unlisted = copyable.map((e) => `${e.id} ${e.version}`);
 			if (unlisted.length) log(`not in the marketplace: ${unlisted.join(", ")} (turn on 직접 만든 확장도 복사 to copy them)`);
 		}
 		return changed;
@@ -1789,11 +2514,35 @@ export default (pi: any) => {
 	};
 
 	/** The apps' extension list and on/off states, through `/client-settings` so open apps reload them. */
-	const applyClientExtensions = async (theirs: { list?: unknown; states?: unknown }): Promise<string[]> => {
+	const applyClientExtensions = async (theirs: { list?: unknown; states?: unknown }, rules?: readonly SyncRule[]): Promise<string[]> => {
 		const current = await clientExtensionRows();
 		const changed: string[] = [];
-		needsInput = findNeedsInput(theirs.list ?? current.list, theirs.states ?? current.states, await extensionSettings());
-		for (const [key, value] of [["extensions", theirs.list], ["extensionStates", theirs.states]] as const) {
+		const itemId = (x: unknown): string => (plain(x) && plain(x.manifest) && typeof x.manifest.id === "string" ? x.manifest.id : "");
+		let targetList = theirs.list;
+		let targetStates = theirs.states;
+		if (rules) {
+			if (Array.isArray(theirs.list)) {
+				const keptLocal = Array.isArray(current.list)
+					? current.list.filter((x) => { const id = itemId(x); return id ? isIgnoredPath(rules, `extensions/${id}/client`) : isIgnoredPath(rules, "extensions/__unknown__/client"); })
+					: [];
+				const keptIds = new Set(keptLocal.map(itemId).filter(Boolean));
+				const incoming = theirs.list.filter((x) => {
+					const id = itemId(x);
+					if (id) return !isIgnoredPath(rules, `extensions/${id}/client`) && !keptIds.has(id);
+					return !isIgnoredPath(rules, "extensions/__unknown__/client");
+				});
+				targetList = [...keptLocal, ...incoming];
+			}
+			if (plain(theirs.states)) {
+				const keptStates = plain(current.states)
+					? Object.fromEntries(Object.entries(current.states).filter(([id]) => isIgnoredPath(rules, `extensions/${id}/client`)))
+					: {};
+				const incomingStates = Object.fromEntries(Object.entries(theirs.states).filter(([id]) => !isIgnoredPath(rules, `extensions/${id}/client`)));
+				targetStates = { ...keptStates, ...incomingStates };
+			}
+		}
+		needsInput = findNeedsInput(targetList ?? current.list, targetStates ?? current.states, await extensionSettings());
+		for (const [key, value] of [["extensions", targetList], ["extensionStates", targetStates]] as const) {
 			if (value === null || value === undefined) continue;
 			if (JSON.stringify(current[key === "extensions" ? "list" : "states"]) === JSON.stringify(value)) continue;
 			const res = await own("PUT", `/client-settings/${key}`, { value });
@@ -2110,6 +2859,206 @@ export default (pi: any) => {
 		return { id: target.id, rows };
 	};
 
+	/**
+	 * Discover all live syncable items on this server and evaluate each against `overrideText` (or the active rules).
+	 * Never reads or returns any secret value — only canonical sync paths, status, and matching rule.
+	 */
+	const inspectRules = async (overrideText?: string, testPaths?: readonly string[]): Promise<RulesInspection & { tested?: DiscoveredSyncItem[] }> => {
+		const content = overrideText ?? readRulesText();
+		const { rules, warnings } = parseSyncRules(content);
+		const items: DiscoveredSyncItem[] = [];
+		const seen = new Set<string>();
+		const pushItem = (path: string) => {
+			if (seen.has(path)) return;
+			seen.add(path);
+			const m = matchSyncPath(rules, path);
+			items.push({ path, synced: !m.ignored, matchedBy: m.matchedBy?.raw ?? null });
+		};
+		// 1. Settings rows (except mcp_servers, which is expanded per server below).
+		const allKeys = keys();
+		let settingsRows: Record<string, unknown> = {};
+		try { settingsRows = readSettings(dbo(), allKeys); } catch { /* db may not exist yet */ }
+		for (const k of allKeys) {
+			if (k === "mcp_servers") continue;
+			pushItem(`settings/${k}`);
+		}
+		// 2. Individual MCP servers.
+		for (const name of Object.keys(mcpMap(settingsRows.mcp_servers)).sort()) {
+			pushItem(`mcp/${name}`);
+		}
+		// 3. Installed server extensions, extension settings, and client extensions.
+		const extIds = new Set<string>();
+		try {
+			for (const e of await installedServerExtensions()) extIds.add(e.id);
+		} catch { /* ignore */ }
+		try {
+			for (const id of Object.keys(shareable(await extensionSettings()))) extIds.add(id);
+		} catch { /* ignore */ }
+		try {
+			const c = await clientExtensionRows();
+			if (Array.isArray(c.list)) {
+				for (const item of c.list) {
+					if (plain(item) && plain(item.manifest) && typeof item.manifest.id === "string" && item.manifest.id !== SELF_ID) extIds.add(item.manifest.id);
+				}
+			}
+			if (plain(c.states)) {
+				for (const id of Object.keys(c.states)) if (id !== SELF_ID) extIds.add(id);
+			}
+		} catch { /* ignore */ }
+		for (const id of [...extIds].sort()) {
+			const subAspects = ["install", "settings", "client"] as const;
+			const states = subAspects.map((sub) => matchSyncPath(rules, `extensions/${id}/${sub}`));
+			const allSame = states.every((st) => st.ignored === states[0]!.ignored);
+			if (allSame) {
+				const m = matchSyncPath(rules, `extensions/${id}`);
+				const eff = m.ignored === states[0]!.ignored ? m : states[0]!;
+				if (!seen.has(`extensions/${id}`)) {
+					seen.add(`extensions/${id}`);
+					items.push({ path: `extensions/${id}`, synced: !states[0]!.ignored, matchedBy: eff.matchedBy?.raw ?? null });
+				}
+			} else {
+				for (const sub of subAspects) pushItem(`extensions/${id}/${sub}`);
+			}
+		}
+		// 4. Skills (~/.agents/skills) + file-level exceptions inside synced skills.
+		const home = agentsHome();
+		const skills = readFolders(join(home, ".agents", "skills"));
+		for (const name of Object.keys(skills).sort()) {
+			const files = Object.keys(skills[name] ?? {}).sort();
+			const matches = files.map((rel) => ({ rel, m: matchSyncPath(rules, `skills/${name}/${rel}`) }));
+			const syncedFiles = matches.filter((x) => !x.m.ignored);
+			const ignoredFiles = matches.filter((x) => x.m.ignored);
+			if (!syncedFiles.length) {
+				const top = matchSyncPath(rules, `skills/${name}`);
+				seen.add(`skills/${name}`);
+				items.push({ path: `skills/${name}`, synced: false, matchedBy: (top.ignored ? top.matchedBy : ignoredFiles[0]?.m.matchedBy)?.raw ?? null });
+			} else {
+				const top = matchSyncPath(rules, `skills/${name}`);
+				seen.add(`skills/${name}`);
+				items.push({ path: `skills/${name}`, synced: true, matchedBy: (!top.ignored ? top.matchedBy : syncedFiles[0]?.m.matchedBy)?.raw ?? null });
+				for (const ig of ignoredFiles) pushItem(`skills/${name}/${ig.rel}`);
+			}
+		}
+		// 5. Subagents (~/.agents/subagents/*.md).
+		for (const file of Object.keys(readFiles(join(home, ".agents", "subagents"), /\.md$/)).sort()) {
+			pushItem(`subagents/${file.replace(/\.md$/i, "")}`);
+		}
+		// 6. Global AGENTS.md.
+		if (readText(join(home, ".agents", "AGENTS.md")) !== null) pushItem("agents-md");
+		// 7. Custom providers.
+		try {
+			for (const id of Object.keys(await providerRows()).sort()) pushItem(`providers/${id}`);
+		} catch { /* ignore */ }
+		// 8. ~/.agents/extensions (local agent extensions).
+		const agentExtDir = join(home, ".agents", "extensions");
+		for (const file of Object.keys(readFiles(agentExtDir, /\.(ts|js|mjs)$/)).sort()) pushItem(`agent-extensions/${file}`);
+		for (const folder of Object.keys(readFolders(agentExtDir)).sort()) pushItem(`agent-extensions/${folder}`);
+
+		const syncedCount = items.filter((i) => i.synced).length;
+		const ignoredCount = items.length - syncedCount;
+		const result: RulesInspection & { tested?: DiscoveredSyncItem[] } = {
+			file: rulesFile(),
+			exists: hasRulesFile(),
+			role: role(),
+			content,
+			warnings,
+			gates: {
+				syncLocalExtensions: wantLocalExtensions(),
+				syncSecrets: wantSecrets(),
+				shareSecrets: settings().shareSecrets === true,
+			},
+			items,
+			syncedCount,
+			ignoredCount,
+		};
+		if (testPaths?.length) {
+			result.tested = testPaths.slice(0, MAX_KEYS).map((raw) => {
+				const p = normalizeSyncPathAlias(raw.slice(0, 300).replace(/^\/+/, "").replace(/\/+$/, ""));
+				const m = matchSyncPath(rules, p);
+				return { path: p, synced: !m.ignored, matchedBy: m.matchedBy?.raw ?? null };
+			});
+		}
+		return result;
+	};
+
+	const saveRulesContent = async (raw: string) => {
+		const clean = raw.replace(/\u0000/g, "");
+		if (clean.length > MAX_RULES_BYTES) throw new Error(`syncignore exceeds ${MAX_RULES_BYTES} bytes`);
+		writeRulesText(clean);
+		const inspected = await inspectRules();
+		rulesDraft = inspected.content;
+		rulesPreviewCache = inspected;
+		log(`updated syncignore (${inspected.syncedCount} synced, ${inspected.ignoredCount} excluded)`);
+		showStatus();
+		return inspected;
+	};
+
+	pi.registerMethod("rules", async (params: unknown) => {
+		const content = plain(params) && typeof params.content === "string" ? params.content : undefined;
+		const paths = plain(params) && Array.isArray(params.paths) ? params.paths.filter((x): x is string => typeof x === "string").slice(0, MAX_KEYS) : undefined;
+		return inspectRules(content, paths);
+	});
+	pi.registerMethod("setRules", async (params: unknown) => {
+		if (!plain(params) || typeof params.content !== "string") throw new Error("content (string) is required");
+		return saveRulesContent(params.content);
+	});
+
+	if (typeof pi.registerTool === "function" && pi.Type) {
+		const T = pi.Type;
+		pi.registerTool({
+			name: "server_sync_rules",
+			label: "Server Sync Rules",
+			description: [
+				"Inspect, test, or edit this server's .gitignore-style server-sync rules file (`syncignore`).",
+				"Use action='inspect' to see the rules file path, active patterns, security gates, and every discovered syncable item on this server.",
+				"Use action='set' with `content` to replace the file, action='add' or 'remove' with `patterns` to append/delete lines while keeping comments, action='reset' to restore role defaults, or action='test' with optional `content` and `paths` to dry-run without saving.",
+				"Namespaces: settings/<key>, mcp/<name>, extensions/<id>[/{install,settings,client,code}], skills/<name>[/<file>], subagents/<name>, agents-md, providers/<id>, agent-extensions/<name>, secrets/providers/<id>, secrets/extensions/<id>.",
+				"Security switches (syncLocalExtensions, syncSecrets, shareSecrets) and NEVER_SYNCED keys cannot be bypassed by rules.",
+			].join(" "),
+			parameters: T.Object({
+				action: T.Optional(T.String({ description: "inspect | set | add | remove | reset | test (default: inspect)" })),
+				content: T.Optional(T.String({ description: "Full .gitignore-style rules text (for action='set' or dry-run action='test')" })),
+				patterns: T.Optional(T.Array(T.String(), { description: "Pattern lines to add or remove (for action='add' or 'remove')" })),
+				paths: T.Optional(T.Array(T.String(), { description: "Specific canonical sync paths to evaluate (for action='test')" })),
+			}),
+			execute: async (_id: string, params: Record<string, unknown>) => {
+				const action = typeof params?.action === "string" ? params.action : "inspect";
+				let result: RulesInspection & { tested?: DiscoveredSyncItem[] };
+				if (action === "inspect") {
+					result = await inspectRules();
+				} else if (action === "test") {
+					const content = typeof params?.content === "string" ? params.content : undefined;
+					const paths = Array.isArray(params?.paths) ? params.paths.filter((x): x is string => typeof x === "string").slice(0, MAX_KEYS) : undefined;
+					result = await inspectRules(content, paths);
+				} else if (action === "set") {
+					if (typeof params?.content !== "string") throw new Error("action='set' requires `content`");
+					result = await saveRulesContent(params.content);
+				} else if (action === "add") {
+					const pats = Array.isArray(params?.patterns) ? params.patterns.map((x) => String(x).replace(/[\r\n\u0000]/g, "").trim()).filter(Boolean) : [];
+					if (!pats.length) throw new Error("action='add' requires non-empty `patterns`");
+					const current = readRulesText();
+					const existing = new Set(current.split(/\r?\n/).map((l) => l.trim()));
+					const toAdd = pats.filter((p) => !existing.has(p));
+					const base = current.replace(/\s*$/, "");
+					const next = toAdd.length ? `${base ? `${base}\n` : ""}${toAdd.join("\n")}\n` : current;
+					result = await saveRulesContent(next);
+				} else if (action === "remove") {
+					const pats = new Set(Array.isArray(params?.patterns) ? params.patterns.map((x) => String(x).replace(/[\r\n\u0000]/g, "").trim()).filter(Boolean) : []);
+					if (!pats.size) throw new Error("action='remove' requires non-empty `patterns`");
+					const current = readRulesText();
+					const cleaned = current.split(/\r?\n/).filter((l) => !pats.has(l.trim())).join("\n").replace(/\n{3,}/g, "\n\n").replace(/\s*$/, "");
+					const next = cleaned ? `${cleaned}\n` : "";
+					result = await saveRulesContent(next);
+				} else if (action === "reset") {
+					result = await saveRulesContent(defaultRulesText(role()));
+				} else {
+					throw new Error(`unknown action: ${action}`);
+				}
+				return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+			},
+		});
+	}
+
 	pi.registerMethod("backups", () => ({ backups: listBackups() }));
 	pi.registerMethod("restorePreview", async (params: unknown) => {
 		const id = plain(params) && typeof params.id === "string" ? params.id : listBackups()[0]?.id;
@@ -2294,7 +3243,7 @@ export default (pi: any) => {
 
 	/** What the page's buttons and fields do. */
 	if (hasPanel && typeof pi.ui.onEvent === "function") {
-		pi.ui.onEvent(async (e: { type: string; id: string; value?: unknown }) => {
+		pi.ui.onEvent(async (e: { type: string; id: string; value?: unknown; values?: Record<string, unknown> }) => {
 			if (e.type === "change") {
 				if (e.id === "backup-select" && typeof e.value === "string") {
 					selectedBackupId = e.value;
@@ -2313,6 +3262,31 @@ export default (pi: any) => {
 				} else if (e.id === "restore-after" && typeof e.value === "string") {
 					pauseAfterRestore = e.value === "pause";
 					showStatus();
+				} else if (e.id === `rules-text-${rulesDraftRevision}` && typeof e.value === "string") {
+					rulesDraft = e.value;
+					try { rulesPreviewCache = await inspectRules(rulesDraft); } catch { /* ignore */ }
+					showStatus();
+				}
+				return;
+			}
+			if (e.type === "submit") {
+				if (e.id === "rules-form" && !pulling && !busy) {
+					const fieldId = `rules-text-${rulesDraftRevision}`;
+					const submitted = plain(e.values) && typeof e.values[fieldId] === "string" ? (e.values[fieldId] as string) : rulesDraft;
+					busy = true;
+					showStatus();
+					try {
+						await saveRulesContent(submitted);
+						editingRules = false;
+						rulesPreviewCache = null;
+						lastError = null;
+					} catch (err) {
+						lastError = err instanceof Error ? err.message : String(err);
+						log(`save rules failed: ${lastError}`);
+					} finally {
+						busy = false;
+						showStatus();
+					}
 				}
 				return;
 			}
@@ -2332,6 +3306,8 @@ export default (pi: any) => {
 				lastError = null;
 				confirmRestoreId = null;
 				previewRowsCache = null;
+				editingRules = false;
+				rulesPreviewCache = null;
 				pi.settings.set({ ...withoutToken(settings()), remoteUrl: "", shareCode: "" });
 				arm(true);
 				showStatus();
@@ -2340,8 +3316,38 @@ export default (pi: any) => {
 				pi.settings.set({ ...withoutToken(settings()), paused: false });
 				arm(true);
 				showStatus();
+			} else if (e.id === "rules-open") {
+				if (pulling || busy) return;
+				confirmRestoreId = null;
+				previewRowsCache = null;
+				rulesDraft = readRulesText();
+				rulesDraftRevision++;
+				editingRules = true;
+				showStatus();
+				try {
+					rulesPreviewCache = await inspectRules(rulesDraft);
+				} catch (err) {
+					lastError = err instanceof Error ? err.message : String(err);
+					log(`rules preview failed: ${lastError}`);
+				} finally {
+					showStatus();
+				}
+			} else if (e.id === "rules-reset") {
+				if (pulling || busy) return;
+				rulesDraft = defaultRulesText(role());
+				rulesDraftRevision++;
+				try {
+					rulesPreviewCache = await inspectRules(rulesDraft);
+				} catch { /* ignore */ }
+				showStatus();
+			} else if (e.id === "rules-cancel") {
+				editingRules = false;
+				rulesPreviewCache = null;
+				showStatus();
 			} else if (e.id === "restore-preview") {
 				if (pulling || busy) return;
+				editingRules = false;
+				rulesPreviewCache = null;
 				const list = listBackups();
 				const activeId = list.some((b) => b.id === selectedBackupId) ? selectedBackupId : list[0]?.id;
 				if (!activeId) return;
