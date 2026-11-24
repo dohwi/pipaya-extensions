@@ -117,7 +117,7 @@
         "예: 집 데스크톱": "e.g. Home desktop",
         "기준 서버의 기기 탭에 이 이름으로 표시됩니다. 비우면 이 PC 이름과 주소를 씁니다.": "How the primary's Devices tab lists this server. Empty: this computer's name and address.",
         "직접 만든 확장도 복사": "Also copy extensions you made yourself",
-        "동기화 규칙에서 허용된 마켓플레이스 외 확장(직접 만들었거나 ~/.agents/extensions에 둔 것)의 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요.": "Copies code for extensions not in the marketplace (your own, or in ~/.agents/extensions) when allowed by your sync rules. It runs inside this server: turn it on only for a primary you trust.",
+        "마켓플레이스 외 확장(직접 만들었거나 ~/.agents/extensions에 둔 것) 중 동기화 규칙에서 허용한 항목의 코드를 그대로 복사합니다. 이 서버 안에서 실행되는 코드이니 기준 서버를 믿을 때만 켜세요.": "Copies code for extensions not in the marketplace (your own, or in ~/.agents/extensions) when allowed by your sync rules. It runs inside this server: turn it on only for a primary you trust.",
         "API 키·토큰도 가져오기": "Also pull API keys and tokens",
         "모델 API 키와 확장 설정의 토큰을 함께 가져옵니다. 이 서버에 이미 있는 값은 바꾸지 않습니다. 기준 서버에서도 ‘비밀값 내보내기 허용’이 켜져 있어야 합니다.": "Pulls model API keys and the tokens in extension settings. A value already on this server is never replaced. The primary must also have ‘Allow secrets to leave’ on.",
         "비밀값 내보내기 허용": "Allow secrets to leave",
