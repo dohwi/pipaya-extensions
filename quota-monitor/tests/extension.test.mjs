@@ -89,11 +89,11 @@ test('the worker sends plain data: bounded gauge nodes, icons as path data only'
   assert.ok(item.gauges.every(g => g.type === undefined), 'plain data for its own component, not a host view node');
 });
 
-test('components are bundled, mounted in header and sidebar bottom, and never touch the network or storage', async () => {
+test('components are bundled, mounted in header and sidebar top, and never touch the network or storage', async () => {
   assert.deepEqual(Object.keys(pkg.components).sort(), ['Gauge', 'HeaderGauge', 'Ring', 'SidebarGauge']);
   assert.deepEqual(pkg.mounts, [
     { slot: 'header.end', component: 'HeaderGauge' },
-    { slot: 'sidebar.bottom', component: 'SidebarGauge' }
+    { slot: 'sidebar.top', component: 'SidebarGauge' }
   ]);
   const sources = Object.values(pkg.components).join('\n');
   assert.ok(!/fetch\(|XMLHttpRequest|WebSocket|localStorage|sessionStorage|document\.cookie|httpToken|Authorization|eval\(|new Function|innerHTML|{@html/.test(sources), 'drawing code does no I/O and never sees the key');

@@ -25,7 +25,7 @@
 {#if visible}
 	<div class="qm {location}" role="group" aria-label={data.label}>
 		{#each items as gauge (gauge.id)}
-			<Ring {gauge} strings={data.strings} preferAbove={location === "sidebar"} />
+			<Ring {gauge} strings={data.strings} />
 		{/each}
 	</div>
 {/if}
@@ -35,6 +35,6 @@
 	.qm::-webkit-scrollbar { display: none; }
 	/* Header (desktop): compact ring strip that yields to the header title. */
 	.qm.header { flex: 0 1 auto; gap: 6px; max-width: min(44%, 192px); padding: 3px 4px; }
-	/* Sidebar bottom (mobile ≤600px): single compact row above Graph View with evenly distributed rings. */
-	.qm.sidebar { --qm-ring: 26px; justify-content: space-around; gap: 8px; margin: 0 -8px 8px; padding: 4px 12px 12px; border-bottom: 1px solid var(--border); }
+	/* Sidebar top (mobile ≤600px): single compact row right below the logo bar with evenly distributed rings. */
+	.qm.sidebar { --qm-ring: 26px; flex: none; justify-content: space-around; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
 </style>

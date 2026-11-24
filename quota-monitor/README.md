@@ -18,7 +18,7 @@
 
 ## What it does
 
-- Shows one ring gauge per provider in the pipaya header on desktop: **Claude**, **GPT (Codex)** and **Antigravity**. On mobile (`≤600px`), moves to a single row at the bottom of the sidebar. A directly connected Gemini account gets its own gauge too.
+- Shows one ring gauge per provider in the pipaya header on desktop: **Claude**, **GPT (Codex)** and **Antigravity**. On mobile (`≤600px`), moves to a single row at the top of the sidebar right under the pipaya logo. A directly connected Gemini account gets its own gauge too.
 - The ring is the **overall remaining quota (%)** computed by your CLIProxyAPI server. It is not a token or cost estimate.
 - **Antigravity** has a dual ring: the outer ring is Gemini, the inner ring is Claude/GPT.
 - **Only providers you actually have are shown.** With no GPT account, there is no GPT gauge.
