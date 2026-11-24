@@ -90,3 +90,49 @@ export function pollDelay(snapshot, settings = {}) {
   return typeof hint === 'number' && Number.isFinite(hint) && hint > 0
     ? Math.min(900000, Math.max(10000, hint)) : 60000;
 }
+
+const isFiniteNumber = value => typeof value === 'number' && Number.isFinite(value);
+const STICKY_TIER_IDS = ['antigravity_4', 'antigravity_3_8'];
+const TIER_MISS_LIMIT = 3;
+const GAUGE_ORDER = { claude: 0, gpt: 1, gemini: 2, antigravity_4: 3, antigravity_3_8: 4, antigravity: 5 };
+
+// Keep the last known reading when a later snapshot returns null, and hold split Antigravity
+// tier gauges (AGY 4 / AGY 3.8) across brief transient omissions so they do not flicker.
+export function mergeWithPrevious(previousGauges = [], nextGauges = [], missingCounts = {}) {
+  const prevById = new Map((Array.isArray(previousGauges) ? previousGauges : []).map(g => [g.id, g]));
+  const merged = (Array.isArray(nextGauges) ? nextGauges : []).map(next => {
+    delete missingCounts[next.id];
+    const prev = prevById.get(next.id);
+    if (!prev) return next;
+    const out = { ...next };
+    if (!isFiniteNumber(out.remainingPercent) && isFiniteNumber(prev.remainingPercent)) {
+      out.remainingPercent = prev.remainingPercent;
+      out.rows = prev.rows;
+      if (!out.updatedAt && prev.updatedAt) out.updatedAt = prev.updatedAt;
+    }
+    if ('innerRemainingPercent' in out && !isFiniteNumber(out.innerRemainingPercent) && isFiniteNumber(prev.innerRemainingPercent)) {
+      out.innerRemainingPercent = prev.innerRemainingPercent;
+      out.innerRows = prev.innerRows;
+      out.updatedAt = Math.max(out.updatedAt ?? 0, prev.updatedAt ?? 0) || null;
+    }
+    return out;
+  });
+  const nextIds = new Set(merged.map(g => g.id));
+  for (const id of STICKY_TIER_IDS) {
+    if (nextIds.has(id)) continue;
+    const prev = prevById.get(id);
+    if (!prev) {
+      delete missingCounts[id];
+      continue;
+    }
+    const misses = (missingCounts[id] || 0) + 1;
+    if (misses < TIER_MISS_LIMIT) {
+      missingCounts[id] = misses;
+      merged.push(prev);
+    } else {
+      delete missingCounts[id];
+    }
+  }
+  merged.sort((a, b) => (GAUGE_ORDER[a.id] ?? 99) - (GAUGE_ORDER[b.id] ?? 99));
+  return merged;
+}

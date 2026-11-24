@@ -30,6 +30,7 @@ let timer;
 let lastAttempt = 0;
 let failures = 0;
 let followUp = false;
+const missingTierCounts = {};
 
 function render(error) {
   return sdk.components.setData({ label: t('itemLabel'), gauges: gaugesData(model, error), strings: strings() });

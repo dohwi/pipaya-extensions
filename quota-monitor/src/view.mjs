@@ -47,7 +47,9 @@ export function gaugeData(gauge, error, fetchedAt = null) {
   // The monitor's own observation time wins; otherwise the last successful read. A failed read never advances either.
   const updatedAt = Number.isFinite(gauge.updatedAt) && gauge.updatedAt > 0 ? gauge.updatedAt : fetchedAt;
   if (Number.isFinite(updatedAt) && updatedAt > 0) node.details.updatedAt = Math.round(updatedAt);
-  if (gauge.stale || error) node.stale = true;
+  // Show the last known value cleanly without a warning badge; flag stale only when no value is known.
+  const hasValue = rings.some(r => typeof r.value === 'number' && Number.isFinite(r.value));
+  if (!hasValue && (gauge.stale || error || fetchedAt !== null)) node.stale = true;
   return node;
 }
 

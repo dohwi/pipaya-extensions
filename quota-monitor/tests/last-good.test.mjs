@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 const pkg = JSON.parse(await readFile(new URL('../dist/quota-monitor.json', import.meta.url), 'utf8'));
 
-test('later network failure keeps the previous actual reading and marks every ring stale', async () => {
+test('later network failure keeps the previous actual reading without stale badge, flagging only unknown rings', async () => {
   let now = 10000, reads = 0;
   const calls = [], timers = [], handlers = {};
   class FakeDate extends Date { static now() { return now; } }
@@ -21,11 +21,15 @@ test('later network failure keeps the previous actual reading and marks every ri
   await vm.runInContext(`(async () => { ${pkg.code}\n })()`, context);
   for (let i = 0; i < 20; i++) await Promise.resolve();
   assert.equal(calls.at(-1).gauges[0].rings[0].value, 64.7);
+  assert.equal(calls.at(-1).gauges[0].stale, undefined);
+  assert.equal(calls.at(-1).gauges[1].stale, true);
   now += 3000;
   timers.at(-1).fn();
   for (let i = 0; i < 20; i++) await Promise.resolve();
   assert.equal(calls.at(-1).gauges[0].rings[0].value, 64.7);
-  assert.ok(calls.at(-1).gauges.every(g => g.stale && g.hint.includes('조회 실패')));
+  assert.equal(calls.at(-1).gauges[0].stale, undefined, 'known last value should not show stale warning');
+  assert.equal(calls.at(-1).gauges[1].stale, true, 'unknown ring should show stale warning');
+  assert.ok(calls.at(-1).gauges.every(g => g.hint.includes('조회 실패')));
   assert.equal(reads, 2);
   now += 3000;
   timers.at(-1).fn();

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { observedAt, providerName, gaugesFromSnapshot, pollDelay } from '../src/model.mjs';
+import { observedAt, providerName, gaugesFromSnapshot, pollDelay, mergeWithPrevious } from '../src/model.mjs';
+import { gaugeData } from '../src/view.mjs';
 const snapshot = (accounts, availability = []) => ({ configured: true, snapshot_complete: true, accounts, availability });
 const fleet = (key, remaining_percent) => ({ key, remaining_percent });
 const account = (provider, windows, extra = {}) => ({ provider, windows, status: 'known', ...extra });
@@ -165,4 +166,53 @@ test('mixed split and legacy Antigravity accounts keep legacy fallback separate 
   assert.equal(view.gauges[1].remainingPercent, 95);
   assert.equal(view.gauges[1].innerRemainingPercent, null);
   assert.equal(view.gauges[2].remainingPercent, 50);
+});
+
+test('mergeWithPrevious holds AGY (4) across brief omissions and retains last-known values', () => {
+  const misses = {};
+  const full = gaugesFromSnapshot(snapshot([
+    account('antigravity', [], { model_tier: '4', observed_at: '2026-01-01T00:00:40Z' }),
+    account('antigravity', [], { model_tier: '3.8', observed_at: '2026-01-01T00:00:20Z' })
+  ], [
+    fleet('claude', 64),
+    fleet('antigravity_4_gemini', 99),
+    fleet('antigravity_4_claude', 0),
+    fleet('antigravity_3_8_gemini', 80),
+    fleet('antigravity_3_8_claude', 50)
+  ])).gauges;
+
+  // Snapshot drops AGY (4) and returns null for claude.
+  const partial = gaugesFromSnapshot(snapshot([
+    account('antigravity', [], { model_tier: '3.8', observed_at: '2026-01-01T00:01:00Z' })
+  ], [
+    fleet('antigravity_3_8_gemini', 75),
+    fleet('antigravity_3_8_claude', 45)
+  ])).gauges;
+
+  const after1 = mergeWithPrevious(full, partial, misses);
+  assert.deepEqual(after1.map(g => g.id), ['claude', 'antigravity_4', 'antigravity_3_8']);
+  assert.equal(after1[0].remainingPercent, 64, 'retains previous claude value on null');
+  assert.equal(after1[1].remainingPercent, 99);
+  assert.equal(after1[1].innerRemainingPercent, 0, 'preserves 0 as a known value');
+
+  const after2 = mergeWithPrevious(after1, partial, misses);
+  assert.deepEqual(after2.map(g => g.id), ['claude', 'antigravity_4', 'antigravity_3_8']);
+
+  // Third consecutive omission drops AGY (4).
+  const after3 = mergeWithPrevious(after2, partial, misses);
+  assert.deepEqual(after3.map(g => g.id), ['claude', 'antigravity_3_8']);
+});
+
+test('gaugeData suppresses stale badge when any value is known (including 0) and shows it when unknown', () => {
+  const knownZero = gaugeData({ id: 'claude', label: 'Claude', brand: 'claude', remainingPercent: 0, stale: true, rows: [{ label: '잔량', value: 0 }] }, 'network error', 1000);
+  assert.equal(knownZero.stale, undefined);
+
+  const knownStale = gaugeData({ id: 'claude', label: 'Claude', brand: 'claude', remainingPercent: 71, stale: true, rows: [{ label: '잔량', value: 71 }] }, undefined, 1000);
+  assert.equal(knownStale.stale, undefined);
+
+  const unknownAfterFetch = gaugeData({ id: 'claude', label: 'Claude', brand: 'claude', remainingPercent: null, stale: false, rows: [{ label: '잔량', value: null }] }, undefined, 1000);
+  assert.equal(unknownAfterFetch.stale, true);
+
+  const unknownOnStartup = gaugeData({ id: 'claude', label: 'Claude', brand: 'claude', remainingPercent: null, stale: false, rows: [{ label: '잔량', value: null }] }, undefined, null);
+  assert.equal(unknownOnStartup.stale, undefined);
 });
