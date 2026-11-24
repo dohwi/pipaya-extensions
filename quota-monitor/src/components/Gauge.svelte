@@ -25,17 +25,16 @@
 {#if visible}
 	<div class="qm {location}" role="group" aria-label={data.label}>
 		{#each items as gauge (gauge.id)}
-			<Ring {gauge} strings={data.strings} preferAbove={location === "sidebar"} tile={location === "sidebar"} />
+			<Ring {gauge} strings={data.strings} preferAbove={location === "sidebar"} />
 		{/each}
 	</div>
 {/if}
 
 <style>
-	.qm { min-width: 0; }
+	.qm { display: flex; align-items: center; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain; }
+	.qm::-webkit-scrollbar { display: none; }
 	/* Header (desktop): compact ring strip that yields to the header title. */
-	.qm.header { display: flex; align-items: center; flex: 0 1 auto; gap: 6px; max-width: min(44%, 192px); padding: 3px 4px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain; }
-	.qm.header::-webkit-scrollbar { display: none; }
-	/* Sidebar bottom (mobile ≤600px): 2-column compact tile grid above Graph View, aligned with the 8px sidebar gutter. */
-	.qm.sidebar { --qm-ring: 24px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 0 -8px 8px; padding: 0 8px 8px; border-bottom: 1px solid var(--border); }
-	.qm.sidebar > :global(.gauge.tile:last-child:nth-child(odd)) { grid-column: 1 / -1; }
+	.qm.header { flex: 0 1 auto; gap: 6px; max-width: min(44%, 192px); padding: 3px 4px; }
+	/* Sidebar bottom (mobile ≤600px): single compact row above Graph View with evenly distributed rings. */
+	.qm.sidebar { --qm-ring: 26px; justify-content: space-around; gap: 8px; margin: 0 -8px 8px; padding: 4px 12px 12px; border-bottom: 1px solid var(--border); }
 </style>

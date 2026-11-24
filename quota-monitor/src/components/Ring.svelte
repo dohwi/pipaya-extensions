@@ -5,7 +5,7 @@
 </script>
 
 <script>
-	let { gauge, strings, preferAbove = false, tile = false } = $props();
+	let { gauge, strings, preferAbove = false } = $props();
 
 	const WIDTH = 2.4, FIRST = 16, STEP = 3.4, NAMED = ["accent", "ok", "warn", "danger"];
 	const OPEN_DELAY = 80, CLOSE_DELAY = 120, MARGIN = 8, GAP = 6;
@@ -20,10 +20,8 @@
 	};
 	const rings = $derived(gauge.rings.map((ring, index) => {
 		const m = meter(ring);
-		return { ...m, radius: FIRST - index * STEP, dash: `${(m.ratio * 100).toFixed(3)} 100`, label: ring.label ?? gauge.label, value: ring.value, pct: Math.round(m.ratio * 100), text: m.known ? `${Math.round(m.ratio * 100)}%` : strings.unknown };
+		return { ...m, radius: FIRST - index * STEP, dash: `${(m.ratio * 100).toFixed(3)} 100`, label: ring.label ?? gauge.label, value: ring.value, text: m.known ? `${Math.round(m.ratio * 100)}%` : strings.unknown };
 	}));
-	const allKnown = $derived(rings.every((ring) => ring.known));
-	const valText = (ring, index) => (!ring.known ? "—" : `${ring.pct}${allKnown && index < rings.length - 1 ? "" : "%"}`);
 	const innerRadius = $derived(rings.at(-1).radius);
 	const iconSide = $derived((innerRadius - WIDTH / 2 - 1.5) * 1.4142);
 	const iconPos = $derived(18 - iconSide / 2);
@@ -127,7 +125,6 @@
 <div
 	bind:this={el}
 	class="gauge"
-	class:tile
 	class:stale={gauge.stale}
 	role="group"
 	aria-label={gauge.label}
@@ -163,14 +160,6 @@
 			<span class="sr-only" role="progressbar" aria-label={ring.label} aria-valuemin="0" aria-valuemax={ring.max} aria-valuenow={ring.known ? ring.value : undefined} aria-valuetext={ring.text}></span>
 		{/each}
 	</div>
-	{#if tile}
-		<div class="meta" aria-hidden="true">
-			<span class="name">{gauge.label}</span>
-			<span class="vals">
-				{#each rings as ring, i}{#if i > 0}<span class="sep">/</span>{/if}<span class="val" class:warn={ring.named === "warn"} class:danger={ring.named === "danger"} class:unknown={!ring.known}>{valText(ring, i)}</span>{/each}
-			</span>
-		</div>
-	{/if}
 </div>
 
 {#if open && details}
@@ -198,21 +187,6 @@
 	.gauge:focus:not(:focus-visible) { outline: none; }
 	.gauge:focus-visible { outline: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; }
 	.gauge.stale .rings { opacity: 0.72; }
-	.gauge.tile {
-		display: flex; width: 100%; min-width: 0; box-sizing: border-box; gap: 8px;
-		padding: 5px 8px; border-radius: var(--radius-sm);
-		border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
-		background: var(--bg-elev); cursor: pointer;
-		transition: background var(--motion-fast) var(--ease-std), border-color var(--motion-fast) var(--ease-std);
-	}
-	@media (hover: hover) { .gauge.tile:hover { background: var(--bg-active); border-color: var(--border-strong); } }
-	.gauge.tile:active { background: var(--bg-active); }
-	.meta { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
-	.name { font-size: var(--fs-2xs); line-height: 16px; font-weight: 500; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.vals { display: flex; align-items: baseline; gap: 3px; font-size: var(--fs-xs); line-height: 16px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-	.val.warn { color: var(--warn); }
-	.val.danger { color: var(--danger); }
-	.val.unknown, .sep { color: var(--text-faint); font-weight: 500; }
 	.circle { position: relative; flex: none; width: var(--qm-ring, 26px); height: var(--qm-ring, 26px); }
 	.rings { display: block; width: 100%; height: 100%; overflow: visible; }
 	circle { fill: none; stroke-width: 2.4; }
