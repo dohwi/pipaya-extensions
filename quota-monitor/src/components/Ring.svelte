@@ -5,7 +5,7 @@
 </script>
 
 <script>
-	let { gauge, strings } = $props();
+	let { gauge, strings, preferAbove = false, tile = false } = $props();
 
 	const WIDTH = 2.4, FIRST = 16, STEP = 3.4, NAMED = ["accent", "ok", "warn", "danger"];
 	const OPEN_DELAY = 80, CLOSE_DELAY = 120, MARGIN = 8, GAP = 6;
@@ -20,8 +20,10 @@
 	};
 	const rings = $derived(gauge.rings.map((ring, index) => {
 		const m = meter(ring);
-		return { ...m, radius: FIRST - index * STEP, dash: `${(m.ratio * 100).toFixed(3)} 100`, label: ring.label ?? gauge.label, value: ring.value, text: m.known ? `${Math.round(m.ratio * 100)}%` : strings.unknown };
+		return { ...m, radius: FIRST - index * STEP, dash: `${(m.ratio * 100).toFixed(3)} 100`, label: ring.label ?? gauge.label, value: ring.value, pct: Math.round(m.ratio * 100), text: m.known ? `${Math.round(m.ratio * 100)}%` : strings.unknown };
 	}));
+	const allKnown = $derived(rings.every((ring) => ring.known));
+	const valText = (ring, index) => (!ring.known ? "—" : `${ring.pct}${allKnown && index < rings.length - 1 ? "" : "%"}`);
 	const innerRadius = $derived(rings.at(-1).radius);
 	const iconSide = $derived((innerRadius - WIDTH / 2 - 1.5) * 1.4142);
 	const iconPos = $derived(18 - iconSide / 2);
@@ -75,12 +77,15 @@
 		const width = popEl.offsetWidth, height = popEl.offsetHeight;
 		const left = Math.min(Math.max(rect.left + rect.width / 2 - width / 2, MARGIN), Math.max(MARGIN, vw - width - MARGIN));
 		const below = rect.bottom + GAP, above = rect.top - GAP - height;
-		const flip = !(below + height <= vh - MARGIN) && (above >= MARGIN || rect.top > vh - rect.bottom);
+		const flip = preferAbove
+			? (above >= MARGIN || rect.top >= vh - rect.bottom)
+			: (!(below + height <= vh - MARGIN) && (above >= MARGIN || rect.top > vh - rect.bottom));
 		placement = flip ? "above" : "below";
 		const top = flip ? Math.max(MARGIN, above) : below;
+		const maxH = flip ? Math.max(80, rect.top - GAP - MARGIN) : Math.max(80, vh - top - MARGIN);
 		popEl.style.left = `${Math.round(left)}px`;
 		popEl.style.top = `${Math.round(top)}px`;
-		popEl.style.maxHeight = `${Math.max(80, vh - top - MARGIN)}px`;
+		popEl.style.maxHeight = `${Math.round(maxH)}px`;
 		popEl.style.visibility = "visible";
 	}
 	// Out of the header so its overflow cannot clip the popover; inside an open <dialog> (top layer) when there is one.
@@ -122,6 +127,7 @@
 <div
 	bind:this={el}
 	class="gauge"
+	class:tile
 	class:stale={gauge.stale}
 	role="group"
 	aria-label={gauge.label}
@@ -157,6 +163,14 @@
 			<span class="sr-only" role="progressbar" aria-label={ring.label} aria-valuemin="0" aria-valuemax={ring.max} aria-valuenow={ring.known ? ring.value : undefined} aria-valuetext={ring.text}></span>
 		{/each}
 	</div>
+	{#if tile}
+		<div class="meta" aria-hidden="true">
+			<span class="name">{gauge.label}</span>
+			<span class="vals">
+				{#each rings as ring, i}{#if i > 0}<span class="sep">/</span>{/if}<span class="val" class:warn={ring.named === "warn"} class:danger={ring.named === "danger"} class:unknown={!ring.known}>{valText(ring, i)}</span>{/each}
+			</span>
+		</div>
+	{/if}
 </div>
 
 {#if open && details}
@@ -184,7 +198,22 @@
 	.gauge:focus:not(:focus-visible) { outline: none; }
 	.gauge:focus-visible { outline: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; }
 	.gauge.stale .rings { opacity: 0.72; }
-	.circle { position: relative; flex: none; width: 26px; height: 26px; }
+	.gauge.tile {
+		display: flex; width: 100%; min-width: 0; box-sizing: border-box; gap: 8px;
+		padding: 5px 8px; border-radius: var(--radius-sm);
+		border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+		background: var(--bg-elev); cursor: pointer;
+		transition: background var(--motion-fast) var(--ease-std), border-color var(--motion-fast) var(--ease-std);
+	}
+	@media (hover: hover) { .gauge.tile:hover { background: var(--bg-active); border-color: var(--border-strong); } }
+	.gauge.tile:active { background: var(--bg-active); }
+	.meta { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+	.name { font-size: var(--fs-2xs); line-height: 16px; font-weight: 500; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.vals { display: flex; align-items: baseline; gap: 3px; font-size: var(--fs-xs); line-height: 16px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.val.warn { color: var(--warn); }
+	.val.danger { color: var(--danger); }
+	.val.unknown, .sep { color: var(--text-faint); font-weight: 500; }
+	.circle { position: relative; flex: none; width: var(--qm-ring, 26px); height: var(--qm-ring, 26px); }
 	.rings { display: block; width: 100%; height: 100%; overflow: visible; }
 	circle { fill: none; stroke-width: 2.4; }
 	.track { stroke: var(--border-strong); }
@@ -198,7 +227,6 @@
 	.glyph { color: var(--text-dim); overflow: hidden; }
 	.badge { position: absolute; right: 0; top: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 1.5px var(--bg); }
 	.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-	@media (max-width: 600px) { .circle { width: 22px; height: 22px; } }
 	/* The popover lives outside this component's DOM position (portal), so its rules are global-by-class. */
 	:global(.qm-pop) {
 		position: fixed; top: 0; left: 0; z-index: var(--z-tooltip); box-sizing: border-box;
@@ -208,8 +236,9 @@
 		font-size: var(--fs-xs); line-height: 1.4; text-align: left; white-space: normal;
 		transform-origin: top center; animation: qm-pop-in var(--motion-normal) var(--ease);
 	}
-	:global(.qm-pop.above) { transform-origin: bottom center; }
+	:global(.qm-pop.above) { transform-origin: bottom center; animation-name: qm-pop-in-up; }
 	@keyframes qm-pop-in { from { opacity: 0; transform: translateY(-4px) scale(0.96); } to { opacity: 1; transform: none; } }
+	@keyframes qm-pop-in-up { from { opacity: 0; transform: translateY(4px) scale(0.96); } to { opacity: 1; transform: none; } }
 	@media (prefers-reduced-motion: reduce) { :global(.qm-pop) { animation: none; } :global(.qm-pop .pop-fill) { transition: none !important; } }
 	:global(.qm-pop .pop-title) { font-weight: 600; font-size: var(--fs-sm); margin-bottom: 6px; overflow-wrap: anywhere; }
 	:global(.qm-pop .pop-updated) { margin-top: 7px; padding-top: 5px; border-top: 1px solid var(--border-strong); font-size: var(--fs-2xs); font-variant-numeric: tabular-nums; color: var(--text-faint); }

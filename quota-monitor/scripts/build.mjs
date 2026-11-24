@@ -9,8 +9,11 @@ const code = parts.join('\n').replace(/^import .*$/gm, '').replace(/^export /gm,
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 new AsyncFunction('sdk', code);
 // The gauges are Svelte components that run in the pipaya app (ui-components); the worker above only polls.
-const components = Object.fromEntries(await Promise.all(['Gauge', 'Ring'].map(async name => [name, await readFile(new URL(`src/components/${name}.svelte`, root), 'utf8')])));
-const mounts = [{ slot: 'header.end', component: 'Gauge' }];
+const components = Object.fromEntries(await Promise.all(['Gauge', 'Ring', 'HeaderGauge', 'SidebarGauge'].map(async name => [name, await readFile(new URL(`src/components/${name}.svelte`, root), 'utf8')])));
+const mounts = [
+  { slot: 'header.end', component: 'HeaderGauge' },
+  { slot: 'sidebar.bottom', component: 'SidebarGauge' }
+];
 const output = JSON.stringify({ manifest, components, mounts, code }, null, 2) + '\n';
 if (Buffer.byteLength(code) > 128 * 1024 || Buffer.byteLength(output) > 256 * 1024) throw new Error('SDK package size limit exceeded');
 await mkdir(new URL('dist/', root), { recursive: true });
