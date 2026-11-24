@@ -1,6 +1,6 @@
 {
   "name": "pipaya-extension-server-sync",
-  "version": "0.19.0",
+  "version": "0.19.1",
   "description": "Keeps two pipaya servers in step, both ways, with .gitignore-style file-based sync rules (`syncignore`). The primary wins a conflict. Secrets and local code only when explicitly allowed.",
   "license": "MIT",
   "author": "dohwi",
