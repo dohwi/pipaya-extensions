@@ -177,19 +177,21 @@
 {#if open && details}
 	<div use:portal bind:this={popEl} id={popId} class="qm-pop {placement}" role="tooltip" style="visibility: hidden" onpointerenter={clear} onpointerleave={(e) => { if (hovering(e)) later(hide, CLOSE_DELAY); }}>
 		{#if details.title}<div class="pop-title">{details.title}</div>{/if}
-		{#each rows as row}
-			{#if row.heading}<div class="pop-group" class:divider={row.divider}>{row.heading}</div>{/if}
-			<div class="pop-row" class:summary={row.summary} class:sub={row.sub} class:divider={row.divider && !row.heading}>
-				<div class="pop-line">
-					<span class="pop-label" title={row.label}>{row.label}</span>
-					<div class="pop-track" class:unknown={!row.known}>
-						{#if row.known}<div class="pop-fill {row.named}" style:width="{row.percent}%" style:background={row.hex}></div>{/if}
+		<div class="pop-body">
+			{#each rows as row}
+				{#if row.heading}<div class="pop-group" class:divider={row.divider}>{row.heading}</div>{/if}
+				<div class="pop-row" class:summary={row.summary} class:sub={row.sub} class:divider={row.divider && !row.heading}>
+					<div class="pop-line">
+						<span class="pop-label" title={row.label}>{row.label}</span>
+						<div class="pop-track" class:unknown={!row.known}>
+							{#if row.known}<div class="pop-fill {row.named}" style:width="{row.percent}%" style:background={row.hex}></div>{/if}
+						</div>
+						<span class="pop-value" class:unknown={!row.known}>{row.text}</span>
 					</div>
-					<span class="pop-value" class:unknown={!row.known}>{row.text}</span>
+					{#if row.caption}<div class="pop-caption">{row.caption}</div>{/if}
 				</div>
-				{#if row.caption}<div class="pop-caption">{row.caption}</div>{/if}
-			</div>
-		{/each}
+			{/each}
+		</div>
 		{#if updatedText || gauge.stale}<div class="pop-updated" class:stale={gauge.stale}>{updatedText || strings.stale}</div>{/if}
 	</div>
 {/if}
@@ -226,18 +228,18 @@
 	@keyframes qm-pop-in { from { opacity: 0; transform: translateY(-4px) scale(0.96); } to { opacity: 1; transform: none; } }
 	@keyframes qm-pop-in-up { from { opacity: 0; transform: translateY(4px) scale(0.96); } to { opacity: 1; transform: none; } }
 	@media (prefers-reduced-motion: reduce) { :global(.qm-pop) { animation: none; } :global(.qm-pop .pop-fill) { transition: none !important; } }
-	:global(.qm-pop .pop-title) { font-weight: 600; font-size: var(--fs-sm); line-height: 20px; margin-bottom: 8px; overflow-wrap: anywhere; }
+	:global(.qm-pop .pop-title) { font-weight: 600; font-size: var(--fs-sm); line-height: 20px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
 	:global(.qm-pop .pop-updated) { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: var(--fs-2xs); line-height: 16px; font-variant-numeric: tabular-nums; color: var(--text-faint); }
 	:global(.qm-pop .pop-updated.stale) { color: var(--warn); }
 	:global(.qm-pop .pop-group) { margin: 8px 0 4px; font-size: var(--fs-2xs); line-height: 16px; font-weight: 600; letter-spacing: 0.02em; color: var(--text-faint); overflow-wrap: anywhere; }
 	:global(.qm-pop .pop-group:first-child) { margin-top: 0; }
 	:global(.qm-pop .pop-group.divider) { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 	:global(.qm-pop .pop-row) { margin: 0 0 6px; }
-	:global(.qm-pop .pop-row:last-child) { margin-bottom: 0; }
+	:global(.qm-pop .pop-body > .pop-row:last-child) { margin-bottom: 0; }
 	:global(.qm-pop .pop-row.divider) { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
-	:global(.qm-pop .pop-row.summary .pop-label) { font-weight: 600; color: var(--text); }
-	:global(.qm-pop .pop-row.summary .pop-value) { font-weight: 600; color: var(--text); }
-	:global(.qm-pop .pop-row.summary .pop-value.unknown) { font-weight: 400; color: var(--text-faint); }
+	:global(.qm-pop .pop-row:not(.sub) .pop-label) { font-weight: 600; color: var(--text); }
+	:global(.qm-pop .pop-row:not(.sub) .pop-value) { font-weight: 600; color: var(--text); }
+	:global(.qm-pop .pop-row:not(.sub) .pop-value.unknown) { font-weight: 400; color: var(--text-faint); }
 	:global(.qm-pop .pop-row.sub) { margin: 0 0 0 2px; padding: 2px 0 2px 9px; border-left: 1px solid var(--border); }
 	:global(.qm-pop .pop-row.summary + .pop-row.sub) { margin-top: -2px; }
 	:global(.qm-pop .pop-row.sub .pop-label) { color: var(--text-dim); font-size: var(--fs-2xs); line-height: 16px; }
