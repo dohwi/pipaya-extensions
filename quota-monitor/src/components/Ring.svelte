@@ -29,7 +29,19 @@
 	const updatedAt = $derived(details?.updatedAt);
 	const rows = $derived((details?.rows ?? []).map((row, index, all) => {
 		const m = meter(row);
-		return { ...m, heading: row.group !== undefined && row.group !== all[index - 1]?.group ? row.group : undefined, label: row.label, caption: row.caption, sub: row.sub === true, percent: (m.ratio * 100).toFixed(2), text: m.known ? `${Math.round(m.ratio * 100)}%` : strings.unknown };
+		const newGroup = row.group !== undefined && row.group !== all[index - 1]?.group;
+		const summary = row.summary === true;
+		return {
+			...m,
+			heading: newGroup && !summary ? row.group : undefined,
+			divider: newGroup && index > 0,
+			summary,
+			label: row.label,
+			caption: row.caption,
+			sub: row.sub === true,
+			percent: (m.ratio * 100).toFixed(2),
+			text: m.known ? `${Math.round(m.ratio * 100)}%` : strings.unknown
+		};
 	}));
 
 	let now = $state(Date.now());
@@ -166,8 +178,8 @@
 	<div use:portal bind:this={popEl} id={popId} class="qm-pop {placement}" role="tooltip" style="visibility: hidden" onpointerenter={clear} onpointerleave={(e) => { if (hovering(e)) later(hide, CLOSE_DELAY); }}>
 		{#if details.title}<div class="pop-title">{details.title}</div>{/if}
 		{#each rows as row}
-			{#if row.heading}<div class="pop-group">{row.heading}</div>{/if}
-			<div class="pop-row" class:sub={row.sub}>
+			{#if row.heading}<div class="pop-group" class:divider={row.divider}>{row.heading}</div>{/if}
+			<div class="pop-row" class:summary={row.summary} class:sub={row.sub} class:divider={row.divider && !row.heading}>
 				<div class="pop-line">
 					<span class="pop-label" title={row.label}>{row.label}</span>
 					<div class="pop-track" class:unknown={!row.known}>
@@ -204,27 +216,33 @@
 	/* The popover lives outside this component's DOM position (portal), so its rules are global-by-class. */
 	:global(.qm-pop) {
 		position: fixed; top: 0; left: 0; z-index: var(--z-tooltip); box-sizing: border-box;
-		min-width: min(250px, calc(100vw - 16px)); max-width: min(320px, calc(100vw - 16px)); overflow-y: auto;
-		padding: 9px 11px; border-radius: var(--radius); border: 1px solid var(--border-strong);
+		min-width: min(264px, calc(100vw - 16px)); max-width: min(320px, calc(100vw - 16px)); overflow-y: auto;
+		padding: 10px 12px; border-radius: var(--radius); border: 1px solid var(--border-strong);
 		background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow);
-		font-size: var(--fs-xs); line-height: 1.4; text-align: left; white-space: normal;
+		font-size: var(--fs-xs); line-height: 16px; text-align: left; white-space: normal;
 		transform-origin: top center; animation: qm-pop-in var(--motion-normal) var(--ease);
 	}
 	:global(.qm-pop.above) { transform-origin: bottom center; animation-name: qm-pop-in-up; }
 	@keyframes qm-pop-in { from { opacity: 0; transform: translateY(-4px) scale(0.96); } to { opacity: 1; transform: none; } }
 	@keyframes qm-pop-in-up { from { opacity: 0; transform: translateY(4px) scale(0.96); } to { opacity: 1; transform: none; } }
 	@media (prefers-reduced-motion: reduce) { :global(.qm-pop) { animation: none; } :global(.qm-pop .pop-fill) { transition: none !important; } }
-	:global(.qm-pop .pop-title) { font-weight: 600; font-size: var(--fs-sm); margin-bottom: 6px; overflow-wrap: anywhere; }
-	:global(.qm-pop .pop-updated) { margin-top: 7px; padding-top: 5px; border-top: 1px solid var(--border-strong); font-size: var(--fs-2xs); font-variant-numeric: tabular-nums; color: var(--text-faint); }
+	:global(.qm-pop .pop-title) { font-weight: 600; font-size: var(--fs-sm); line-height: 20px; margin-bottom: 8px; overflow-wrap: anywhere; }
+	:global(.qm-pop .pop-updated) { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: var(--fs-2xs); line-height: 16px; font-variant-numeric: tabular-nums; color: var(--text-faint); }
 	:global(.qm-pop .pop-updated.stale) { color: var(--warn); }
-	:global(.qm-pop .pop-group) { margin: 7px 0 4px; font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.02em; color: var(--text-faint); overflow-wrap: anywhere; }
+	:global(.qm-pop .pop-group) { margin: 8px 0 4px; font-size: var(--fs-2xs); line-height: 16px; font-weight: 600; letter-spacing: 0.02em; color: var(--text-faint); overflow-wrap: anywhere; }
 	:global(.qm-pop .pop-group:first-child) { margin-top: 0; }
+	:global(.qm-pop .pop-group.divider) { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 	:global(.qm-pop .pop-row) { margin: 0 0 6px; }
 	:global(.qm-pop .pop-row:last-child) { margin-bottom: 0; }
-	:global(.qm-pop .pop-row.sub) { padding-left: 10px; margin-bottom: 5px; }
-	:global(.qm-pop .pop-row.sub .pop-label) { color: var(--text-dim); font-size: var(--fs-2xs); }
+	:global(.qm-pop .pop-row.divider) { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+	:global(.qm-pop .pop-row.summary .pop-label) { font-weight: 600; color: var(--text); }
+	:global(.qm-pop .pop-row.summary .pop-value) { font-weight: 600; color: var(--text); }
+	:global(.qm-pop .pop-row.summary .pop-value.unknown) { font-weight: 400; color: var(--text-faint); }
+	:global(.qm-pop .pop-row.sub) { margin: 0 0 0 2px; padding: 2px 0 2px 9px; border-left: 1px solid var(--border); }
+	:global(.qm-pop .pop-row.summary + .pop-row.sub) { margin-top: -2px; }
+	:global(.qm-pop .pop-row.sub .pop-label) { color: var(--text-dim); font-size: var(--fs-2xs); line-height: 16px; }
 	:global(.qm-pop .pop-row.sub .pop-track) { height: 4px; }
-	:global(.qm-pop .pop-row.sub .pop-value) { font-size: var(--fs-2xs); }
+	:global(.qm-pop .pop-row.sub .pop-value) { font-size: var(--fs-2xs); line-height: 16px; color: var(--text-dim); }
 	:global(.qm-pop .pop-line) { display: grid; grid-template-columns: minmax(0, 1fr) 64px auto; align-items: center; gap: 8px; }
 	:global(.qm-pop .pop-label) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 	:global(.qm-pop .pop-value) { flex: none; min-width: 34px; font-variant-numeric: tabular-nums; color: var(--text-dim); text-align: right; white-space: nowrap; }
@@ -235,5 +253,5 @@
 	:global(.qm-pop .pop-fill.ok) { background: var(--ok); }
 	:global(.qm-pop .pop-fill.warn) { background: var(--warn); }
 	:global(.qm-pop .pop-fill.danger) { background: var(--danger); }
-	:global(.qm-pop .pop-caption) { margin-top: 2px; font-size: var(--fs-2xs); color: var(--text-dim); overflow-wrap: anywhere; }
+	:global(.qm-pop .pop-caption) { margin-top: 2px; font-size: var(--fs-2xs); line-height: 16px; color: var(--text-dim); overflow-wrap: anywhere; }
 </style>

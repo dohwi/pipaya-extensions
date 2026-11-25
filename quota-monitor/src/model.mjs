@@ -43,8 +43,8 @@ export function gaugesFromSnapshot(snapshot) {
       if (tiers.length >= 8) break;
     }
     if (remaining === null || tiers.length === 0) return [{ label: t('remaining'), value: remaining }];
-    if (tiers.length === 1) return [{ label: tiers[0].label, value: remaining }];
-    return [{ label: t('overall'), value: remaining }, ...tiers.map(item => ({ label: item.label, value: item.value, sub: true }))];
+    if (tiers.length === 1) return [{ label: tiers[0].label, value: remaining, tier: tiers[0].label }];
+    return [{ label: t('overall'), value: remaining, summary: true }, ...tiers.map(item => ({ label: item.label, value: item.value, sub: true }))];
   };
   const fleetSummary = (key, group) => {
     const entry = availability.find(item => item?.key === key);

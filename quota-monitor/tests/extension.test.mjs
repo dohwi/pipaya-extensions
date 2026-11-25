@@ -77,7 +77,10 @@ test('the worker sends plain data: bounded gauge nodes, icons as path data only'
   const ag = item.gauges.find(g => g.id === 'antigravity');
   assert.deepEqual(ag.rings.map(r => [r.label, r.value]), [['Gemini 잔량', 49], ['Claude via Antigravity 잔량', 33]]);
   assert.equal(ag.display, undefined, 'no percentage text beside the ring');
-  assert.deepEqual(ag.details.rows.map(r => [r.group, r.label, r.value]), [['Gemini', '잔량', 49], ['Claude/GPT', '잔량', 33]]);
+  assert.deepEqual(ag.details.rows.map(r => [r.group, r.label, r.value, r.summary]), [
+    ['Gemini', 'Gemini', 49, true],
+    ['Claude/GPT', 'Claude/GPT', 33, true]
+  ]);
   assert.ok(ag.details.rows.every(r => r.caption === undefined));
   assert.equal(ag.icon.paths.length, 1, 'Antigravity uses its own mark, not Gemini');
   assert.equal(ag.icon.paths[0].fillRule, 'evenodd');
@@ -327,7 +330,7 @@ test('bundled worker renders v0.8.0 unified Antigravity and per-tier breakdown i
   const list = ko.calls.at(-1).gauges;
   assert.deepEqual(list.map(g => g.id), ['claude', 'gpt', 'antigravity']);
   assert.deepEqual(list[0].details.rows, [
-    { label: '전체', value: 80.5, color: '#d97757' },
+    { label: '전체', value: 80.5, color: '#d97757', summary: true },
     { label: 'Max', value: 88, color: '#d97757', sub: true },
     { label: 'Pro', value: 62, color: '#d97757', sub: true }
   ]);
@@ -335,10 +338,10 @@ test('bundled worker renders v0.8.0 unified Antigravity and per-tier breakdown i
     { label: 'Pro 200', value: 42, color: '#10a37f' }
   ]);
   assert.deepEqual(list[2].details.rows, [
-    { label: '전체', value: 96.4, color: '#6b8de9', group: 'Gemini' },
+    { label: 'Gemini', value: 96.4, color: '#6b8de9', group: 'Gemini', summary: true },
     { label: 'AI Ultra', value: 99, color: '#6b8de9', group: 'Gemini', sub: true },
     { label: 'AI Pro', value: 90, color: '#6b8de9', group: 'Gemini', sub: true },
-    { label: '전체', value: 71.2, color: '#d97757', group: 'Claude/GPT' },
+    { label: 'Claude/GPT', value: 71.2, color: '#d97757', group: 'Claude/GPT', summary: true },
     { label: 'AI Ultra', value: 84, color: '#d97757', group: 'Claude/GPT', sub: true },
     { label: 'AI Pro', value: 18, color: 'warn', group: 'Claude/GPT', sub: true }
   ]);
@@ -346,5 +349,6 @@ test('bundled worker renders v0.8.0 unified Antigravity and per-tier breakdown i
   const en = await boot(async () => snap, { httpToken: 'k', language: 'en' });
   assert.equal(en.calls.at(-1).gauges[0].details.rows[0].label, 'Overall');
   assert.equal(en.calls.at(-1).gauges[2].details.title, 'Antigravity remaining');
-  assert.equal(en.calls.at(-1).gauges[2].details.rows[0].label, 'Overall');
+  assert.equal(en.calls.at(-1).gauges[2].details.rows[0].label, 'Gemini');
+  assert.equal(en.calls.at(-1).gauges[2].details.rows[3].label, 'Claude/GPT');
 });

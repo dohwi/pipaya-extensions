@@ -10,9 +10,14 @@ function tone(value, color) {
 }
 
 function rows(list, color, group) {
-  return (list || []).map(row => {
-    const out = { label: row.label, value: row.value, color: tone(row.value, color) };
+  return (list || []).map((row, index) => {
+    const isGroupHead = Boolean(group && index === 0 && !row.sub);
+    const label = isGroupHead
+      ? (row.tier ? `${group} · ${row.tier}` : group)
+      : row.label;
+    const out = { label, value: row.value, color: tone(row.value, color) };
     if (group) out.group = group;
+    if (isGroupHead || row.summary) out.summary = true;
     if (row.sub) out.sub = true;
     return out;
   });

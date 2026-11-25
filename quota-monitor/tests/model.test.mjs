@@ -305,7 +305,7 @@ test('availability tiers expand into weighted overall plus tier sub-rows and han
 
   const [claude, gpt, ag] = view.gauges.map(g => gaugeData(g));
   assert.deepEqual(claude.details.rows, [
-    { label: '전체', value: 82.5, color: '#d97757' },
+    { label: '전체', value: 82.5, color: '#d97757', summary: true },
     { label: 'Max', value: 90, color: '#d97757', sub: true },
     { label: 'Pro', value: 0, color: 'danger', sub: true }
   ]);
@@ -313,9 +313,19 @@ test('availability tiers expand into weighted overall plus tier sub-rows and han
     { label: 'Plus', value: 54, color: '#10a37f' }
   ]);
   assert.deepEqual(ag.details.rows, [
-    { label: '전체', value: 96.4, color: '#6b8de9', group: 'Gemini' },
+    { label: 'Gemini', value: 96.4, color: '#6b8de9', group: 'Gemini', summary: true },
     { label: 'AI Ultra', value: 99, color: '#6b8de9', group: 'Gemini', sub: true },
     { label: 'AI Pro', value: 90, color: '#6b8de9', group: 'Gemini', sub: true },
-    { label: '잔량', value: 15, color: 'warn', group: 'Claude/GPT' }
+    { label: 'Claude/GPT', value: 15, color: 'warn', group: 'Claude/GPT', summary: true }
+  ]);
+
+  // Single tier inside a grouped Antigravity pool folds tier label into the group summary row.
+  const singleAgTier = gaugeData(gaugesFromSnapshot(snapshot([account('antigravity', [], { model_tier: '4' })], [
+    { key: 'antigravity_gemini', remaining_percent: 90, accounts: 1, tiers: [{ tier: 'pro', label: 'AI Pro', remaining_percent: 90 }] },
+    { key: 'antigravity_claude', remaining_percent: 80, accounts: 1, tiers: [{ tier: 'ultra', label: 'AI Ultra', remaining_percent: 80 }] }
+  ])).gauges.at(-1));
+  assert.deepEqual(singleAgTier.details.rows, [
+    { label: 'Gemini · AI Pro', value: 90, color: '#6b8de9', group: 'Gemini', summary: true },
+    { label: 'Claude/GPT · AI Ultra', value: 80, color: '#d97757', group: 'Claude/GPT', summary: true }
   ]);
 });
