@@ -31,22 +31,33 @@ export function gaugesFromSnapshot(snapshot) {
   const byProvider = name => accounts.filter(account => providerName(account.provider) === name);
   const availability = Array.isArray(snapshot.availability) ? snapshot.availability : [];
   const validPercent = value => (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null);
-  const tierRows = (entry, remaining) => {
+  const tierLabelOf = (item, restricted) => {
+    const tier = String(item?.tier ?? '').toLowerCase().trim();
+    const raw = String(item?.label ?? item?.tier ?? '').trim().slice(0, 32);
+    // Google Antigravity Docs distinguish Paid Google AI Pro (full frontier models) from
+    // Google AI Pro trial (limited model set, alongside Free / Google AI Plus).
+    if (restricted && tier === 'pro' && (!raw || raw === 'AI Pro')) return 'AI Pro Trial';
+    return raw;
+  };
+  const tierRows = (entry, remaining, restricted = false) => {
     const rawTiers = Array.isArray(entry?.tiers) ? entry.tiers : [];
     const tiers = [];
     for (const item of rawTiers) {
       if (!item || typeof item !== 'object') continue;
       const value = validPercent(item.remaining_percent);
-      const label = String(item.label ?? item.tier ?? '').trim().slice(0, 32);
+      const label = tierLabelOf(item, restricted);
       if (value === null || !label) continue;
       tiers.push({ label, value });
       if (tiers.length >= 8) break;
     }
-    if (remaining === null || tiers.length === 0) return [{ label: t('remaining'), value: remaining }];
-    if (tiers.length === 1) return [{ label: tiers[0].label, value: remaining, tier: tiers[0].label }];
-    return [{ label: t('overall'), value: remaining, summary: true }, ...tiers.map(item => ({ label: item.label, value: item.value, sub: true }))];
+    if (remaining === null || tiers.length === 0) return { rows: [{ label: t('remaining'), value: remaining }], tiers: [] };
+    if (tiers.length === 1) return { rows: [{ label: tiers[0].label, value: remaining, tier: tiers[0].label }], tiers: [tiers[0].label] };
+    return {
+      rows: [{ label: t('overall'), value: remaining, summary: true }, ...tiers.map(item => ({ label: item.label, value: item.value, sub: true }))],
+      tiers: tiers.map(item => item.label)
+    };
   };
-  const fleetSummary = (key, group) => {
+  const fleetSummary = (key, group, restricted = false) => {
     const entry = availability.find(item => item?.key === key);
     // The server owns fleet aggregation. Missing values never fall back to account windows.
     const remaining = validPercent(entry?.remaining_percent);
@@ -57,28 +68,39 @@ export function gaugesFromSnapshot(snapshot) {
     const times = usable.map(observedAt).filter(time => time !== null);
     const updatedAt = times.length ? Math.max(...times) : null;
     const hint = [remaining === null ? t('unknownRemaining') : '', stale ? t('staleObservation') : ''].filter(Boolean).join(' · ');
-    return { remaining, stale, updatedAt, hint, rows: tierRows(entry, remaining) };
+    const { rows, tiers } = tierRows(entry, remaining, restricted);
+    return { remaining, stale, updatedAt, hint, rows, tiers };
   };
-  const gauge = (id, label, brand, group, key = id) => {
-    const summary = fleetSummary(key, group);
-    return { id, label, brand, remainingPercent: summary.remaining, hint: summary.hint, updatedAt: summary.updatedAt, rows: summary.rows, stale: snapshot.stale === true || summary.stale };
+  const gauge = (id, label, brand, group, key = id, restricted = false) => {
+    const summary = fleetSummary(key, group, restricted);
+    return { id, label, brand, remainingPercent: summary.remaining, hint: summary.hint, updatedAt: summary.updatedAt, rows: summary.rows, tiers: summary.tiers, stale: snapshot.stale === true || summary.stale };
   };
   const ag = byProvider('antigravity');
   const gemini = byProvider('gemini');
   // Fixed order: Claude, (GPT only when a GPT account exists), (native Gemini only when present), Antigravity units.
   const gpt = byProvider('gpt');
-  const gauges = [gauge('claude', 'Claude', 'claude', byProvider('claude'))];
-  if (gpt.length) gauges.push(gauge('gpt', 'GPT', 'gpt', gpt, 'codex'));
-  if (gemini.length) gauges.push(gauge('gemini', 'Gemini', 'gemini', gemini));
-  const antigravityGauge = (id, label, brand, group, geminiKey, claudeKey) => {
-    const outer = gauge(id, label, brand, group, geminiKey);
-    const inner = fleetSummary(claudeKey, group);
+  const stripTiers = item => { const { tiers, ...rest } = item; return rest; };
+  const gauges = [stripTiers(gauge('claude', 'Claude', 'claude', byProvider('claude')))];
+  if (gpt.length) gauges.push(stripTiers(gauge('gpt', 'GPT', 'gpt', gpt, 'codex')));
+  if (gemini.length) gauges.push(stripTiers(gauge('gemini', 'Gemini', 'gemini', gemini)));
+  const antigravityGauge = (id, label, brand, group, geminiKey, claudeKey, { restricted = false, deriveLabel = false } = {}) => {
+    const outer = gauge(id, label, brand, group, geminiKey, restricted);
+    const inner = fleetSummary(claudeKey, group, restricted);
     outer.innerRemainingPercent = inner.remaining;
     outer.innerRows = inner.rows;
     outer.stale ||= inner.stale;
     outer.updatedAt = Math.max(outer.updatedAt ?? 0, inner.updatedAt ?? 0) || null;
     outer.hint = [outer.hint ? `Gemini: ${outer.hint}` : '', inner.hint ? `Claude/GPT: ${inner.hint}` : ''].filter(Boolean).join(' · ');
-    return outer;
+    if (deriveLabel) {
+      const uniqueTiers = [...new Set([...outer.tiers, ...inner.tiers])];
+      if (uniqueTiers.length === 1) {
+        outer.label = `Antigravity · ${uniqueTiers[0]}`;
+        // Plan name is now in the title, so avoid repeating "Gemini · <plan>" on every row.
+        outer.rows = outer.rows.map(({ tier, ...row }) => row);
+        outer.innerRows = outer.innerRows.map(({ tier, ...row }) => row);
+      }
+    }
+    return stripTiers(outer);
   };
   const ag4 = ag.filter(account => normalizeModelTier(account.model_tier) === '4');
   const ag38 = ag.filter(account => normalizeModelTier(account.model_tier) === '3.8');
@@ -96,13 +118,13 @@ export function gaugesFromSnapshot(snapshot) {
   if (has4 || has38) {
     if (has4) gauges.push(antigravityGauge('antigravity_4', 'AGY (4)', 'antigravity_4', ag4, 'antigravity_4_gemini', 'antigravity_4_claude'));
     if (has38) gauges.push(antigravityGauge('antigravity_3_8', 'AGY (3.8)', 'antigravity_3_8', ag38, 'antigravity_3_8_gemini', 'antigravity_3_8_claude'));
-    if (hasUnified) gauges.push(antigravityGauge('antigravity', 'Antigravity', 'antigravity', agLegacy.length ? agLegacy : ag, 'antigravity_gemini', 'antigravity_claude'));
-    if (hasLite) gauges.push(antigravityGauge('antigravity_lite', 'AGY (Lite)', 'antigravity_lite', agLite.length ? agLite : ag, 'antigravity_lite_gemini', 'antigravity_lite_claude'));
+    if (hasUnified) gauges.push(antigravityGauge('antigravity', 'Antigravity', 'antigravity', agLegacy.length ? agLegacy : ag, 'antigravity_gemini', 'antigravity_claude', { deriveLabel: true }));
+    if (hasLite) gauges.push(antigravityGauge('antigravity_lite', 'Antigravity · Trial/Free', 'antigravity_lite', agLite.length ? agLite : ag, 'antigravity_lite_gemini', 'antigravity_lite_claude', { restricted: true, deriveLabel: true }));
   } else if (hasLite) {
-    if (hasUnified) gauges.push(antigravityGauge('antigravity', 'Antigravity', 'antigravity_full', agFull.length ? agFull : ag, 'antigravity_gemini', 'antigravity_claude'));
-    gauges.push(antigravityGauge('antigravity_lite', 'AGY (Lite)', 'antigravity_lite', agLite.length ? agLite : ag, 'antigravity_lite_gemini', 'antigravity_lite_claude'));
+    if (hasUnified) gauges.push(antigravityGauge('antigravity', 'Antigravity', 'antigravity_full', agFull.length ? agFull : ag, 'antigravity_gemini', 'antigravity_claude', { deriveLabel: true }));
+    gauges.push(antigravityGauge('antigravity_lite', 'Antigravity · Trial/Free', 'antigravity_lite', agLite.length ? agLite : ag, 'antigravity_lite_gemini', 'antigravity_lite_claude', { restricted: true, deriveLabel: true }));
   } else {
-    gauges.push(antigravityGauge('antigravity', 'Antigravity', 'antigravity', ag, 'antigravity_gemini', 'antigravity_claude'));
+    gauges.push(antigravityGauge('antigravity', 'Antigravity', 'antigravity', ag, 'antigravity_gemini', 'antigravity_claude', { deriveLabel: true }));
   }
   return { label: t('title'), gauges };
 }
@@ -119,7 +141,7 @@ export function pollDelay(snapshot, settings = {}) {
 const isFiniteNumber = value => typeof value === 'number' && Number.isFinite(value);
 const STICKY_TIER_IDS = ['antigravity_4', 'antigravity_3_8'];
 const TIER_MISS_LIMIT = 3;
-const GAUGE_ORDER = { claude: 0, gpt: 1, gemini: 2, antigravity_4: 3, antigravity_3_8: 4, antigravity: 5 };
+const GAUGE_ORDER = { claude: 0, gpt: 1, gemini: 2, antigravity_4: 3, antigravity_3_8: 4, antigravity: 5, antigravity_lite: 6 };
 
 // Keep the last known reading when a later snapshot returns null, and hold split Antigravity
 // tier gauges (AGY 4 / AGY 3.8) across brief transient omissions so they do not flicker.

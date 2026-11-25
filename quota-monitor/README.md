@@ -97,7 +97,7 @@ The gauges appear in the header within a few seconds.
 Providers → CLIProxyAPI + quota-monitor plugin ──GET (management key)──▶ worker (polls) ──▶ Gauge component (draws) ──▶ pipaya header
 ```
 
-The plugin measures every account and aggregates the tier-weighted remaining quota (`availability`: `claude`, `codex`, `antigravity_gemini`, `antigravity_claude`, plus `antigravity_lite_gemini` / `antigravity_lite_claude` when Full and Lite pools are mixed, and optional per-tier `tiers`; legacy `antigravity_4_*` / `antigravity_3_8_*` split keys remain supported). The extension maps those values to rings and popover rows without recalculating them.
+The plugin measures every account and aggregates the tier-weighted remaining quota (`availability`: `claude`, `codex`, `antigravity_gemini`, `antigravity_claude`, plus `antigravity_lite_gemini` / `antigravity_lite_claude` when full-access and restricted Trial/Free Antigravity pools are mixed, and optional per-tier `tiers`; legacy `antigravity_4_*` / `antigravity_3_8_*` split keys remain supported). The extension labels each Antigravity pool from its official plan tier (for example `Antigravity · AI Ultra`, `Antigravity · AI Pro Trial`, `Antigravity · Free`, or `Antigravity · Trial/Free` when mixed) and maps the server's values to rings and popover rows without recalculating them.
 
 ## Development
 

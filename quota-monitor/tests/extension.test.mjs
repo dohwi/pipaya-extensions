@@ -404,27 +404,27 @@ test('bundled worker renders v0.8.1 Full + Lite Antigravity split with distinct 
   assert.deepEqual(list.map(g => [g.id, g.label]), [
     ['claude', 'Claude'],
     ['gpt', 'GPT'],
-    ['antigravity', 'Antigravity'],
-    ['antigravity_lite', 'AGY (Lite)']
+    ['antigravity', 'Antigravity · AI Ultra'],
+    ['antigravity_lite', 'Antigravity · Trial/Free']
   ]);
   assert.equal(list[2].icon.paths[0].fill, '#8b7cf6');
-  assert.equal(list[2].details.title, 'Antigravity 잔량');
+  assert.equal(list[2].details.title, 'Antigravity · AI Ultra 잔량');
   assert.deepEqual(list[2].details.rows, [
-    { label: 'Gemini · AI Ultra', value: 99, color: '#8b7cf6', group: 'Gemini', summary: true },
-    { label: 'Claude/GPT · AI Ultra', value: 84, color: '#d97757', group: 'Claude/GPT', summary: true }
+    { label: 'Gemini', value: 99, color: '#8b7cf6', group: 'Gemini', summary: true },
+    { label: 'Claude/GPT', value: 84, color: '#d97757', group: 'Claude/GPT', summary: true }
   ]);
   assert.equal(list[3].icon.paths[0].fill, '#4b8be8');
-  assert.equal(list[3].details.title, 'AGY (Lite) 잔량');
+  assert.equal(list[3].details.title, 'Antigravity · Trial/Free 잔량');
   assert.deepEqual(list[3].details.rows, [
     { label: 'Gemini', value: 90, color: '#4b8be8', group: 'Gemini', summary: true },
-    { label: 'AI Pro', value: 92, color: '#4b8be8', group: 'Gemini', sub: true },
+    { label: 'AI Pro Trial', value: 92, color: '#4b8be8', group: 'Gemini', sub: true },
     { label: 'Free', value: 86, color: '#4b8be8', group: 'Gemini', sub: true },
     { label: 'Claude/GPT', value: 18, color: 'warn', group: 'Claude/GPT', summary: true },
-    { label: 'AI Pro', value: 24, color: '#d97757', group: 'Claude/GPT', sub: true },
+    { label: 'AI Pro Trial', value: 24, color: '#d97757', group: 'Claude/GPT', sub: true },
     { label: 'Free', value: 4, color: 'danger', group: 'Claude/GPT', sub: true }
   ]);
 
   const en = await boot(async () => snap, { httpToken: 'k', language: 'en' });
-  assert.equal(en.calls.at(-1).gauges[2].details.title, 'Antigravity remaining');
-  assert.equal(en.calls.at(-1).gauges[3].details.title, 'AGY (Lite) remaining');
+  assert.equal(en.calls.at(-1).gauges[2].details.title, 'Antigravity · AI Ultra remaining');
+  assert.equal(en.calls.at(-1).gauges[3].details.title, 'Antigravity · Trial/Free remaining');
 });
