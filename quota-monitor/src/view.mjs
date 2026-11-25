@@ -13,6 +13,7 @@ function rows(list, color, group) {
   return (list || []).map(row => {
     const out = { label: row.label, value: row.value, color: tone(row.value, color) };
     if (group) out.group = group;
+    if (row.sub) out.sub = true;
     return out;
   });
 }
@@ -42,7 +43,7 @@ export function gaugeData(gauge, error, fetchedAt = null) {
     id: gauge.id, label: gauge.label, rings,
     icon: LOGOS[gauge.brand],
     hint: [gauge.hint, error].filter(Boolean).join(' · ').slice(0, 500),
-    details: { title: title.slice(0, 40), rows: detailRows.slice(0, 12) }
+    details: { title: title.slice(0, 40), rows: detailRows.slice(0, 20) }
   };
   // The monitor's own observation time wins; otherwise the last successful read. A failed read never advances either.
   const updatedAt = Number.isFinite(gauge.updatedAt) && gauge.updatedAt > 0 ? gauge.updatedAt : fetchedAt;

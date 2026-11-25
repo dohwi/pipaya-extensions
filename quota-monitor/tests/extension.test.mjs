@@ -272,3 +272,79 @@ test('bundled worker renders AGY (4) and AGY (3.8) as distinct dual-ring gauges 
   assert.equal(en.calls.at(-1).gauges[2].details.title, 'AGY (4) remaining');
   assert.equal(en.calls.at(-1).gauges[3].details.title, 'AGY (3.8) remaining');
 });
+
+test('bundled worker renders v0.8.0 unified Antigravity and per-tier breakdown in ko and en', async () => {
+  const snap = {
+    configured: true,
+    snapshot_complete: true,
+    availability: [
+      {
+        key: 'claude',
+        label: 'Claude',
+        remaining_percent: 80.5,
+        accounts: 3,
+        tiers: [
+          { tier: 'max', label: 'Max', remaining_percent: 88, accounts: 1, weight: 5 },
+          { tier: 'pro', label: 'Pro', remaining_percent: 62, accounts: 2, weight: 1 }
+        ]
+      },
+      {
+        key: 'codex',
+        label: 'GPT',
+        remaining_percent: 42,
+        accounts: 1,
+        tiers: [{ tier: 'pro_200', label: 'Pro 200', remaining_percent: 42, accounts: 1, weight: 5 }]
+      },
+      {
+        key: 'antigravity_gemini',
+        label: 'AGY · Gemini',
+        remaining_percent: 96.4,
+        accounts: 4,
+        tiers: [
+          { tier: 'ultra', label: 'AI Ultra', remaining_percent: 99, accounts: 1, weight: 5 },
+          { tier: 'pro', label: 'AI Pro', remaining_percent: 90, accounts: 3, weight: 1 }
+        ]
+      },
+      {
+        key: 'antigravity_claude',
+        label: 'AGY · Claude/GPT',
+        remaining_percent: 71.2,
+        accounts: 4,
+        tiers: [
+          { tier: 'ultra', label: 'AI Ultra', remaining_percent: 84, accounts: 1, weight: 5 },
+          { tier: 'pro', label: 'AI Pro', remaining_percent: 18, accounts: 3, weight: 1 }
+        ]
+      }
+    ],
+    accounts: [
+      { provider: 'claude', status: 'known', windows: [] },
+      { provider: 'codex', status: 'known', windows: [] },
+      { provider: 'antigravity', model_tier: '4', status: 'known', windows: [] }
+    ]
+  };
+
+  const ko = await boot(async () => snap, { httpToken: 'k', language: 'ko' });
+  const list = ko.calls.at(-1).gauges;
+  assert.deepEqual(list.map(g => g.id), ['claude', 'gpt', 'antigravity']);
+  assert.deepEqual(list[0].details.rows, [
+    { label: '전체', value: 80.5, color: '#d97757' },
+    { label: 'Max', value: 88, color: '#d97757', sub: true },
+    { label: 'Pro', value: 62, color: '#d97757', sub: true }
+  ]);
+  assert.deepEqual(list[1].details.rows, [
+    { label: 'Pro 200', value: 42, color: '#10a37f' }
+  ]);
+  assert.deepEqual(list[2].details.rows, [
+    { label: '전체', value: 96.4, color: '#6b8de9', group: 'Gemini' },
+    { label: 'AI Ultra', value: 99, color: '#6b8de9', group: 'Gemini', sub: true },
+    { label: 'AI Pro', value: 90, color: '#6b8de9', group: 'Gemini', sub: true },
+    { label: '전체', value: 71.2, color: '#d97757', group: 'Claude/GPT' },
+    { label: 'AI Ultra', value: 84, color: '#d97757', group: 'Claude/GPT', sub: true },
+    { label: 'AI Pro', value: 18, color: 'warn', group: 'Claude/GPT', sub: true }
+  ]);
+
+  const en = await boot(async () => snap, { httpToken: 'k', language: 'en' });
+  assert.equal(en.calls.at(-1).gauges[0].details.rows[0].label, 'Overall');
+  assert.equal(en.calls.at(-1).gauges[2].details.title, 'Antigravity remaining');
+  assert.equal(en.calls.at(-1).gauges[2].details.rows[0].label, 'Overall');
+});

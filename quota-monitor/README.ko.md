@@ -21,7 +21,7 @@
 - **Antigravity**는 이중 링입니다. 바깥 링은 Gemini, 안쪽 링은 Claude/GPT입니다.
 - **가지고 있는 공급자만 표시합니다.** GPT 계정이 없으면 GPT 게이지는 나타나지 않습니다.
 - 링 색상: 20% 초과는 공급자 고유 색, 20% 이하는 황색, 5% 이하는 적색입니다.
-- 게이지에 마우스를 올리거나 포커스하면 잔량과 측정한 지 얼마나 지났는지 보입니다.
+- 게이지에 마우스를 올리거나 포커스하면 티어 가중 전체 잔량, 티어별 잔량(서버 제공 시), 측정한 지 얼마나 지났는지 보입니다.
 - 60초마다 자동 갱신하고, 에이전트가 한 턴을 끝내면 2.5초 뒤에 한 번 더 갱신합니다.
 - 읽지 못했거나 알 수 없는 값은 0%로 표시하지 않습니다. 마지막 정상 값을 오래된 값으로 표시해 둡니다.
 
@@ -91,7 +91,7 @@
 공급자 → CLIProxyAPI + quota-monitor 플러그인 ──GET(관리 키)──▶ 이 확장 ──▶ pipaya 상단 바
 ```
 
-플러그인이 모든 계정을 측정해 전체 잔량(`availability`: `claude`, `codex`, `antigravity_4_gemini`, `antigravity_4_claude`, `antigravity_3_8_gemini`, `antigravity_3_8_claude`, 미분류 시 `antigravity_gemini`, `antigravity_claude`)을 집계합니다. 확장은 그 값을 링에 매핑할 뿐 다시 계산하지 않습니다.
+플러그인이 모든 계정을 측정해 티어 가중 잔량(`availability`: `claude`, `codex`, `antigravity_gemini`, `antigravity_claude` 및 선택 필드 `tiers`; 구버전 `antigravity_4_*` / `antigravity_3_8_*` 분리 키도 하위 호환 지원)을 집계합니다. 확장은 그 값을 링과 팝오버 행에 매핑할 뿐 다시 계산하지 않습니다.
 
 ## 개발
 

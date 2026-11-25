@@ -23,7 +23,7 @@
 - **Antigravity** has a dual ring: the outer ring is Gemini, the inner ring is Claude/GPT.
 - **Only providers you actually have are shown.** With no GPT account, there is no GPT gauge.
 - Ring colour: provider colour above 20%, amber at 20% or less, red at 5% or less.
-- Hover or focus a gauge to see the remaining percentage and how long ago it was measured.
+- Hover or focus a gauge to see the weighted overall remaining percentage, per-tier breakdown (when reported by the server), and how long ago it was measured.
 - Refreshes on its own every 60 seconds, and again 2.5 seconds after the agent finishes a turn.
 - Unknown or failed reads are never shown as 0%. The last good value stays, marked as stale.
 
@@ -97,7 +97,7 @@ The gauges appear in the header within a few seconds.
 Providers → CLIProxyAPI + quota-monitor plugin ──GET (management key)──▶ worker (polls) ──▶ Gauge component (draws) ──▶ pipaya header
 ```
 
-The plugin measures every account and aggregates the overall remaining quota (`availability`: `claude`, `codex`, `antigravity_4_gemini`, `antigravity_4_claude`, `antigravity_3_8_gemini`, `antigravity_3_8_claude`, or `antigravity_gemini` / `antigravity_claude` when unclassified). The extension maps those values to rings and never recalculates them.
+The plugin measures every account and aggregates the tier-weighted remaining quota (`availability`: `claude`, `codex`, `antigravity_gemini`, `antigravity_claude`, plus optional per-tier `tiers`; legacy `antigravity_4_*` / `antigravity_3_8_*` split keys remain supported). The extension maps those values to rings and popover rows without recalculating them.
 
 ## Development
 

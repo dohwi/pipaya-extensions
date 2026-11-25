@@ -216,3 +216,106 @@ test('gaugeData suppresses stale badge when any value is known (including 0) and
   const unknownOnStartup = gaugeData({ id: 'claude', label: 'Claude', brand: 'claude', remainingPercent: null, stale: false, rows: [{ label: '잔량', value: null }] }, undefined, null);
   assert.equal(unknownOnStartup.stale, undefined);
 });
+
+test('v0.8.0 unified Antigravity stays a single gauge even when accounts have model_tier "4"', () => {
+  const view = gaugesFromSnapshot(snapshot([
+    account('claude', [], { observed_at: '2026-01-01T00:00:10Z' }),
+    account('codex', [], { observed_at: '2026-01-01T00:00:10Z' }),
+    account('antigravity', [], { model_tier: '4', observed_at: '2026-01-01T00:00:40Z' }),
+    account('antigravity', [], { model_tier: '4', status: 'stale', observed_at: '2026-01-01T00:00:20Z' })
+  ], [
+    fleet('claude', 72),
+    fleet('codex', 45),
+    fleet('antigravity_gemini', 96.4),
+    fleet('antigravity_claude', 81.2)
+  ]));
+  assert.deepEqual(view.gauges.map(g => [g.id, g.label, g.remainingPercent, g.innerRemainingPercent ?? null]), [
+    ['claude', 'Claude', 72, null],
+    ['gpt', 'GPT', 45, null],
+    ['antigravity', 'Antigravity', 96.4, 81.2]
+  ]);
+  assert.equal(view.gauges[2].stale, false, 'healthy model_tier "4" account keeps unified Antigravity fresh');
+  assert.equal(view.gauges[2].updatedAt, Date.parse('2026-01-01T00:00:40Z'));
+});
+
+test('mergeWithPrevious drops legacy split AGY gauges immediately when server switches to unified Antigravity', () => {
+  const misses = {};
+  const legacy = gaugesFromSnapshot(snapshot([
+    account('antigravity', [], { model_tier: '4' }),
+    account('antigravity', [], { model_tier: '3.8' })
+  ], [
+    fleet('claude', 64),
+    fleet('antigravity_4_gemini', 99),
+    fleet('antigravity_4_claude', 100),
+    fleet('antigravity_3_8_gemini', 80),
+    fleet('antigravity_3_8_claude', 50)
+  ])).gauges;
+  const unified = gaugesFromSnapshot(snapshot([
+    account('antigravity', [], { model_tier: '4' })
+  ], [
+    fleet('claude', 64),
+    fleet('antigravity_gemini', 96.4),
+    fleet('antigravity_claude', 88)
+  ])).gauges;
+  const merged = mergeWithPrevious(legacy, unified, misses);
+  assert.deepEqual(merged.map(g => g.id), ['claude', 'antigravity']);
+  assert.deepEqual(misses, {});
+});
+
+test('availability tiers expand into weighted overall plus tier sub-rows and handle single/malformed/zero edge cases', () => {
+  const view = gaugesFromSnapshot(snapshot([
+    account('claude', []),
+    account('codex', []),
+    account('antigravity', [], { model_tier: '4' })
+  ], [
+    {
+      key: 'claude',
+      remaining_percent: 82.5,
+      accounts: 2,
+      tiers: [
+        { tier: 'max', label: 'Max', remaining_percent: 90, accounts: 1, weight: 5 },
+        { tier: 'pro', label: 'Pro', remaining_percent: 0, accounts: 1, weight: 1 }
+      ]
+    },
+    {
+      key: 'codex',
+      remaining_percent: 54,
+      accounts: 1,
+      tiers: [{ tier: 'plus', label: 'Plus', remaining_percent: 54, accounts: 1, weight: 1 }]
+    },
+    {
+      key: 'antigravity_gemini',
+      remaining_percent: 96.4,
+      accounts: 4,
+      tiers: [
+        { tier: 'ultra', label: 'AI Ultra', remaining_percent: 99, accounts: 1, weight: 5 },
+        { tier: 'pro', label: 'AI Pro', remaining_percent: 90, accounts: 3, weight: 1 },
+        { tier: 'bad', label: '', remaining_percent: 50 },
+        { tier: 'nan', label: 'Broken', remaining_percent: null },
+        { tier: 'over', label: 'Over', remaining_percent: 120 }
+      ]
+    },
+    {
+      key: 'antigravity_claude',
+      remaining_percent: 15,
+      accounts: 2,
+      tiers: []
+    }
+  ]));
+
+  const [claude, gpt, ag] = view.gauges.map(g => gaugeData(g));
+  assert.deepEqual(claude.details.rows, [
+    { label: '전체', value: 82.5, color: '#d97757' },
+    { label: 'Max', value: 90, color: '#d97757', sub: true },
+    { label: 'Pro', value: 0, color: 'danger', sub: true }
+  ]);
+  assert.deepEqual(gpt.details.rows, [
+    { label: 'Plus', value: 54, color: '#10a37f' }
+  ]);
+  assert.deepEqual(ag.details.rows, [
+    { label: '전체', value: 96.4, color: '#6b8de9', group: 'Gemini' },
+    { label: 'AI Ultra', value: 99, color: '#6b8de9', group: 'Gemini', sub: true },
+    { label: 'AI Pro', value: 90, color: '#6b8de9', group: 'Gemini', sub: true },
+    { label: '잔량', value: 15, color: 'warn', group: 'Claude/GPT' }
+  ]);
+});

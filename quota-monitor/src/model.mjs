@@ -30,11 +30,26 @@ export function gaugesFromSnapshot(snapshot) {
   const accounts = Array.isArray(snapshot.accounts) ? snapshot.accounts : [];
   const byProvider = name => accounts.filter(account => providerName(account.provider) === name);
   const availability = Array.isArray(snapshot.availability) ? snapshot.availability : [];
+  const validPercent = value => (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null);
+  const tierRows = (entry, remaining) => {
+    const rawTiers = Array.isArray(entry?.tiers) ? entry.tiers : [];
+    const tiers = [];
+    for (const item of rawTiers) {
+      if (!item || typeof item !== 'object') continue;
+      const value = validPercent(item.remaining_percent);
+      const label = String(item.label ?? item.tier ?? '').trim().slice(0, 32);
+      if (value === null || !label) continue;
+      tiers.push({ label, value });
+      if (tiers.length >= 8) break;
+    }
+    if (remaining === null || tiers.length === 0) return [{ label: t('remaining'), value: remaining }];
+    if (tiers.length === 1) return [{ label: tiers[0].label, value: remaining }];
+    return [{ label: t('overall'), value: remaining }, ...tiers.map(item => ({ label: item.label, value: item.value, sub: true }))];
+  };
   const fleetSummary = (key, group) => {
     const entry = availability.find(item => item?.key === key);
-    const value = entry?.remaining_percent;
     // The server owns fleet aggregation. Missing values never fall back to account windows.
-    const remaining = typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
+    const remaining = validPercent(entry?.remaining_percent);
     const usable = group.filter(account => account.operational?.disabled !== true && account.status !== 'disabled' && account.operational?.status !== 'disabled');
     const isStale = account => account.stale === true || account.status === 'error' || account.status === 'stale';
     // One broken account is not worth a warning while another one still reports; flag only when every usable account is stale.
@@ -42,7 +57,7 @@ export function gaugesFromSnapshot(snapshot) {
     const times = usable.map(observedAt).filter(time => time !== null);
     const updatedAt = times.length ? Math.max(...times) : null;
     const hint = [remaining === null ? t('unknownRemaining') : '', stale ? t('staleObservation') : ''].filter(Boolean).join(' · ');
-    return { remaining, stale, updatedAt, hint, rows: [{ label: t('remaining'), value: remaining }] };
+    return { remaining, stale, updatedAt, hint, rows: tierRows(entry, remaining) };
   };
   const gauge = (id, label, brand, group, key = id) => {
     const summary = fleetSummary(key, group);
@@ -69,13 +84,15 @@ export function gaugesFromSnapshot(snapshot) {
   const ag38 = ag.filter(account => normalizeModelTier(account.model_tier) === '3.8');
   const agLegacy = ag.filter(account => normalizeModelTier(account.model_tier) === '');
   const hasKey = key => availability.some(item => item?.key === key);
-  const has4 = ag4.length > 0 || hasKey('antigravity_4_gemini') || hasKey('antigravity_4_claude');
-  const has38 = ag38.length > 0 || hasKey('antigravity_3_8_gemini') || hasKey('antigravity_3_8_claude');
-  const hasLegacy = agLegacy.length > 0 || hasKey('antigravity_gemini') || hasKey('antigravity_claude');
+  // Server v0.8.0+ unifies Antigravity into antigravity_gemini / antigravity_claude while still tagging accounts with
+  // model_tier: "4", so split AGY (4) / AGY (3.8) gauges only when the server actually reports split availability keys.
+  const has4 = hasKey('antigravity_4_gemini') || hasKey('antigravity_4_claude');
+  const has38 = hasKey('antigravity_3_8_gemini') || hasKey('antigravity_3_8_claude');
+  const hasUnified = hasKey('antigravity_gemini') || hasKey('antigravity_claude');
   if (has4 || has38) {
     if (has4) gauges.push(antigravityGauge('antigravity_4', 'AGY (4)', 'antigravity_4', ag4, 'antigravity_4_gemini', 'antigravity_4_claude'));
     if (has38) gauges.push(antigravityGauge('antigravity_3_8', 'AGY (3.8)', 'antigravity_3_8', ag38, 'antigravity_3_8_gemini', 'antigravity_3_8_claude'));
-    if (hasLegacy) gauges.push(antigravityGauge('antigravity', 'Antigravity', 'antigravity', agLegacy, 'antigravity_gemini', 'antigravity_claude'));
+    if (hasUnified) gauges.push(antigravityGauge('antigravity', 'Antigravity', 'antigravity', agLegacy.length ? agLegacy : ag, 'antigravity_gemini', 'antigravity_claude'));
   } else {
     gauges.push(antigravityGauge('antigravity', 'Antigravity', 'antigravity', ag, 'antigravity_gemini', 'antigravity_claude'));
   }
@@ -118,8 +135,12 @@ export function mergeWithPrevious(previousGauges = [], nextGauges = [], missingC
     return out;
   });
   const nextIds = new Set(merged.map(g => g.id));
+  const unifiedOnly = nextIds.has('antigravity') && !STICKY_TIER_IDS.some(id => nextIds.has(id));
   for (const id of STICKY_TIER_IDS) {
-    if (nextIds.has(id)) continue;
+    if (nextIds.has(id) || unifiedOnly) {
+      delete missingCounts[id];
+      continue;
+    }
     const prev = prevById.get(id);
     if (!prev) {
       delete missingCounts[id];

@@ -29,7 +29,7 @@
 	const updatedAt = $derived(details?.updatedAt);
 	const rows = $derived((details?.rows ?? []).map((row, index, all) => {
 		const m = meter(row);
-		return { ...m, heading: row.group !== undefined && row.group !== all[index - 1]?.group ? row.group : undefined, label: row.label, caption: row.caption, percent: (m.ratio * 100).toFixed(2), text: m.known ? `${Math.round(m.ratio * 100)}%` : strings.unknown };
+		return { ...m, heading: row.group !== undefined && row.group !== all[index - 1]?.group ? row.group : undefined, label: row.label, caption: row.caption, sub: row.sub === true, percent: (m.ratio * 100).toFixed(2), text: m.known ? `${Math.round(m.ratio * 100)}%` : strings.unknown };
 	}));
 
 	let now = $state(Date.now());
@@ -167,7 +167,7 @@
 		{#if details.title}<div class="pop-title">{details.title}</div>{/if}
 		{#each rows as row}
 			{#if row.heading}<div class="pop-group">{row.heading}</div>{/if}
-			<div class="pop-row">
+			<div class="pop-row" class:sub={row.sub}>
 				<div class="pop-line">
 					<span class="pop-label" title={row.label}>{row.label}</span>
 					<div class="pop-track" class:unknown={!row.known}>
@@ -221,6 +221,10 @@
 	:global(.qm-pop .pop-group:first-child) { margin-top: 0; }
 	:global(.qm-pop .pop-row) { margin: 0 0 6px; }
 	:global(.qm-pop .pop-row:last-child) { margin-bottom: 0; }
+	:global(.qm-pop .pop-row.sub) { padding-left: 10px; margin-bottom: 5px; }
+	:global(.qm-pop .pop-row.sub .pop-label) { color: var(--text-dim); font-size: var(--fs-2xs); }
+	:global(.qm-pop .pop-row.sub .pop-track) { height: 4px; }
+	:global(.qm-pop .pop-row.sub .pop-value) { font-size: var(--fs-2xs); }
 	:global(.qm-pop .pop-line) { display: grid; grid-template-columns: minmax(0, 1fr) 64px auto; align-items: center; gap: 8px; }
 	:global(.qm-pop .pop-label) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 	:global(.qm-pop .pop-value) { flex: none; min-width: 34px; font-variant-numeric: tabular-nums; color: var(--text-dim); text-align: right; white-space: nowrap; }
