@@ -24,13 +24,14 @@ function rows(list, color, group) {
 }
 
 export function gaugeData(gauge, error, fetchedAt = null) {
-  const isAntigravity = gauge.brand === 'antigravity' || gauge.brand === 'antigravity_4' || gauge.brand === 'antigravity_3_8';
+  const isAntigravity = gauge.brand === 'antigravity' || gauge.brand === 'antigravity_full' || gauge.brand === 'antigravity_lite' || gauge.brand === 'antigravity_4' || gauge.brand === 'antigravity_3_8';
   const outerColor = gauge.brand === 'antigravity' ? COLORS.gemini : COLORS[gauge.brand];
   const ring = (value, color, label) => ({ value, color: tone(value, color), label });
-  const outerRingLabel = gauge.brand === 'antigravity'
+  const isPrimaryAg = gauge.brand === 'antigravity' || gauge.brand === 'antigravity_full';
+  const outerRingLabel = isPrimaryAg
     ? t('remainingOf', { name: 'Gemini' })
     : t('remainingOf', { name: `${gauge.label} · Gemini` });
-  const innerRingLabel = gauge.brand === 'antigravity'
+  const innerRingLabel = isPrimaryAg
     ? t('remainingOf', { name: 'Claude via Antigravity' })
     : t('remainingOf', { name: `${gauge.label} · Claude/GPT` });
   const rings = isAntigravity

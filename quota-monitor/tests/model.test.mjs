@@ -329,3 +329,67 @@ test('availability tiers expand into weighted overall plus tier sub-rows and han
     { label: 'Claude/GPT · AI Ultra', value: 80, color: '#d97757', group: 'Claude/GPT', summary: true }
   ]);
 });
+
+test('v0.8.1 Full + Lite split renders Antigravity (purple) and AGY (Lite) (blue) with independent stale/updatedAt', () => {
+  const view = gaugesFromSnapshot(snapshot([
+    account('claude', [], { observed_at: '2026-01-01T00:00:10Z' }),
+    account('codex', [], { observed_at: '2026-01-01T00:00:10Z' }),
+    account('antigravity', [], { model_tier: 'full', observed_at: '2026-01-01T00:00:50Z' }),
+    account('antigravity', [], { model_tier: 'lite', status: 'stale', observed_at: '2026-01-01T00:00:30Z' })
+  ], [
+    fleet('claude', 72),
+    fleet('codex', 45),
+    { key: 'antigravity_gemini', remaining_percent: 99, accounts: 1, tiers: [{ tier: 'ultra', label: 'AI Ultra', remaining_percent: 99, accounts: 1 }] },
+    { key: 'antigravity_claude', remaining_percent: 88, accounts: 1, tiers: [{ tier: 'ultra', label: 'AI Ultra', remaining_percent: 88, accounts: 1 }] },
+    { key: 'antigravity_lite_gemini', remaining_percent: 70, accounts: 3, tiers: [{ tier: 'pro', label: 'AI Pro', remaining_percent: 70, accounts: 3 }] },
+    { key: 'antigravity_lite_claude', remaining_percent: 15, accounts: 3, tiers: [{ tier: 'pro', label: 'AI Pro', remaining_percent: 15, accounts: 3 }] }
+  ]));
+
+  assert.deepEqual(view.gauges.map(g => [g.id, g.label, g.brand, g.remainingPercent, g.innerRemainingPercent ?? null]), [
+    ['claude', 'Claude', 'claude', 72, null],
+    ['gpt', 'GPT', 'gpt', 45, null],
+    ['antigravity', 'Antigravity', 'antigravity_full', 99, 88],
+    ['antigravity_lite', 'AGY (Lite)', 'antigravity_lite', 70, 15]
+  ]);
+  assert.equal(view.gauges[2].stale, false, 'full pool stays fresh while lite is stale');
+  assert.equal(view.gauges[3].stale, true, 'lite pool tracks its own stale status');
+  assert.equal(view.gauges[2].updatedAt, Date.parse('2026-01-01T00:00:50Z'));
+  assert.equal(view.gauges[3].updatedAt, Date.parse('2026-01-01T00:00:30Z'));
+
+  const fullNode = gaugeData(view.gauges[2]);
+  const liteNode = gaugeData(view.gauges[3]);
+  assert.equal(fullNode.icon.paths[0].fill, '#8b7cf6');
+  assert.equal(fullNode.rings[0].color, '#8b7cf6');
+  assert.equal(fullNode.rings[1].color, '#d97757');
+  assert.equal(fullNode.details.title, 'Antigravity 잔량');
+  assert.equal(liteNode.icon.paths[0].fill, '#4b8be8');
+  assert.equal(liteNode.rings[0].color, '#4b8be8');
+  assert.equal(liteNode.rings[1].color, 'warn');
+  assert.equal(liteNode.details.title, 'AGY (Lite) 잔량');
+
+  // Lite-only availability without antigravity_gemini/claude renders only AGY (Lite) and never borrows missing inner value.
+  const liteOnly = gaugesFromSnapshot(snapshot([
+    account('antigravity', [], { model_tier: 'lite' })
+  ], [
+    fleet('antigravity_lite_gemini', 65)
+  ]));
+  assert.deepEqual(liteOnly.gauges.map(g => [g.id, g.remainingPercent, g.innerRemainingPercent ?? null]), [
+    ['claude', null, null],
+    ['antigravity_lite', 65, null]
+  ]);
+
+  // Unified snapshot after split drops AGY (Lite) immediately and restores default Antigravity brand.
+  const unified = gaugesFromSnapshot(snapshot([
+    account('antigravity', [], { model_tier: 'full' }),
+    account('antigravity', [], { model_tier: 'lite' })
+  ], [
+    fleet('claude', 72),
+    fleet('antigravity_gemini', 84),
+    fleet('antigravity_claude', 60)
+  ])).gauges;
+  const merged = mergeWithPrevious(view.gauges, unified, {});
+  assert.deepEqual(merged.map(g => [g.id, g.brand]), [
+    ['claude', 'claude'],
+    ['antigravity', 'antigravity']
+  ]);
+});

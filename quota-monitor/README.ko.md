@@ -91,7 +91,7 @@
 공급자 → CLIProxyAPI + quota-monitor 플러그인 ──GET(관리 키)──▶ 이 확장 ──▶ pipaya 상단 바
 ```
 
-플러그인이 모든 계정을 측정해 티어 가중 잔량(`availability`: `claude`, `codex`, `antigravity_gemini`, `antigravity_claude` 및 선택 필드 `tiers`; 구버전 `antigravity_4_*` / `antigravity_3_8_*` 분리 키도 하위 호환 지원)을 집계합니다. 확장은 그 값을 링과 팝오버 행에 매핑할 뿐 다시 계산하지 않습니다.
+플러그인이 모든 계정을 측정해 티어 가중 잔량(`availability`: `claude`, `codex`, `antigravity_gemini`, `antigravity_claude`, Full·Lite 풀 혼재 시 `antigravity_lite_gemini` / `antigravity_lite_claude` 및 선택 필드 `tiers`; 구버전 `antigravity_4_*` / `antigravity_3_8_*` 분리 키도 하위 호환 지원)을 집계합니다. 확장은 그 값을 링과 팝오버 행에 매핑할 뿐 다시 계산하지 않습니다.
 
 ## 개발
 

@@ -9,8 +9,8 @@ export function providerName(provider) {
 }
 
 export function normalizeModelTier(raw) {
-  const value = String(raw || '').trim();
-  return value === '4' || value === '3.8' ? value : '';
+  const value = String(raw || '').toLowerCase().trim();
+  return value === 'full' || value === 'lite' || value === '4' || value === '3.8' ? value : '';
 }
 
 // Never use the local poll time: a failed refresh must keep the original data age.
@@ -82,17 +82,25 @@ export function gaugesFromSnapshot(snapshot) {
   };
   const ag4 = ag.filter(account => normalizeModelTier(account.model_tier) === '4');
   const ag38 = ag.filter(account => normalizeModelTier(account.model_tier) === '3.8');
+  const agLite = ag.filter(account => normalizeModelTier(account.model_tier) === 'lite');
+  const agFull = ag.filter(account => normalizeModelTier(account.model_tier) !== 'lite');
   const agLegacy = ag.filter(account => normalizeModelTier(account.model_tier) === '');
   const hasKey = key => availability.some(item => item?.key === key);
-  // Server v0.8.0+ unifies Antigravity into antigravity_gemini / antigravity_claude while still tagging accounts with
-  // model_tier: "4", so split AGY (4) / AGY (3.8) gauges only when the server actually reports split availability keys.
+  // Server v0.8.1+ auto-splits Antigravity into full (antigravity_gemini/claude) and lite (antigravity_lite_gemini/claude)
+  // when accounts have different model pools, and unifies into antigravity_gemini/claude when all share one pool.
+  // Split gauges strictly follow the server's availability keys, never account.model_tier alone.
   const has4 = hasKey('antigravity_4_gemini') || hasKey('antigravity_4_claude');
   const has38 = hasKey('antigravity_3_8_gemini') || hasKey('antigravity_3_8_claude');
   const hasUnified = hasKey('antigravity_gemini') || hasKey('antigravity_claude');
+  const hasLite = hasKey('antigravity_lite_gemini') || hasKey('antigravity_lite_claude');
   if (has4 || has38) {
     if (has4) gauges.push(antigravityGauge('antigravity_4', 'AGY (4)', 'antigravity_4', ag4, 'antigravity_4_gemini', 'antigravity_4_claude'));
     if (has38) gauges.push(antigravityGauge('antigravity_3_8', 'AGY (3.8)', 'antigravity_3_8', ag38, 'antigravity_3_8_gemini', 'antigravity_3_8_claude'));
     if (hasUnified) gauges.push(antigravityGauge('antigravity', 'Antigravity', 'antigravity', agLegacy.length ? agLegacy : ag, 'antigravity_gemini', 'antigravity_claude'));
+    if (hasLite) gauges.push(antigravityGauge('antigravity_lite', 'AGY (Lite)', 'antigravity_lite', agLite.length ? agLite : ag, 'antigravity_lite_gemini', 'antigravity_lite_claude'));
+  } else if (hasLite) {
+    if (hasUnified) gauges.push(antigravityGauge('antigravity', 'Antigravity', 'antigravity_full', agFull.length ? agFull : ag, 'antigravity_gemini', 'antigravity_claude'));
+    gauges.push(antigravityGauge('antigravity_lite', 'AGY (Lite)', 'antigravity_lite', agLite.length ? agLite : ag, 'antigravity_lite_gemini', 'antigravity_lite_claude'));
   } else {
     gauges.push(antigravityGauge('antigravity', 'Antigravity', 'antigravity', ag, 'antigravity_gemini', 'antigravity_claude'));
   }

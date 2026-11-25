@@ -352,3 +352,79 @@ test('bundled worker renders v0.8.0 unified Antigravity and per-tier breakdown i
   assert.equal(en.calls.at(-1).gauges[2].details.rows[0].label, 'Gemini');
   assert.equal(en.calls.at(-1).gauges[2].details.rows[3].label, 'Claude/GPT');
 });
+
+test('bundled worker renders v0.8.1 Full + Lite Antigravity split with distinct colors and popovers', async () => {
+  const snap = {
+    configured: true,
+    snapshot_complete: true,
+    availability: [
+      { key: 'claude', remaining_percent: 80, accounts: 2 },
+      { key: 'codex', remaining_percent: 55, accounts: 1 },
+      {
+        key: 'antigravity_gemini',
+        remaining_percent: 99,
+        accounts: 1,
+        tiers: [{ tier: 'ultra', label: 'AI Ultra', remaining_percent: 99, accounts: 1, weight: 5 }]
+      },
+      {
+        key: 'antigravity_claude',
+        remaining_percent: 84,
+        accounts: 1,
+        tiers: [{ tier: 'ultra', label: 'AI Ultra', remaining_percent: 84, accounts: 1, weight: 5 }]
+      },
+      {
+        key: 'antigravity_lite_gemini',
+        remaining_percent: 90,
+        accounts: 3,
+        tiers: [
+          { tier: 'pro', label: 'AI Pro', remaining_percent: 92, accounts: 2, weight: 1 },
+          { tier: 'free', label: 'Free', remaining_percent: 86, accounts: 1, weight: 1 }
+        ]
+      },
+      {
+        key: 'antigravity_lite_claude',
+        remaining_percent: 18,
+        accounts: 3,
+        tiers: [
+          { tier: 'pro', label: 'AI Pro', remaining_percent: 24, accounts: 2, weight: 1 },
+          { tier: 'free', label: 'Free', remaining_percent: 4, accounts: 1, weight: 1 }
+        ]
+      }
+    ],
+    accounts: [
+      { provider: 'claude', status: 'known', windows: [] },
+      { provider: 'codex', status: 'known', windows: [] },
+      { provider: 'antigravity', model_tier: 'full', status: 'known', windows: [] },
+      { provider: 'antigravity', model_tier: 'lite', status: 'known', windows: [] }
+    ]
+  };
+
+  const ko = await boot(async () => snap, { httpToken: 'k', language: 'ko' });
+  const list = ko.calls.at(-1).gauges;
+  assert.deepEqual(list.map(g => [g.id, g.label]), [
+    ['claude', 'Claude'],
+    ['gpt', 'GPT'],
+    ['antigravity', 'Antigravity'],
+    ['antigravity_lite', 'AGY (Lite)']
+  ]);
+  assert.equal(list[2].icon.paths[0].fill, '#8b7cf6');
+  assert.equal(list[2].details.title, 'Antigravity 잔량');
+  assert.deepEqual(list[2].details.rows, [
+    { label: 'Gemini · AI Ultra', value: 99, color: '#8b7cf6', group: 'Gemini', summary: true },
+    { label: 'Claude/GPT · AI Ultra', value: 84, color: '#d97757', group: 'Claude/GPT', summary: true }
+  ]);
+  assert.equal(list[3].icon.paths[0].fill, '#4b8be8');
+  assert.equal(list[3].details.title, 'AGY (Lite) 잔량');
+  assert.deepEqual(list[3].details.rows, [
+    { label: 'Gemini', value: 90, color: '#4b8be8', group: 'Gemini', summary: true },
+    { label: 'AI Pro', value: 92, color: '#4b8be8', group: 'Gemini', sub: true },
+    { label: 'Free', value: 86, color: '#4b8be8', group: 'Gemini', sub: true },
+    { label: 'Claude/GPT', value: 18, color: 'warn', group: 'Claude/GPT', summary: true },
+    { label: 'AI Pro', value: 24, color: '#d97757', group: 'Claude/GPT', sub: true },
+    { label: 'Free', value: 4, color: 'danger', group: 'Claude/GPT', sub: true }
+  ]);
+
+  const en = await boot(async () => snap, { httpToken: 'k', language: 'en' });
+  assert.equal(en.calls.at(-1).gauges[2].details.title, 'Antigravity remaining');
+  assert.equal(en.calls.at(-1).gauges[3].details.title, 'AGY (Lite) remaining');
+});
