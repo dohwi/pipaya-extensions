@@ -33,8 +33,8 @@
 <style>
 	.qm { display: flex; align-items: center; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain; }
 	.qm::-webkit-scrollbar { display: none; }
-	/* Header (desktop): compact ring strip that yields to the header title. */
-	.qm.header { flex: 0 1 auto; gap: 6px; max-width: min(44%, 192px); padding: 3px 4px; }
-	/* Sidebar top (mobile ≤600px): single compact row right below the logo bar with evenly distributed rings. */
-	.qm.sidebar { --qm-ring: 26px; flex: none; justify-content: space-around; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+	/* Header (desktop): compact tile strip that yields to the header title. */
+	.qm.header { flex: 0 1 auto; gap: 4px; max-width: min(48%, 230px); padding: 2px 4px; }
+	/* Sidebar top (mobile ≤600px): single compact row right below the logo bar with evenly distributed tiles. */
+	.qm.sidebar { flex: none; justify-content: space-around; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--border); }
 </style>

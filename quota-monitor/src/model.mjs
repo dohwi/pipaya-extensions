@@ -40,6 +40,8 @@ export function gaugesFromSnapshot(snapshot) {
     return raw;
   };
   const tierRows = (entry, remaining, restricted = false) => {
+    const entryShort = validPercent(entry?.short_remaining_percent);
+    const entryWeekly = validPercent(entry?.weekly_remaining_percent);
     const rawTiers = Array.isArray(entry?.tiers) ? entry.tiers : [];
     const tiers = [];
     for (const item of rawTiers) {
@@ -47,33 +49,71 @@ export function gaugesFromSnapshot(snapshot) {
       const value = validPercent(item.remaining_percent);
       const label = tierLabelOf(item, restricted);
       if (value === null || !label) continue;
-      tiers.push({ label, value });
+      tiers.push({
+        label,
+        value,
+        short: validPercent(item.short_remaining_percent),
+        weekly: validPercent(item.weekly_remaining_percent)
+      });
       if (tiers.length >= 8) break;
     }
-    if (remaining === null || tiers.length === 0) return { rows: [{ label: t('remaining'), value: remaining }], tiers: [] };
-    if (tiers.length === 1) return { rows: [{ label: tiers[0].label, value: remaining, tier: tiers[0].label }], tiers: [tiers[0].label] };
+    const hasWindow = entryShort !== null || entryWeekly !== null;
+    if (hasWindow) {
+      const hasDual = entryShort !== null && entryWeekly !== null;
+      const windowRows = [];
+      if (entryShort !== null) windowRows.push({ label: t('shortWindow'), value: entryShort, window: 'short' });
+      if (entryWeekly !== null) windowRows.push({ label: t('weeklyWindow'), value: entryWeekly, window: 'weekly' });
+      if (tiers.length === 1 && windowRows.length) windowRows[0].tier = tiers[0].label;
+      if (tiers.length >= 2) {
+        return {
+          rows: [
+            ...windowRows,
+            ...tiers.map(item => (hasDual
+              ? { label: item.label, value: item.value, short: item.short, weekly: item.weekly, sub: true }
+              : { label: item.label, value: entryShort !== null ? (item.short ?? item.value) : (item.weekly ?? item.value), sub: true }))
+          ],
+          tiers: tiers.map(item => item.label),
+          singleTier: null
+        };
+      }
+      return {
+        rows: windowRows,
+        tiers: tiers.length === 1 ? [tiers[0].label] : [],
+        singleTier: tiers.length === 1 ? tiers[0].label : null
+      };
+    }
+    if (remaining === null || tiers.length === 0) return { rows: [{ label: t('remaining'), value: remaining }], tiers: [], singleTier: null };
+    if (tiers.length === 1) return { rows: [{ label: tiers[0].label, value: remaining, tier: tiers[0].label }], tiers: [tiers[0].label], singleTier: null };
     return {
       rows: [{ label: t('overall'), value: remaining, summary: true }, ...tiers.map(item => ({ label: item.label, value: item.value, sub: true }))],
-      tiers: tiers.map(item => item.label)
+      tiers: tiers.map(item => item.label),
+      singleTier: null
     };
   };
   const fleetSummary = (key, group, restricted = false) => {
     const entry = availability.find(item => item?.key === key);
     // The server owns fleet aggregation. Missing values never fall back to account windows.
     const remaining = validPercent(entry?.remaining_percent);
+    const short = validPercent(entry?.short_remaining_percent);
+    const weekly = validPercent(entry?.weekly_remaining_percent);
     const usable = group.filter(account => account.operational?.disabled !== true && account.status !== 'disabled' && account.operational?.status !== 'disabled');
     const isStale = account => account.stale === true || account.status === 'error' || account.status === 'stale';
     // One broken account is not worth a warning while another one still reports; flag only when every usable account is stale.
     const stale = usable.length > 0 && usable.every(isStale);
     const times = usable.map(observedAt).filter(time => time !== null);
     const updatedAt = times.length ? Math.max(...times) : null;
-    const hint = [remaining === null ? t('unknownRemaining') : '', stale ? t('staleObservation') : ''].filter(Boolean).join(' · ');
-    const { rows, tiers } = tierRows(entry, remaining, restricted);
-    return { remaining, stale, updatedAt, hint, rows, tiers };
+    const known = short !== null || weekly !== null || remaining !== null;
+    const hint = [!known ? t('unknownRemaining') : '', stale ? t('staleObservation') : ''].filter(Boolean).join(' · ');
+    const { rows, tiers, singleTier } = tierRows(entry, remaining, restricted);
+    return { remaining, short, weekly, stale, updatedAt, hint, rows, tiers, singleTier };
   };
   const gauge = (id, label, brand, group, key = id, restricted = false) => {
     const summary = fleetSummary(key, group, restricted);
-    return { id, label, brand, remainingPercent: summary.remaining, hint: summary.hint, updatedAt: summary.updatedAt, rows: summary.rows, tiers: summary.tiers, stale: snapshot.stale === true || summary.stale };
+    const out = { id, label, brand, remainingPercent: summary.remaining, hint: summary.hint, updatedAt: summary.updatedAt, rows: summary.rows, tiers: summary.tiers, stale: snapshot.stale === true || summary.stale };
+    if (summary.short !== null) out.shortPercent = summary.short;
+    if (summary.weekly !== null) out.weeklyPercent = summary.weekly;
+    if (summary.singleTier) out.singleTier = summary.singleTier;
+    return out;
   };
   const ag = byProvider('antigravity');
   const gemini = byProvider('gemini');
@@ -85,8 +125,11 @@ export function gaugesFromSnapshot(snapshot) {
   if (gemini.length) gauges.push(stripTiers(gauge('gemini', 'Gemini', 'gemini', gemini)));
   const antigravityGauge = (id, label, brand, group, geminiKey, claudeKey, { restricted = false, deriveLabel = false } = {}) => {
     const outer = gauge(id, label, brand, group, geminiKey, restricted);
+    delete outer.singleTier;
     const inner = fleetSummary(claudeKey, group, restricted);
     outer.innerRemainingPercent = inner.remaining;
+    if (inner.short !== null) outer.innerShortPercent = inner.short;
+    if (inner.weekly !== null) outer.innerWeeklyPercent = inner.weekly;
     outer.innerRows = inner.rows;
     outer.stale ||= inner.stale;
     outer.updatedAt = Math.max(outer.updatedAt ?? 0, inner.updatedAt ?? 0) || null;
@@ -152,13 +195,21 @@ export function mergeWithPrevious(previousGauges = [], nextGauges = [], missingC
     const prev = prevById.get(next.id);
     if (!prev) return next;
     const out = { ...next };
-    if (!isFiniteNumber(out.remainingPercent) && isFiniteNumber(prev.remainingPercent)) {
+    const hasOuter = isFiniteNumber(out.remainingPercent) || isFiniteNumber(out.shortPercent) || isFiniteNumber(out.weeklyPercent);
+    const prevOuter = isFiniteNumber(prev.remainingPercent) || isFiniteNumber(prev.shortPercent) || isFiniteNumber(prev.weeklyPercent);
+    if (!hasOuter && prevOuter) {
       out.remainingPercent = prev.remainingPercent;
+      if (isFiniteNumber(prev.shortPercent)) out.shortPercent = prev.shortPercent;
+      if (isFiniteNumber(prev.weeklyPercent)) out.weeklyPercent = prev.weeklyPercent;
       out.rows = prev.rows;
       if (!out.updatedAt && prev.updatedAt) out.updatedAt = prev.updatedAt;
     }
-    if ('innerRemainingPercent' in out && !isFiniteNumber(out.innerRemainingPercent) && isFiniteNumber(prev.innerRemainingPercent)) {
+    const hasInner = isFiniteNumber(out.innerRemainingPercent) || isFiniteNumber(out.innerShortPercent) || isFiniteNumber(out.innerWeeklyPercent);
+    const prevInner = isFiniteNumber(prev.innerRemainingPercent) || isFiniteNumber(prev.innerShortPercent) || isFiniteNumber(prev.innerWeeklyPercent);
+    if ('innerRemainingPercent' in out && !hasInner && prevInner) {
       out.innerRemainingPercent = prev.innerRemainingPercent;
+      if (isFiniteNumber(prev.innerShortPercent)) out.innerShortPercent = prev.innerShortPercent;
+      if (isFiniteNumber(prev.innerWeeklyPercent)) out.innerWeeklyPercent = prev.innerWeeklyPercent;
       out.innerRows = prev.innerRows;
       out.updatedAt = Math.max(out.updatedAt ?? 0, prev.updatedAt ?? 0) || null;
     }

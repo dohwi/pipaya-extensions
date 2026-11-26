@@ -422,3 +422,105 @@ test('v0.8.1 Full + Trial/Free split uses official Antigravity plan names with i
     ['antigravity', 'antigravity']
   ]);
 });
+
+test('dual-window (5h + 7d) availability renders 5h/7d bars plus compact tier rows while keeping single-window entries clean', () => {
+  const view = gaugesFromSnapshot(snapshot([
+    account('claude', []),
+    account('codex', []),
+    account('antigravity', [], { model_tier: 'full' })
+  ], [
+    {
+      key: 'claude',
+      remaining_percent: 16.7,
+      short_remaining_percent: 16.7,
+      weekly_remaining_percent: 75.8,
+      accounts: 2,
+      tiers: [
+        { tier: 'max', label: 'Max', remaining_percent: 0, short_remaining_percent: 0, weekly_remaining_percent: 90, accounts: 1 },
+        { tier: 'pro', label: 'Pro', remaining_percent: 5, short_remaining_percent: 100, weekly_remaining_percent: 5, accounts: 1 }
+      ]
+    },
+    {
+      key: 'codex',
+      remaining_percent: 75,
+      short_remaining_percent: 75,
+      accounts: 1
+    },
+    {
+      key: 'antigravity_gemini',
+      remaining_percent: 50,
+      short_remaining_percent: 70,
+      weekly_remaining_percent: 50,
+      accounts: 2
+    },
+    {
+      key: 'antigravity_claude',
+      remaining_percent: 0,
+      short_remaining_percent: 0,
+      weekly_remaining_percent: 0,
+      accounts: 1
+    }
+  ]));
+
+  const [claude, gpt, ag] = view.gauges.map(g => gaugeData(g));
+  // Bar column carries both short=5h (16.7% -> warn) and weekly=7d (75.8% -> brand), while keeping bottleneck value.
+  assert.equal(claude.rings[0].value, 16.7);
+  assert.equal(claude.rings[0].color, 'warn');
+  assert.equal(claude.rings[0].short, 16.7);
+  assert.equal(claude.rings[0].shortColor, 'warn');
+  assert.equal(claude.rings[0].weekly, 75.8);
+  assert.equal(claude.rings[0].weeklyColor, '#d97757');
+  assert.deepEqual(claude.details.rows, [
+    { label: '5시간', value: 16.7, color: 'warn', window: 'short' },
+    { label: '주간', value: 75.8, color: '#d97757', window: 'weekly' },
+    { label: 'Max', value: 0, color: 'danger', short: 0, shortColor: 'danger', weekly: 90, weeklyColor: '#d97757', sub: true },
+    { label: 'Pro', value: 5, color: 'danger', short: 100, shortColor: '#d97757', weekly: 5, weeklyColor: 'danger', sub: true }
+  ]);
+
+  // Single-window provider (only short_remaining_percent, no weekly) stays a single bar and labels 5시간 directly.
+  assert.equal('short' in gpt.rings[0], false);
+  assert.equal('weekly' in gpt.rings[0], false);
+  assert.deepEqual(gpt.details.rows, [
+    { label: '5시간', value: 75, color: '#10a37f', window: 'short' }
+  ]);
+
+  // Antigravity with 5h-only fallback stays single-bar per family and renders 5시간 without inventing 7d.
+  const ag5hOnly = gaugeData(gaugesFromSnapshot(snapshot([account('antigravity', [], { model_tier: 'full' })], [
+    { key: 'antigravity_gemini', remaining_percent: 90, short_remaining_percent: 90, accounts: 2, tiers: [{ tier: 'ultra', label: 'AI Ultra', remaining_percent: 90, short_remaining_percent: 90, accounts: 2 }] },
+    { key: 'antigravity_claude', remaining_percent: 17, short_remaining_percent: 17, accounts: 2, tiers: [{ tier: 'ultra', label: 'AI Ultra', remaining_percent: 17, short_remaining_percent: 17, accounts: 2 }] }
+  ])).gauges.at(-1));
+  assert.equal(ag5hOnly.details.title, 'Antigravity · AI Ultra 잔량');
+  assert.deepEqual(ag5hOnly.rings.map(r => [r.value, r.color, 'short' in r]), [[90, '#6b8de9', false], [17, 'warn', false]]);
+  assert.deepEqual(ag5hOnly.details.rows, [
+    { label: '5시간', value: 90, color: '#6b8de9', window: 'short', group: 'Gemini' },
+    { label: '5시간', value: 17, color: 'warn', window: 'short', group: 'Claude/GPT' }
+  ]);
+
+  // Antigravity tile carries two columns (Gemini & Claude/GPT), each with short=5h and weekly=7d bars.
+  assert.equal(ag.rings[0].value, 50);
+  assert.equal(ag.rings[0].short, 70);
+  assert.equal(ag.rings[0].weekly, 50);
+  assert.equal(ag.rings[1].value, 0);
+  assert.equal(ag.rings[1].color, 'danger');
+  assert.equal(ag.rings[1].short, 0);
+  assert.equal(ag.rings[1].weekly, 0);
+  assert.deepEqual(ag.details.rows, [
+    { label: '5시간', value: 70, color: '#6b8de9', window: 'short', group: 'Gemini' },
+    { label: '주간', value: 50, color: '#6b8de9', window: 'weekly', group: 'Gemini' },
+    { label: '5시간', value: 0, color: 'danger', window: 'short', group: 'Claude/GPT' },
+    { label: '주간', value: 0, color: 'danger', window: 'weekly', group: 'Claude/GPT' }
+  ]);
+
+  // Single-tier dual-window gauge promotes its plan name into the popover title so only 2 window bars appear.
+  const singleTierClaude = gaugeData(gaugesFromSnapshot(snapshot([account('claude', [])], [
+    {
+      key: 'claude', remaining_percent: 5, short_remaining_percent: 100, weekly_remaining_percent: 5, accounts: 1,
+      tiers: [{ tier: 'pro', label: 'Pro', remaining_percent: 5, short_remaining_percent: 100, weekly_remaining_percent: 5, accounts: 1 }]
+    }
+  ])).gauges[0]);
+  assert.equal(singleTierClaude.details.title, 'Claude · Pro 잔량');
+  assert.deepEqual(singleTierClaude.details.rows, [
+    { label: '5시간', value: 100, color: '#d97757', window: 'short' },
+    { label: '주간', value: 5, color: 'danger', window: 'weekly' }
+  ]);
+});

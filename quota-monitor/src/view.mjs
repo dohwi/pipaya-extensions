@@ -10,13 +10,27 @@ function tone(value, color) {
 }
 
 function rows(list, color, group) {
-  return (list || []).map((row, index) => {
-    const isGroupHead = Boolean(group && index === 0 && !row.sub);
+  const items = list || [];
+  const hasWindowRows = items.some(row => Boolean(row.window));
+  const groupName = group && hasWindowRows && items[0]?.tier ? `${group} · ${items[0].tier}` : group;
+  return items.map((row, index) => {
+    if (row.window) {
+      const out = { label: row.label, value: row.value, color: tone(row.value, color), window: row.window };
+      if (groupName) out.group = groupName;
+      return out;
+    }
+    const isGroupHead = Boolean(groupName && index === 0 && !row.sub);
     const label = isGroupHead
-      ? (row.tier ? `${group} · ${row.tier}` : group)
+      ? (row.tier ? `${groupName} · ${row.tier}` : groupName)
       : row.label;
     const out = { label, value: row.value, color: tone(row.value, color) };
-    if (group) out.group = group;
+    if ('short' in row || 'weekly' in row) {
+      out.short = row.short ?? null;
+      out.shortColor = tone(out.short, color);
+      out.weekly = row.weekly ?? null;
+      out.weeklyColor = tone(out.weekly, color);
+    }
+    if (groupName) out.group = groupName;
     if (isGroupHead || row.summary) out.summary = true;
     if (row.sub) out.sub = true;
     return out;
@@ -26,7 +40,16 @@ function rows(list, color, group) {
 export function gaugeData(gauge, error, fetchedAt = null) {
   const isAntigravity = gauge.brand === 'antigravity' || gauge.brand === 'antigravity_full' || gauge.brand === 'antigravity_lite' || gauge.brand === 'antigravity_4' || gauge.brand === 'antigravity_3_8';
   const outerColor = gauge.brand === 'antigravity' ? COLORS.gemini : COLORS[gauge.brand];
-  const ring = (value, color, label) => ({ value, color: tone(value, color), label });
+  const ring = (value, color, label, shortVal = null, weeklyVal = null) => {
+    const out = { value, color: tone(value, color), label };
+    if (shortVal !== null && weeklyVal !== null) {
+      out.short = shortVal;
+      out.shortColor = tone(shortVal, color);
+      out.weekly = weeklyVal;
+      out.weeklyColor = tone(weeklyVal, color);
+    }
+    return out;
+  };
   const isPrimaryAg = gauge.brand === 'antigravity' || gauge.brand === 'antigravity_full';
   const outerRingLabel = isPrimaryAg
     ? t('remainingOf', { name: 'Gemini' })
@@ -36,15 +59,16 @@ export function gaugeData(gauge, error, fetchedAt = null) {
     : t('remainingOf', { name: `${gauge.label} · Claude/GPT` });
   const rings = isAntigravity
     ? [
-        ring(gauge.remainingPercent, outerColor, outerRingLabel),
-        ring(gauge.innerRemainingPercent ?? null, COLORS.claude, innerRingLabel)
+        ring(gauge.remainingPercent, outerColor, outerRingLabel, gauge.shortPercent ?? null, gauge.weeklyPercent ?? null),
+        ring(gauge.innerRemainingPercent ?? null, COLORS.claude, innerRingLabel, gauge.innerShortPercent ?? null, gauge.innerWeeklyPercent ?? null)
       ]
-    : [ring(gauge.remainingPercent, COLORS[gauge.brand], t('remainingOf', { name: gauge.label }))];
+    : [ring(gauge.remainingPercent, COLORS[gauge.brand], t('remainingOf', { name: gauge.label }), gauge.shortPercent ?? null, gauge.weeklyPercent ?? null)];
   let detailRows = isAntigravity
     ? [...rows(gauge.rows, outerColor, 'Gemini'), ...rows(gauge.innerRows, COLORS.claude, 'Claude/GPT')]
     : rows(gauge.rows, COLORS[gauge.brand]);
   if (!detailRows.length) detailRows = [{ label: t('noQuotaInfo'), value: null }];
-  const title = t('remainingOf', { name: gauge.label });
+  const titleName = !isAntigravity && gauge.singleTier ? `${gauge.label} · ${gauge.singleTier}` : gauge.label;
+  const title = t('remainingOf', { name: titleName });
   const node = {
     id: gauge.id, label: gauge.label, rings,
     icon: LOGOS[gauge.brand],
@@ -66,5 +90,5 @@ export function gaugesData(model, error) {
 
 // Text the component needs, already in the extension's language (the component never translates).
 export function strings() {
-  return Object.fromEntries(['unknown', 'stale', 'updated', 'sec', 'min', 'hour', 'day'].map(key => [key, t(key)]));
+  return Object.fromEntries(['unknown', 'stale', 'shortWindow', 'weeklyWindow', 'byPlan', 'updated', 'sec', 'min', 'hour', 'day'].map(key => [key, t(key)]));
 }

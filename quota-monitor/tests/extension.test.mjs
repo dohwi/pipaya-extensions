@@ -106,10 +106,16 @@ test('components are bundled, mounted in header and sidebar top, and never touch
 
 test('the payload carries the strings the component shows, in the extension language', async () => {
   const en = await boot(async () => ({ configured: true, snapshot_complete: true, availability: [], accounts: [] }), { httpToken: 'k', language: 'en' });
-  assert.deepEqual(Object.keys(en.calls.at(-1).strings).sort(), ['day', 'hour', 'min', 'sec', 'stale', 'unknown', 'updated']);
+  assert.deepEqual(Object.keys(en.calls.at(-1).strings).sort(), ['byPlan', 'day', 'hour', 'min', 'sec', 'shortWindow', 'stale', 'unknown', 'updated', 'weeklyWindow']);
   assert.equal(en.calls.at(-1).strings.updated, 'Updated {ago}');
+  assert.equal(en.calls.at(-1).strings.shortWindow, '5h');
+  assert.equal(en.calls.at(-1).strings.weeklyWindow, '7d');
+  assert.equal(en.calls.at(-1).strings.byPlan, 'By plan');
   const ko = await boot(async () => ({ configured: true, snapshot_complete: true, availability: [], accounts: [] }), { httpToken: 'k', language: 'ko' });
   assert.equal(ko.calls.at(-1).strings.unknown, '확인 불가');
+  assert.equal(ko.calls.at(-1).strings.shortWindow, '5시간');
+  assert.equal(ko.calls.at(-1).strings.weeklyWindow, '주간');
+  assert.equal(ko.calls.at(-1).strings.byPlan, '플랜별');
 });
 
 test('hover shows only overall remaining with no plan counts, windows or reset labels', async () => {
@@ -427,4 +433,23 @@ test('bundled worker renders v0.8.1 Full + Lite Antigravity split with distinct 
   const en = await boot(async () => snap, { httpToken: 'k', language: 'en' });
   assert.equal(en.calls.at(-1).gauges[2].details.title, 'Antigravity · AI Ultra remaining');
   assert.equal(en.calls.at(-1).gauges[3].details.title, 'Antigravity · Trial/Free remaining');
+});
+
+test('bundled worker forwards dual-window (5h + 7d) availability into popover rows', async () => {
+  const run = await boot(async () => ({
+    configured: true,
+    snapshot_complete: true,
+    availability: [
+      { key: 'claude', remaining_percent: 5, short_remaining_percent: 95, weekly_remaining_percent: 5, accounts: 1, tiers: [{ tier: 'pro', label: 'Pro', remaining_percent: 5, short_remaining_percent: 95, weekly_remaining_percent: 5, accounts: 1 }] }
+    ],
+    accounts: [{ provider: 'claude', status: 'known', windows: [] }]
+  }));
+  const claude = run.calls.at(-1).gauges[0];
+  assert.equal(claude.rings[0].value, 5);
+  assert.equal(claude.rings[0].color, 'danger');
+  assert.equal(claude.details.title, 'Claude · Pro 잔량');
+  assert.deepEqual(claude.details.rows, [
+    { label: '5시간', value: 95, color: '#d97757', window: 'short' },
+    { label: '주간', value: 5, color: 'danger', window: 'weekly' }
+  ]);
 });
