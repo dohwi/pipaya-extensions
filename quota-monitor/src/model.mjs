@@ -221,6 +221,7 @@ export function pollDelay(snapshot, settings = {}) {
 
 const isFiniteNumber = value => typeof value === 'number' && Number.isFinite(value);
 const STICKY_TIER_IDS = ['antigravity_4', 'antigravity_3_8'];
+const isStickySplitAgId = id => STICKY_TIER_IDS.includes(id) || id === 'antigravity_lite' || String(id).startsWith('antigravity_pool_');
 const TIER_MISS_LIMIT = 3;
 const GAUGE_ORDER = { claude: 0, gpt: 1, gemini: 2, antigravity_4: 3, antigravity_3_8: 4, antigravity: 5, antigravity_lite: 7 };
 const gaugeOrder = id => {
@@ -265,8 +266,10 @@ export function mergeWithPrevious(previousGauges = [], nextGauges = [], missingC
     return out;
   });
   const nextIds = new Set(merged.map(g => g.id));
-  const unifiedOnly = nextIds.has('antigravity') && !STICKY_TIER_IDS.some(id => nextIds.has(id));
-  for (const id of STICKY_TIER_IDS) {
+  const hasSplitAgInNext = [...nextIds].some(isStickySplitAgId);
+  const unifiedOnly = nextIds.has('antigravity') && !hasSplitAgInNext;
+  const stickyIds = new Set([...STICKY_TIER_IDS, ...[...prevById.keys()].filter(isStickySplitAgId)]);
+  for (const id of stickyIds) {
     if (nextIds.has(id) || unifiedOnly) {
       delete missingCounts[id];
       continue;

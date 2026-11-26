@@ -25,10 +25,12 @@
 			max
 		};
 	};
+	const shortLabel = $derived(strings?.shortWindow || "5h");
+	const weeklyLabel = $derived(strings?.weeklyWindow || "7d");
 	const formatAccounts = (n) => {
 		if (!Number.isInteger(n) || n <= 0) return "";
-		if (n === 1) return strings.accountCountOne || fill(strings.accountCount || "{n}", { n });
-		return fill(strings.accountCount || "{n}", { n });
+		if (n === 1) return strings?.accountCountOne || fill(strings?.accountCount || "{n}", { n });
+		return fill(strings?.accountCount || "{n}", { n });
 	};
 
 	// Each entry in gauge.rings maps to one vertical bar column underneath the brand logo:

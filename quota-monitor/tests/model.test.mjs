@@ -675,3 +675,29 @@ test('account count edge cases ignore zero/malformed values and survive mergeWit
   assert.equal(merged[0].accounts, 3);
   assert.equal(gaugeData(merged[0]).details.accounts, 3);
 });
+
+test('mergeWithPrevious holds transiently omitted dynamic Antigravity pool while other split pools remain', () => {
+  const misses = {};
+  const threePools = gaugesFromSnapshot(snapshot([account('antigravity', [])], [
+    { key: 'antigravity_gemini', label: 'AGY (AI Ultra) · Gemini', remaining_percent: 90, accounts: 2 },
+    { key: 'antigravity_claude', label: 'AGY (AI Ultra) · Claude/GPT', remaining_percent: 95, accounts: 2 },
+    { key: 'antigravity_pool_aaaa1111_gemini', label: 'AGY (AI Pro (15)) · Gemini', remaining_percent: 80, accounts: 2 },
+    { key: 'antigravity_pool_aaaa1111_claude', label: 'AGY (AI Pro (15)) · Claude/GPT', remaining_percent: 85, accounts: 2 },
+    { key: 'antigravity_pool_bbbb2222_gemini', label: 'AGY (AI Pro (12)) · Gemini', remaining_percent: 50, accounts: 1 },
+    { key: 'antigravity_pool_bbbb2222_claude', label: 'AGY (AI Pro (12)) · Claude/GPT', remaining_percent: 55, accounts: 1 }
+  ])).gauges;
+
+  const twoPools = gaugesFromSnapshot(snapshot([account('antigravity', [])], [
+    { key: 'antigravity_gemini', label: 'AGY (AI Ultra) · Gemini', remaining_percent: 88, accounts: 2 },
+    { key: 'antigravity_claude', label: 'AGY (AI Ultra) · Claude/GPT', remaining_percent: 94, accounts: 2 },
+    { key: 'antigravity_pool_aaaa1111_gemini', label: 'AGY (AI Pro (15)) · Gemini', remaining_percent: 78, accounts: 2 },
+    { key: 'antigravity_pool_aaaa1111_claude', label: 'AGY (AI Pro (15)) · Claude/GPT', remaining_percent: 82, accounts: 2 }
+  ])).gauges;
+
+  const m1 = mergeWithPrevious(threePools, twoPools, misses);
+  assert.deepEqual(m1.map(g => g.id), ['claude', 'antigravity', 'antigravity_pool_aaaa1111', 'antigravity_pool_bbbb2222']);
+  const m2 = mergeWithPrevious(m1, twoPools, misses);
+  assert.deepEqual(m2.map(g => g.id), ['claude', 'antigravity', 'antigravity_pool_aaaa1111', 'antigravity_pool_bbbb2222']);
+  const m3 = mergeWithPrevious(m2, twoPools, misses);
+  assert.deepEqual(m3.map(g => g.id), ['claude', 'antigravity', 'antigravity_pool_aaaa1111']);
+});
