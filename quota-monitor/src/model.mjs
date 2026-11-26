@@ -31,6 +31,12 @@ export function gaugesFromSnapshot(snapshot) {
   const byProvider = name => accounts.filter(account => providerName(account.provider) === name);
   const availability = Array.isArray(snapshot.availability) ? snapshot.availability : [];
   const validPercent = value => (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null);
+  const validCount = value => (typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null);
+  const extractAgPoolTag = label => {
+    const s = String(label || '').trim();
+    const m = /^AGY\s*\((.+)\)\s*·/.exec(s) || /^AGY\s*\((.+)\)$/.exec(s);
+    return m?.[1]?.trim() || '';
+  };
   const tierLabelOf = (item, restricted) => {
     const tier = String(item?.tier ?? '').toLowerCase().trim();
     const raw = String(item?.label ?? item?.tier ?? '').trim().slice(0, 32);
@@ -49,46 +55,20 @@ export function gaugesFromSnapshot(snapshot) {
       const value = validPercent(item.remaining_percent);
       const label = tierLabelOf(item, restricted);
       if (value === null || !label) continue;
-      tiers.push({
-        label,
-        value,
-        short: validPercent(item.short_remaining_percent),
-        weekly: validPercent(item.weekly_remaining_percent)
-      });
+      tiers.push(label);
       if (tiers.length >= 8) break;
     }
-    const hasWindow = entryShort !== null || entryWeekly !== null;
-    if (hasWindow) {
-      const hasDual = entryShort !== null && entryWeekly !== null;
+    const singleTier = tiers.length === 1 ? tiers[0] : null;
+    if (entryShort !== null || entryWeekly !== null) {
       const windowRows = [];
       if (entryShort !== null) windowRows.push({ label: t('shortWindow'), value: entryShort, window: 'short' });
       if (entryWeekly !== null) windowRows.push({ label: t('weeklyWindow'), value: entryWeekly, window: 'weekly' });
-      if (tiers.length === 1 && windowRows.length) windowRows[0].tier = tiers[0].label;
-      if (tiers.length >= 2) {
-        return {
-          rows: [
-            ...windowRows,
-            ...tiers.map(item => (hasDual
-              ? { label: item.label, value: item.value, short: item.short, weekly: item.weekly, sub: true }
-              : { label: item.label, value: entryShort !== null ? (item.short ?? item.value) : (item.weekly ?? item.value), sub: true }))
-          ],
-          tiers: tiers.map(item => item.label),
-          singleTier: null
-        };
-      }
-      return {
-        rows: windowRows,
-        tiers: tiers.length === 1 ? [tiers[0].label] : [],
-        singleTier: tiers.length === 1 ? tiers[0].label : null
-      };
+      if (singleTier && windowRows.length) windowRows[0].tier = singleTier;
+      return { rows: windowRows, tiers, singleTier };
     }
     if (remaining === null || tiers.length === 0) return { rows: [{ label: t('remaining'), value: remaining }], tiers: [], singleTier: null };
-    if (tiers.length === 1) return { rows: [{ label: tiers[0].label, value: remaining, tier: tiers[0].label }], tiers: [tiers[0].label], singleTier: null };
-    return {
-      rows: [{ label: t('overall'), value: remaining, summary: true }, ...tiers.map(item => ({ label: item.label, value: item.value, sub: true }))],
-      tiers: tiers.map(item => item.label),
-      singleTier: null
-    };
+    if (singleTier) return { rows: [{ label: singleTier, value: remaining, tier: singleTier }], tiers, singleTier: null };
+    return { rows: [{ label: t('overall'), value: remaining, summary: true }], tiers, singleTier: null };
   };
   const fleetSummary = (key, group, restricted = false) => {
     const entry = availability.find(item => item?.key === key);
@@ -105,21 +85,24 @@ export function gaugesFromSnapshot(snapshot) {
     const known = short !== null || weekly !== null || remaining !== null;
     const hint = [!known ? t('unknownRemaining') : '', stale ? t('staleObservation') : ''].filter(Boolean).join(' · ');
     const { rows, tiers, singleTier } = tierRows(entry, remaining, restricted);
-    return { remaining, short, weekly, stale, updatedAt, hint, rows, tiers, singleTier };
+    const accountsCount = validCount(entry?.accounts);
+    const entryLabel = typeof entry?.label === 'string' ? entry.label : '';
+    return { remaining, short, weekly, stale, updatedAt, hint, rows, tiers, singleTier, accounts: accountsCount, entryLabel };
   };
   const gauge = (id, label, brand, group, key = id, restricted = false) => {
     const summary = fleetSummary(key, group, restricted);
-    const out = { id, label, brand, remainingPercent: summary.remaining, hint: summary.hint, updatedAt: summary.updatedAt, rows: summary.rows, tiers: summary.tiers, stale: snapshot.stale === true || summary.stale };
+    const out = { id, label, brand, remainingPercent: summary.remaining, hint: summary.hint, updatedAt: summary.updatedAt, rows: summary.rows, tiers: summary.tiers, entryLabel: summary.entryLabel, stale: snapshot.stale === true || summary.stale };
     if (summary.short !== null) out.shortPercent = summary.short;
     if (summary.weekly !== null) out.weeklyPercent = summary.weekly;
     if (summary.singleTier) out.singleTier = summary.singleTier;
+    if (summary.accounts !== null) out.accounts = summary.accounts;
     return out;
   };
   const ag = byProvider('antigravity');
   const gemini = byProvider('gemini');
   const claude = byProvider('claude');
   const gpt = byProvider('gpt');
-  const stripTiers = item => { const { tiers, ...rest } = item; return rest; };
+  const stripTiers = item => { const { tiers, entryLabel, ...rest } = item; return rest; };
   const gauges = [];
 
   // Dynamic model-set pools: when the server splits Claude or Codex because
@@ -150,6 +133,13 @@ export function gaugesFromSnapshot(snapshot) {
     const outer = gauge(id, label, brand, group, geminiKey, restricted);
     delete outer.singleTier;
     const inner = fleetSummary(claudeKey, group, restricted);
+    const outerAccounts = outer.accounts ?? null;
+    const innerAccounts = inner.accounts;
+    if (outerAccounts !== null || innerAccounts !== null) {
+      outer.accounts = Math.max(outerAccounts ?? 0, innerAccounts ?? 0);
+      if (outerAccounts !== null) outer.outerAccounts = outerAccounts;
+      if (innerAccounts !== null) outer.innerAccounts = innerAccounts;
+    }
     outer.innerRemainingPercent = inner.remaining;
     if (inner.short !== null) outer.innerShortPercent = inner.short;
     if (inner.weekly !== null) outer.innerWeeklyPercent = inner.weekly;
@@ -158,8 +148,16 @@ export function gaugesFromSnapshot(snapshot) {
     outer.updatedAt = Math.max(outer.updatedAt ?? 0, inner.updatedAt ?? 0) || null;
     outer.hint = [outer.hint ? `Gemini: ${outer.hint}` : '', inner.hint ? `Claude/GPT: ${inner.hint}` : ''].filter(Boolean).join(' · ');
     if (deriveLabel) {
+      const explicitTag = extractAgPoolTag(outer.entryLabel) || extractAgPoolTag(inner.entryLabel);
       const uniqueTiers = [...new Set([...outer.tiers, ...inner.tiers])];
-      if (uniqueTiers.length === 1) {
+      if (explicitTag) {
+        const normalizedTag = restricted && explicitTag === 'AI Pro' ? 'AI Pro Trial' : explicitTag;
+        outer.label = `Antigravity · ${normalizedTag}`;
+        if (uniqueTiers.length === 1) {
+          outer.rows = outer.rows.map(({ tier, ...row }) => row);
+          outer.innerRows = outer.innerRows.map(({ tier, ...row }) => row);
+        }
+      } else if (uniqueTiers.length === 1) {
         outer.label = `Antigravity · ${uniqueTiers[0]}`;
         // Plan name is now in the title, so avoid repeating "Gemini · <plan>" on every row.
         outer.rows = outer.rows.map(({ tier, ...row }) => row);
@@ -180,8 +178,8 @@ export function gaugesFromSnapshot(snapshot) {
     const m = /^(antigravity_pool_[a-z0-9]+)_(gemini|claude)$/.exec(String(item?.key || ''));
     if (m && !seenAgPools.has(m[1])) {
       seenAgPools.add(m[1]);
-      const labelMatch = /^AGY\s*\(([^)]+)\)/.exec(String(item?.label || ''));
-      const poolLabel = labelMatch?.[1] ? `Antigravity · ${labelMatch[1].trim()}` : 'Antigravity';
+      const tag = extractAgPoolTag(item?.label);
+      const poolLabel = tag ? `Antigravity · ${tag}` : 'Antigravity';
       dynamicAgPools.push({ id: m[1], label: poolLabel });
     }
   }
@@ -249,6 +247,8 @@ export function mergeWithPrevious(previousGauges = [], nextGauges = [], missingC
       if (isFiniteNumber(prev.shortPercent)) out.shortPercent = prev.shortPercent;
       if (isFiniteNumber(prev.weeklyPercent)) out.weeklyPercent = prev.weeklyPercent;
       out.rows = prev.rows;
+      if (!out.accounts && prev.accounts) out.accounts = prev.accounts;
+      if (!out.outerAccounts && prev.outerAccounts) out.outerAccounts = prev.outerAccounts;
       if (!out.updatedAt && prev.updatedAt) out.updatedAt = prev.updatedAt;
     }
     const hasInner = isFiniteNumber(out.innerRemainingPercent) || isFiniteNumber(out.innerShortPercent) || isFiniteNumber(out.innerWeeklyPercent);
@@ -258,6 +258,8 @@ export function mergeWithPrevious(previousGauges = [], nextGauges = [], missingC
       if (isFiniteNumber(prev.innerShortPercent)) out.innerShortPercent = prev.innerShortPercent;
       if (isFiniteNumber(prev.innerWeeklyPercent)) out.innerWeeklyPercent = prev.innerWeeklyPercent;
       out.innerRows = prev.innerRows;
+      if (!out.innerAccounts && prev.innerAccounts) out.innerAccounts = prev.innerAccounts;
+      if (!out.accounts && prev.accounts) out.accounts = prev.accounts;
       out.updatedAt = Math.max(out.updatedAt ?? 0, prev.updatedAt ?? 0) || null;
     }
     return out;

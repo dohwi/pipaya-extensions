@@ -9,7 +9,7 @@ function tone(value, color) {
   return value <= 5 ? 'danger' : value <= 20 ? 'warn' : color;
 }
 
-function rows(list, color, group) {
+function rows(list, color, group, groupAccounts = null) {
   const items = list || [];
   const hasWindowRows = items.some(row => Boolean(row.window));
   const groupName = group && hasWindowRows && items[0]?.tier ? `${group} · ${items[0].tier}` : group;
@@ -17,22 +17,17 @@ function rows(list, color, group) {
     if (row.window) {
       const out = { label: row.label, value: row.value, color: tone(row.value, color), window: row.window };
       if (groupName) out.group = groupName;
+      if (index === 0 && Number.isInteger(groupAccounts) && groupAccounts > 0) out.groupAccounts = groupAccounts;
       return out;
     }
-    const isGroupHead = Boolean(groupName && index === 0 && !row.sub);
+    const isGroupHead = Boolean(groupName && index === 0);
     const label = isGroupHead
       ? (row.tier ? `${groupName} · ${row.tier}` : groupName)
       : row.label;
     const out = { label, value: row.value, color: tone(row.value, color) };
-    if ('short' in row || 'weekly' in row) {
-      out.short = row.short ?? null;
-      out.shortColor = tone(out.short, color);
-      out.weekly = row.weekly ?? null;
-      out.weeklyColor = tone(out.weekly, color);
-    }
     if (groupName) out.group = groupName;
+    if (index === 0 && Number.isInteger(groupAccounts) && groupAccounts > 0) out.groupAccounts = groupAccounts;
     if (isGroupHead || row.summary) out.summary = true;
-    if (row.sub) out.sub = true;
     return out;
   });
 }
@@ -63,17 +58,26 @@ export function gaugeData(gauge, error, fetchedAt = null) {
         ring(gauge.innerRemainingPercent ?? null, COLORS.claude, innerRingLabel, gauge.innerShortPercent ?? null, gauge.innerWeeklyPercent ?? null)
       ]
     : [ring(gauge.remainingPercent, COLORS[gauge.brand], t('remainingOf', { name: gauge.label }), gauge.shortPercent ?? null, gauge.weeklyPercent ?? null)];
+  const showGroupAccounts = isAntigravity
+    && Number.isInteger(gauge.outerAccounts) && gauge.outerAccounts > 0
+    && Number.isInteger(gauge.innerAccounts) && gauge.innerAccounts > 0
+    && gauge.outerAccounts !== gauge.innerAccounts;
   let detailRows = isAntigravity
-    ? [...rows(gauge.rows, outerColor, 'Gemini'), ...rows(gauge.innerRows, COLORS.claude, 'Claude/GPT')]
+    ? [
+        ...rows(gauge.rows, outerColor, 'Gemini', showGroupAccounts ? gauge.outerAccounts : null),
+        ...rows(gauge.innerRows, COLORS.claude, 'Claude/GPT', showGroupAccounts ? gauge.innerAccounts : null)
+      ]
     : rows(gauge.rows, COLORS[gauge.brand]);
   if (!detailRows.length) detailRows = [{ label: t('noQuotaInfo'), value: null }];
   const titleName = !isAntigravity && gauge.singleTier && !gauge.label.includes(' · ') ? `${gauge.label} · ${gauge.singleTier}` : gauge.label;
   const title = t('remainingOf', { name: titleName });
+  const details = { title: title.slice(0, 64), rows: detailRows.slice(0, 20) };
+  if (Number.isInteger(gauge.accounts) && gauge.accounts > 0) details.accounts = gauge.accounts;
   const node = {
     id: gauge.id, label: gauge.label, rings,
     icon: LOGOS[gauge.brand],
     hint: [gauge.hint, error].filter(Boolean).join(' · ').slice(0, 500),
-    details: { title: title.slice(0, 40), rows: detailRows.slice(0, 20) }
+    details
   };
   // The monitor's own observation time wins; otherwise the last successful read. A failed read never advances either.
   const updatedAt = Number.isFinite(gauge.updatedAt) && gauge.updatedAt > 0 ? gauge.updatedAt : fetchedAt;
@@ -90,5 +94,5 @@ export function gaugesData(model, error) {
 
 // Text the component needs, already in the extension's language (the component never translates).
 export function strings() {
-  return Object.fromEntries(['unknown', 'stale', 'shortWindow', 'weeklyWindow', 'byPlan', 'updated', 'sec', 'min', 'hour', 'day'].map(key => [key, t(key)]));
+  return Object.fromEntries(['unknown', 'stale', 'shortWindow', 'weeklyWindow', 'accountCountOne', 'accountCount', 'updated', 'sec', 'min', 'hour', 'day'].map(key => [key, t(key)]));
 }

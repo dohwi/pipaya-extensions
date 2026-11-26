@@ -1,7 +1,7 @@
 {
   "name": "pipaya-extension-quota-monitor",
-  "version": "0.9.1",
-  "description": "Claude · GPT · Antigravity의 5시간·주간 및 플랜별 잔량을 2줄 미니 막대 타일과 팝오버로 표시합니다(데스크톱 상단 바, 모바일 사이드바 상단). Antigravity는 좌측 Gemini · 우측 Claude/GPT 잔량입니다.",
+  "version": "0.9.2",
+  "description": "Claude · GPT · Antigravity의 5시간·주간 잔량과 계정 수를 2줄 미니 막대 타일과 팝오버로 표시합니다(데스크톱 상단 바, 모바일 사이드바 상단). Antigravity는 좌측 Gemini · 우측 Claude/GPT 잔량입니다.",
   "private": true,
   "type": "module",
   "scripts": {
@@ -19,8 +19,8 @@
   "pipaya": {
     "title": "Quota Monitor",
     "descriptions": {
-      "en": "Shows 5h/7d and per-plan remaining quota for Claude, GPT and Antigravity as stacked mini-bar tiles with a popover (header on desktop, top of sidebar on mobile). For Antigravity, left bars show Gemini and right bars show Claude/GPT.",
-      "ko": "Claude · GPT · Antigravity의 5시간·주간 및 플랜별 잔량을 2줄 미니 막대 타일과 팝오버로 표시합니다(데스크톱 상단 바, 모바일 사이드바 상단). Antigravity는 좌측 Gemini · 우측 Claude/GPT 잔량입니다."
+      "en": "Shows 5h/7d remaining quota and account counts for Claude, GPT and Antigravity as stacked mini-bar tiles with a popover (header on desktop, top of sidebar on mobile). For Antigravity, left bars show Gemini and right bars show Claude/GPT.",
+      "ko": "Claude · GPT · Antigravity의 5시간·주간 잔량과 계정 수를 2줄 미니 막대 타일과 팝오버로 표시합니다(데스크톱 상단 바, 모바일 사이드바 상단). Antigravity는 좌측 Gemini · 우측 Claude/GPT 잔량입니다."
     }
   }
 }

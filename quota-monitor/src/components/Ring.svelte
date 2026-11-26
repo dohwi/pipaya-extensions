@@ -25,9 +25,11 @@
 			max
 		};
 	};
-	const shortLabel = $derived(strings.shortWindow || "5h");
-	const weeklyLabel = $derived(strings.weeklyWindow || "7d");
-	const byPlanLabel = $derived(strings.byPlan || "By plan");
+	const formatAccounts = (n) => {
+		if (!Number.isInteger(n) || n <= 0) return "";
+		if (n === 1) return strings.accountCountOne || fill(strings.accountCount || "{n}", { n });
+		return fill(strings.accountCount || "{n}", { n });
+	};
 
 	// Each entry in gauge.rings maps to one vertical bar column underneath the brand logo:
 	// 1 column for single-family providers (Claude/GPT/Gemini), 2 side-by-side columns for Antigravity (left=Gemini, right=Claude/GPT).
@@ -51,34 +53,29 @@
 	}));
 	const multiCol = $derived(columns.length > 1);
 	const details = $derived(gauge.details);
+	const titleAccounts = $derived(formatAccounts(details?.accounts));
 	const updatedAt = $derived(details?.updatedAt);
 	const rows = $derived((details?.rows ?? []).map((row, index, all) => {
 		const m = meter(row);
 		const newGroup = row.group !== undefined && row.group !== all[index - 1]?.group;
 		const summary = row.summary === true;
-		const tierDual = row.sub === true && ("short" in row || "weekly" in row);
-		const prev = all[index - 1];
-		const prevTierDual = prev?.sub === true && ("short" in prev || "weekly" in prev);
-		const shortMeter = tierDual ? meter({ value: row.short, color: row.shortColor ?? row.color, max: row.max }) : null;
-		const weeklyMeter = tierDual ? meter({ value: row.weekly, color: row.weeklyColor ?? row.color, max: row.max }) : null;
 		const alertTone = (item) => (item && (item.named === "warn" || item.named === "danger") ? item.named : "");
+		const heading = newGroup && !summary ? row.group : undefined;
+		const groupAccountsText = heading ? formatAccounts(row.groupAccounts) : "";
+		const summaryGroupAccounts = !heading && summary && Number.isInteger(row.groupAccounts) && row.groupAccounts > 0 ? row.groupAccounts : null;
+		const countText = summaryGroupAccounts !== null ? `· ${formatAccounts(summaryGroupAccounts)}` : "";
+		const countAria = summaryGroupAccounts !== null ? formatAccounts(summaryGroupAccounts) : undefined;
 		return {
 			...m,
-			heading: newGroup && !summary ? row.group : undefined,
+			heading,
+			groupAccountsText,
+			countText,
+			countAria,
 			divider: newGroup && index > 0,
 			summary,
-			tierDual,
-			tierHead: tierDual && (!prevTierDual || newGroup),
 			valueTone: alertTone(m),
-			shortMeter,
-			weeklyMeter,
-			shortText: shortMeter?.known ? `${Math.round(shortMeter.ratio * 100)}%` : "—",
-			weeklyText: weeklyMeter?.known ? `${Math.round(weeklyMeter.ratio * 100)}%` : "—",
-			shortTone: alertTone(shortMeter),
-			weeklyTone: alertTone(weeklyMeter),
 			label: row.label,
 			caption: row.caption,
-			sub: row.sub === true,
 			text: m.known ? `${Math.round(m.ratio * 100)}%` : strings.unknown
 		};
 	}));
@@ -94,8 +91,13 @@
 	}
 	const updatedText = $derived(updatedAt === undefined ? "" : fill(strings.updated, { ago: ago(now - updatedAt) }));
 	const title = $derived(details ? undefined : [gauge.hint, gauge.stale ? strings.stale : ""].filter(Boolean).join(" · ") || undefined);
-	const summary = $derived(rows.map((r) => (r.tierDual ? `${r.label}: ${shortLabel} ${r.shortText}, ${weeklyLabel} ${r.weeklyText}` : `${r.label}: ${r.text}`)).join(", "));
-	const description = $derived([gauge.hint, gauge.stale && updatedAt === undefined ? strings.stale : "", details ? [details.title, summary].filter(Boolean).join(": ") : ""].filter(Boolean).join(". ") || undefined);
+	const summary = $derived(rows.map((r) => {
+		const name = r.countAria ? `${r.label} (${r.countAria})` : r.label;
+		const prefix = r.heading ? `${r.heading} ` : "";
+		return `${prefix}${name}: ${r.text}`;
+	}).join(", "));
+	const detailsHeading = $derived(details?.title ? (titleAccounts ? `${details.title} (${titleAccounts})` : details.title) : "");
+	const description = $derived([gauge.hint, gauge.stale && updatedAt === undefined ? strings.stale : "", details ? [detailsHeading, summary].filter(Boolean).join(": ") : ""].filter(Boolean).join(". ") || undefined);
 
 	const popId = `quota-detail-${++seq}`;
 	let el = $state();
@@ -232,34 +234,31 @@
 
 {#if open && details}
 	<div use:portal bind:this={popEl} id={popId} class="qm-pop {placement}" role="tooltip" style="visibility: hidden" onpointerenter={clear} onpointerleave={(e) => { if (hovering(e)) later(hide, CLOSE_DELAY); }}>
-		{#if details.title}<div class="pop-title">{details.title}</div>{/if}
+		{#if details.title}
+			<div class="pop-title">
+				<span class="pop-title-text">{details.title}</span>
+				{#if titleAccounts}<span class="pop-count">{titleAccounts}</span>{/if}
+			</div>
+		{/if}
 		<div class="pop-body">
 			{#each rows as row}
-				{#if row.heading}<div class="pop-group" class:divider={row.divider}>{row.heading}</div>{/if}
-				{#if row.tierHead}
-					<div class="pop-tier-head">
-						<span>{byPlanLabel}</span>
-						<span class="pop-tier-cols" aria-hidden="true"><span>{shortLabel}</span><span>{weeklyLabel}</span></span>
+				{#if row.heading}
+					<div class="pop-group" class:divider={row.divider}>
+						<span class="pop-group-text">{row.heading}</span>
+						{#if row.groupAccountsText}<span class="pop-group-count">{row.groupAccountsText}</span>{/if}
 					</div>
 				{/if}
-				<div class="pop-row" class:summary={row.summary} class:sub={row.sub} class:tier-dual={row.tierDual} class:divider={row.divider && !row.heading}>
-					{#if row.tierDual}
-						<div class="pop-tier-line">
+				<div class="pop-row" class:summary={row.summary} class:divider={row.divider && !row.heading}>
+					<div class="pop-line">
+						<span class="pop-label-wrap">
 							<span class="pop-label" title={row.label}>{row.label}</span>
-							<span class="pop-tier-vals">
-								<span class="pop-val {row.shortTone}" class:unknown={!row.shortMeter.known}>{row.shortText}</span>
-								<span class="pop-val {row.weeklyTone}" class:unknown={!row.weeklyMeter.known}>{row.weeklyText}</span>
-							</span>
+							{#if row.countText}<span class="pop-row-count" aria-label={row.countAria}>{row.countText}</span>{/if}
+						</span>
+						<div class="pop-track" class:unknown={!row.known}>
+							{#if row.known && row.ratio > 0}<div class="pop-fill {row.named}" style:width="{row.percent}%" style:background={row.hex}></div>{/if}
 						</div>
-					{:else}
-						<div class="pop-line">
-							<span class="pop-label" title={row.label}>{row.label}</span>
-							<div class="pop-track" class:unknown={!row.known}>
-								{#if row.known && row.ratio > 0}<div class="pop-fill {row.named}" style:width="{row.percent}%" style:background={row.hex}></div>{/if}
-							</div>
-							<span class="pop-value {row.valueTone}" class:unknown={!row.known}>{row.text}</span>
-						</div>
-					{/if}
+						<span class="pop-value {row.valueTone}" class:unknown={!row.known}>{row.text}</span>
+					</div>
 					{#if row.caption}<div class="pop-caption">{row.caption}</div>{/if}
 				</div>
 			{/each}
@@ -301,38 +300,27 @@
 	@keyframes qm-pop-in { from { opacity: 0; transform: translateY(-4px) scale(0.96); } to { opacity: 1; transform: none; } }
 	@keyframes qm-pop-in-up { from { opacity: 0; transform: translateY(4px) scale(0.96); } to { opacity: 1; transform: none; } }
 	@media (prefers-reduced-motion: reduce) { :global(.qm-pop) { animation: none; } :global(.qm-pop .pop-fill), .bar-fill { transition: none !important; } }
-	:global(.qm-pop .pop-title) { font-weight: 600; font-size: var(--fs-sm); line-height: 20px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+	:global(.qm-pop .pop-title) { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-weight: 600; font-size: var(--fs-sm); line-height: 20px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+	:global(.qm-pop .pop-title-text) { min-width: 0; overflow-wrap: anywhere; }
+	:global(.qm-pop .pop-count) { flex: none; white-space: nowrap; font-size: var(--fs-2xs); line-height: 16px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--text-faint); }
 	:global(.qm-pop .pop-updated) { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: var(--fs-2xs); line-height: 16px; font-variant-numeric: tabular-nums; color: var(--text-faint); }
 	:global(.qm-pop .pop-updated.stale) { color: var(--warn); }
-	:global(.qm-pop .pop-group) { margin: 8px 0 6px; font-size: var(--fs-2xs); line-height: 16px; font-weight: 600; letter-spacing: 0.02em; color: var(--text-faint); overflow-wrap: anywhere; }
+	:global(.qm-pop .pop-group) { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 8px 0 6px; font-size: var(--fs-2xs); line-height: 16px; font-weight: 600; letter-spacing: 0.02em; color: var(--text-faint); }
+	:global(.qm-pop .pop-group-text) { min-width: 0; overflow-wrap: anywhere; }
+	:global(.qm-pop .pop-group-count) { flex: none; white-space: nowrap; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--text-faint); }
 	:global(.qm-pop .pop-group:first-child) { margin-top: 0; }
 	:global(.qm-pop .pop-group.divider) { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
-	:global(.qm-pop .pop-tier-head) { display: grid; grid-template-columns: minmax(0, 1fr) 78px; align-items: baseline; gap: 8px; margin: 8px 0 4px; padding-top: 6px; border-top: 1px dashed var(--border); font-size: var(--fs-2xs); line-height: 16px; font-weight: 500; color: var(--text-faint); }
-	:global(.qm-pop .pop-tier-cols) { display: grid; grid-template-columns: 36px 36px; gap: 6px; text-align: right; white-space: nowrap; }
 	:global(.qm-pop .pop-row) { margin: 0 0 6px; }
 	:global(.qm-pop .pop-body > .pop-row:last-child) { margin-bottom: 0; }
 	:global(.qm-pop .pop-row.divider) { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
-	:global(.qm-pop .pop-row:not(.sub) .pop-label) { font-weight: 600; color: var(--text); }
-	:global(.qm-pop .pop-row:not(.sub) .pop-value) { font-weight: 600; color: var(--text); }
-	:global(.qm-pop .pop-row:not(.sub) .pop-value.unknown) { font-weight: 400; color: var(--text-faint); }
-	:global(.qm-pop .pop-row.sub) { margin: 0 0 0 2px; padding: 2px 0 2px 9px; border-left: 1px solid var(--border); }
-	:global(.qm-pop .pop-row.sub.tier-dual) { margin: 0 0 2px; padding: 0; border-left: 0; }
-	:global(.qm-pop .pop-row.summary + .pop-row.sub) { margin-top: -2px; }
-	:global(.qm-pop .pop-row.sub .pop-label) { color: var(--text-dim); font-size: var(--fs-2xs); line-height: 16px; }
-	:global(.qm-pop .pop-row.sub .pop-track) { height: 4px; }
-	:global(.qm-pop .pop-row.sub .pop-value),
-	:global(.qm-pop .pop-row.sub .pop-val) { font-size: var(--fs-2xs); line-height: 16px; color: var(--text-dim); }
 	:global(.qm-pop .pop-line) { display: grid; grid-template-columns: minmax(0, 1fr) 76px auto; align-items: center; gap: 8px; }
-	:global(.qm-pop .pop-tier-line) { display: grid; grid-template-columns: minmax(0, 1fr) 78px; align-items: center; gap: 8px; }
-	:global(.qm-pop .pop-tier-vals) { display: grid; grid-template-columns: 36px 36px; gap: 6px; align-items: center; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
-	:global(.qm-pop .pop-label) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
-	:global(.qm-pop .pop-value) { flex: none; min-width: 34px; font-variant-numeric: tabular-nums; color: var(--text-dim); text-align: right; white-space: nowrap; }
-	:global(.qm-pop .pop-value.unknown) { color: var(--text-faint); }
-	:global(.qm-pop .pop-row .pop-value.warn),
-	:global(.qm-pop .pop-row .pop-val.warn) { color: var(--warn); }
-	:global(.qm-pop .pop-row .pop-value.danger),
-	:global(.qm-pop .pop-row .pop-val.danger) { color: var(--danger); }
-	:global(.qm-pop .pop-row .pop-val.unknown) { color: var(--text-faint); }
+	:global(.qm-pop .pop-label-wrap) { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; max-width: 100%; }
+	:global(.qm-pop .pop-label) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text); }
+	:global(.qm-pop .pop-row-count) { flex: none; white-space: nowrap; font-size: var(--fs-2xs); line-height: 16px; font-weight: 400; font-variant-numeric: tabular-nums; color: var(--text-faint); }
+	:global(.qm-pop .pop-value) { flex: none; min-width: 34px; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); text-align: right; white-space: nowrap; }
+	:global(.qm-pop .pop-value.warn) { color: var(--warn); }
+	:global(.qm-pop .pop-value.danger) { color: var(--danger); }
+	:global(.qm-pop .pop-value.unknown) { font-weight: 400; color: var(--text-faint); }
 	:global(.qm-pop .pop-track) { height: 5px; border-radius: var(--radius-pill); overflow: hidden; background: var(--border-strong); }
 	:global(.qm-pop .pop-track.unknown) { opacity: 0.45; }
 	:global(.qm-pop .pop-fill) { height: 100%; min-width: 3px; border-radius: var(--radius-pill); background: var(--accent); transition: width var(--motion-normal) var(--ease-std); }

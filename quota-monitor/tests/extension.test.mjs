@@ -106,16 +106,18 @@ test('components are bundled, mounted in header and sidebar top, and never touch
 
 test('the payload carries the strings the component shows, in the extension language', async () => {
   const en = await boot(async () => ({ configured: true, snapshot_complete: true, availability: [], accounts: [] }), { httpToken: 'k', language: 'en' });
-  assert.deepEqual(Object.keys(en.calls.at(-1).strings).sort(), ['byPlan', 'day', 'hour', 'min', 'sec', 'shortWindow', 'stale', 'unknown', 'updated', 'weeklyWindow']);
+  assert.deepEqual(Object.keys(en.calls.at(-1).strings).sort(), ['accountCount', 'accountCountOne', 'day', 'hour', 'min', 'sec', 'shortWindow', 'stale', 'unknown', 'updated', 'weeklyWindow']);
   assert.equal(en.calls.at(-1).strings.updated, 'Updated {ago}');
   assert.equal(en.calls.at(-1).strings.shortWindow, '5h');
   assert.equal(en.calls.at(-1).strings.weeklyWindow, '7d');
-  assert.equal(en.calls.at(-1).strings.byPlan, 'By plan');
+  assert.equal(en.calls.at(-1).strings.accountCountOne, '1 acct');
+  assert.equal(en.calls.at(-1).strings.accountCount, '{n} accts');
   const ko = await boot(async () => ({ configured: true, snapshot_complete: true, availability: [], accounts: [] }), { httpToken: 'k', language: 'ko' });
   assert.equal(ko.calls.at(-1).strings.unknown, '확인 불가');
   assert.equal(ko.calls.at(-1).strings.shortWindow, '5시간');
   assert.equal(ko.calls.at(-1).strings.weeklyWindow, '주간');
-  assert.equal(ko.calls.at(-1).strings.byPlan, '플랜별');
+  assert.equal(ko.calls.at(-1).strings.accountCountOne, '1계정');
+  assert.equal(ko.calls.at(-1).strings.accountCount, '{n}계정');
 });
 
 test('hover shows only overall remaining with no plan counts, windows or reset labels', async () => {
@@ -335,28 +337,25 @@ test('bundled worker renders v0.8.0 unified Antigravity and per-tier breakdown i
   const ko = await boot(async () => snap, { httpToken: 'k', language: 'ko' });
   const list = ko.calls.at(-1).gauges;
   assert.deepEqual(list.map(g => g.id), ['claude', 'gpt', 'antigravity']);
+  assert.equal(list[0].details.accounts, 3);
   assert.deepEqual(list[0].details.rows, [
-    { label: '전체', value: 80.5, color: '#d97757', summary: true },
-    { label: 'Max', value: 88, color: '#d97757', sub: true },
-    { label: 'Pro', value: 62, color: '#d97757', sub: true }
+    { label: '전체', value: 80.5, color: '#d97757', summary: true }
   ]);
+  assert.equal(list[1].details.accounts, 1);
   assert.deepEqual(list[1].details.rows, [
     { label: 'Pro 200', value: 42, color: '#10a37f' }
   ]);
+  assert.equal(list[2].details.accounts, 4);
   assert.deepEqual(list[2].details.rows, [
     { label: 'Gemini', value: 96.4, color: '#6b8de9', group: 'Gemini', summary: true },
-    { label: 'AI Ultra', value: 99, color: '#6b8de9', group: 'Gemini', sub: true },
-    { label: 'AI Pro', value: 90, color: '#6b8de9', group: 'Gemini', sub: true },
-    { label: 'Claude/GPT', value: 71.2, color: '#d97757', group: 'Claude/GPT', summary: true },
-    { label: 'AI Ultra', value: 84, color: '#d97757', group: 'Claude/GPT', sub: true },
-    { label: 'AI Pro', value: 18, color: 'warn', group: 'Claude/GPT', sub: true }
+    { label: 'Claude/GPT', value: 71.2, color: '#d97757', group: 'Claude/GPT', summary: true }
   ]);
 
   const en = await boot(async () => snap, { httpToken: 'k', language: 'en' });
   assert.equal(en.calls.at(-1).gauges[0].details.rows[0].label, 'Overall');
   assert.equal(en.calls.at(-1).gauges[2].details.title, 'Antigravity remaining');
   assert.equal(en.calls.at(-1).gauges[2].details.rows[0].label, 'Gemini');
-  assert.equal(en.calls.at(-1).gauges[2].details.rows[3].label, 'Claude/GPT');
+  assert.equal(en.calls.at(-1).gauges[2].details.rows[1].label, 'Claude/GPT');
 });
 
 test('bundled worker renders v0.8.1 Full + Lite Antigravity split with distinct colors and popovers', async () => {
@@ -421,13 +420,10 @@ test('bundled worker renders v0.8.1 Full + Lite Antigravity split with distinct 
   ]);
   assert.equal(list[3].icon.paths[0].fill, '#4b8be8');
   assert.equal(list[3].details.title, 'Antigravity · Trial/Free 잔량');
+  assert.equal(list[3].details.accounts, 3);
   assert.deepEqual(list[3].details.rows, [
     { label: 'Gemini', value: 90, color: '#4b8be8', group: 'Gemini', summary: true },
-    { label: 'AI Pro Trial', value: 92, color: '#4b8be8', group: 'Gemini', sub: true },
-    { label: 'Free', value: 86, color: '#4b8be8', group: 'Gemini', sub: true },
-    { label: 'Claude/GPT', value: 18, color: 'warn', group: 'Claude/GPT', summary: true },
-    { label: 'AI Pro Trial', value: 24, color: '#d97757', group: 'Claude/GPT', sub: true },
-    { label: 'Free', value: 4, color: 'danger', group: 'Claude/GPT', sub: true }
+    { label: 'Claude/GPT', value: 18, color: 'warn', group: 'Claude/GPT', summary: true }
   ]);
 
   const en = await boot(async () => snap, { httpToken: 'k', language: 'en' });
