@@ -1,7 +1,7 @@
 // Drives the extension as the server does: a fake `pi`, a throwaway sqlite file, and the methods a client calls.
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import factory, { decide, followerFrom, followerSilent } from "./index.ts";
@@ -453,5 +453,63 @@ describe("decide: one item of a two-way sync", () => {
 		expect(decide("", "x", b("x"), later)).toBe("pull");
 		expect(decide("x", "", b("x"), files)).toBe("pull");
 		expect(decide("", "x", b("x"), files)).toBe("keep");
+	});
+});
+
+describe("short-lived sqlite connections", () => {
+	const restoreDbEnv = (prev: string | undefined) => {
+		if (prev === undefined) delete process.env.PIPAYA_DB;
+		else process.env.PIPAYA_DB = prev;
+	};
+
+	test("regression guard: main WAL checkpoint truncates cleanly after snapshot without unloading", async () => {
+		const walDir = mkdtempSync(join(tmpdir(), "server-sync-wal-"));
+		const walDbPath = join(walDir, "pipaya.db");
+		const prevDb = process.env.PIPAYA_DB;
+		const main = new Database(walDbPath, { create: true });
+		try {
+			main.exec("PRAGMA journal_mode = WAL; CREATE TABLE settings (key TEXT PRIMARY KEY, data TEXT NOT NULL);");
+			main.query("INSERT INTO settings (key, data) VALUES (?, ?)").run("default_model", JSON.stringify({ provider: "a", model: "b" }));
+			process.env.PIPAYA_DB = walDbPath;
+
+			const h = boot({ role: "primary" });
+			try {
+				const snap = await h.methods.get("snapshot")!() as { settings: Record<string, unknown> };
+				expect(snap.settings).toEqual({ default_model: { provider: "a", model: "b" } });
+				const cp = main.query("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number };
+				expect(cp.busy).toBe(0);
+				if (existsSync(`${walDbPath}-wal`)) {
+					expect(statSync(`${walDbPath}-wal`).size).toBe(0);
+				}
+			} finally {
+				h.unload();
+			}
+		} finally {
+			restoreDbEnv(prevDb);
+			main.close();
+			rmSync(walDir, { recursive: true, force: true });
+		}
+	});
+
+	test("read-only rules inspection does not create an empty pipaya.db when the file does not exist yet", async () => {
+		const missingDir = mkdtempSync(join(tmpdir(), "server-sync-missing-"));
+		const missingDbPath = join(missingDir, "pipaya.db");
+		const prevDb = process.env.PIPAYA_DB;
+		try {
+			process.env.PIPAYA_DB = missingDbPath;
+			const h = boot({ role: "primary" });
+			try {
+				const rulesMethod = h.methods.get("rules");
+				expect(rulesMethod).toBeDefined();
+				const result = await rulesMethod!() as { items: unknown[] };
+				expect(Array.isArray(result.items)).toBe(true);
+				expect(existsSync(missingDbPath)).toBe(false);
+			} finally {
+				h.unload();
+			}
+		} finally {
+			restoreDbEnv(prevDb);
+			rmSync(missingDir, { recursive: true, force: true });
+		}
 	});
 });
