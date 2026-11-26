@@ -117,11 +117,34 @@ export function gaugesFromSnapshot(snapshot) {
   };
   const ag = byProvider('antigravity');
   const gemini = byProvider('gemini');
-  // Fixed order: Claude, (GPT only when a GPT account exists), (native Gemini only when present), Antigravity units.
+  const claude = byProvider('claude');
   const gpt = byProvider('gpt');
   const stripTiers = item => { const { tiers, ...rest } = item; return rest; };
-  const gauges = [stripTiers(gauge('claude', 'Claude', 'claude', byProvider('claude')))];
-  if (gpt.length) gauges.push(stripTiers(gauge('gpt', 'GPT', 'gpt', gpt, 'codex')));
+  const gauges = [];
+
+  // Dynamic model-set pools: when the server splits Claude or Codex because
+  // accounts expose different model catalogs (e.g. Pro 200 vs Pro 100), emit
+  // one tile per pool in server order; when catalogs align, stay unified.
+  const claudePools = availability.filter(item => item?.key === 'claude' || /^claude_pool_[a-z0-9]+$/.test(String(item?.key || '')));
+  if (claudePools.length >= 2) {
+    claudePools.forEach((entry, index) => {
+      gauges.push(stripTiers(gauge(index === 0 ? 'claude' : entry.key, entry.label || 'Claude', 'claude', claude, entry.key)));
+    });
+  } else {
+    gauges.push(stripTiers(gauge('claude', claudePools[0]?.label || 'Claude', 'claude', claude)));
+  }
+
+  const codexPools = availability.filter(item => item?.key === 'codex' || /^codex_pool_[a-z0-9]+$/.test(String(item?.key || '')));
+  if (gpt.length) {
+    if (codexPools.length >= 2) {
+      codexPools.forEach((entry, index) => {
+        gauges.push(stripTiers(gauge(index === 0 ? 'gpt' : entry.key, entry.label || 'GPT', 'gpt', gpt, entry.key)));
+      });
+    } else {
+      gauges.push(stripTiers(gauge('gpt', codexPools[0]?.label || 'GPT', 'gpt', gpt, 'codex')));
+    }
+  }
+
   if (gemini.length) gauges.push(stripTiers(gauge('gemini', 'Gemini', 'gemini', gemini)));
   const antigravityGauge = (id, label, brand, group, geminiKey, claudeKey, { restricted = false, deriveLabel = false } = {}) => {
     const outer = gauge(id, label, brand, group, geminiKey, restricted);
@@ -151,9 +174,20 @@ export function gaugesFromSnapshot(snapshot) {
   const agFull = ag.filter(account => normalizeModelTier(account.model_tier) !== 'lite');
   const agLegacy = ag.filter(account => normalizeModelTier(account.model_tier) === '');
   const hasKey = key => availability.some(item => item?.key === key);
-  // Server v0.8.1+ auto-splits Antigravity into full (antigravity_gemini/claude) and lite (antigravity_lite_gemini/claude)
-  // when accounts have different model pools, and unifies into antigravity_gemini/claude when all share one pool.
-  // Split gauges strictly follow the server's availability keys, never account.model_tier alone.
+  const dynamicAgPools = [];
+  const seenAgPools = new Set();
+  for (const item of availability) {
+    const m = /^(antigravity_pool_[a-z0-9]+)_(gemini|claude)$/.exec(String(item?.key || ''));
+    if (m && !seenAgPools.has(m[1])) {
+      seenAgPools.add(m[1]);
+      const labelMatch = /^AGY\s*\(([^)]+)\)/.exec(String(item?.label || ''));
+      const poolLabel = labelMatch?.[1] ? `Antigravity · ${labelMatch[1].trim()}` : 'Antigravity';
+      dynamicAgPools.push({ id: m[1], label: poolLabel });
+    }
+  }
+  // Server v0.8.1+ auto-splits Antigravity into full (antigravity_gemini/claude), optional
+  // dynamic extra pools (antigravity_pool_*_gemini/claude), and lite (antigravity_lite_gemini/claude)
+  // when accounts have different model pools, and unifies when all share one pool.
   const has4 = hasKey('antigravity_4_gemini') || hasKey('antigravity_4_claude');
   const has38 = hasKey('antigravity_3_8_gemini') || hasKey('antigravity_3_8_claude');
   const hasUnified = hasKey('antigravity_gemini') || hasKey('antigravity_claude');
@@ -162,10 +196,16 @@ export function gaugesFromSnapshot(snapshot) {
     if (has4) gauges.push(antigravityGauge('antigravity_4', 'AGY (4)', 'antigravity_4', ag4, 'antigravity_4_gemini', 'antigravity_4_claude'));
     if (has38) gauges.push(antigravityGauge('antigravity_3_8', 'AGY (3.8)', 'antigravity_3_8', ag38, 'antigravity_3_8_gemini', 'antigravity_3_8_claude'));
     if (hasUnified) gauges.push(antigravityGauge('antigravity', 'Antigravity', 'antigravity', agLegacy.length ? agLegacy : ag, 'antigravity_gemini', 'antigravity_claude', { deriveLabel: true }));
+    for (const pool of dynamicAgPools) {
+      gauges.push(antigravityGauge(pool.id, pool.label, 'antigravity_full', agFull.length ? agFull : ag, `${pool.id}_gemini`, `${pool.id}_claude`, { deriveLabel: true }));
+    }
     if (hasLite) gauges.push(antigravityGauge('antigravity_lite', 'Antigravity · Trial/Free', 'antigravity_lite', agLite.length ? agLite : ag, 'antigravity_lite_gemini', 'antigravity_lite_claude', { restricted: true, deriveLabel: true }));
-  } else if (hasLite) {
+  } else if (hasLite || dynamicAgPools.length > 0) {
     if (hasUnified) gauges.push(antigravityGauge('antigravity', 'Antigravity', 'antigravity_full', agFull.length ? agFull : ag, 'antigravity_gemini', 'antigravity_claude', { deriveLabel: true }));
-    gauges.push(antigravityGauge('antigravity_lite', 'Antigravity · Trial/Free', 'antigravity_lite', agLite.length ? agLite : ag, 'antigravity_lite_gemini', 'antigravity_lite_claude', { restricted: true, deriveLabel: true }));
+    for (const pool of dynamicAgPools) {
+      gauges.push(antigravityGauge(pool.id, pool.label, 'antigravity_full', agFull.length ? agFull : ag, `${pool.id}_gemini`, `${pool.id}_claude`, { deriveLabel: true }));
+    }
+    if (hasLite) gauges.push(antigravityGauge('antigravity_lite', 'Antigravity · Trial/Free', 'antigravity_lite', agLite.length ? agLite : ag, 'antigravity_lite_gemini', 'antigravity_lite_claude', { restricted: true, deriveLabel: true }));
   } else {
     gauges.push(antigravityGauge('antigravity', 'Antigravity', 'antigravity', ag, 'antigravity_gemini', 'antigravity_claude', { deriveLabel: true }));
   }
@@ -184,7 +224,14 @@ export function pollDelay(snapshot, settings = {}) {
 const isFiniteNumber = value => typeof value === 'number' && Number.isFinite(value);
 const STICKY_TIER_IDS = ['antigravity_4', 'antigravity_3_8'];
 const TIER_MISS_LIMIT = 3;
-const GAUGE_ORDER = { claude: 0, gpt: 1, gemini: 2, antigravity_4: 3, antigravity_3_8: 4, antigravity: 5, antigravity_lite: 6 };
+const GAUGE_ORDER = { claude: 0, gpt: 1, gemini: 2, antigravity_4: 3, antigravity_3_8: 4, antigravity: 5, antigravity_lite: 7 };
+const gaugeOrder = id => {
+  if (id in GAUGE_ORDER) return GAUGE_ORDER[id];
+  if (String(id).startsWith('claude_pool_')) return 0;
+  if (String(id).startsWith('codex_pool_')) return 1;
+  if (String(id).startsWith('antigravity_pool_')) return 6;
+  return 99;
+};
 
 // Keep the last known reading when a later snapshot returns null, and hold split Antigravity
 // tier gauges (AGY 4 / AGY 3.8) across brief transient omissions so they do not flicker.
@@ -235,6 +282,6 @@ export function mergeWithPrevious(previousGauges = [], nextGauges = [], missingC
       delete missingCounts[id];
     }
   }
-  merged.sort((a, b) => (GAUGE_ORDER[a.id] ?? 99) - (GAUGE_ORDER[b.id] ?? 99));
+  merged.sort((a, b) => gaugeOrder(a.id) - gaugeOrder(b.id));
   return merged;
 }

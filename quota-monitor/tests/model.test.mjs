@@ -524,3 +524,41 @@ test('dual-window (5h + 7d) availability renders 5h/7d bars plus compact tier ro
     { label: '주간', value: 5, color: 'danger', window: 'weekly' }
   ]);
 });
+
+test('dynamic model-set pools split Codex/Claude/Antigravity into separate tiles and avoid duplicate tier titles', () => {
+  const split = gaugesFromSnapshot(snapshot([
+    account('claude', []),
+    account('codex', []),
+    account('antigravity', [], { model_tier: 'full' }),
+    account('antigravity', [], { model_tier: 'lite' })
+  ], [
+    { key: 'claude', label: 'Claude · Max', remaining_percent: 70, short_remaining_percent: 80, weekly_remaining_percent: 70, accounts: 2, tiers: [{ tier: 'max', label: 'Max', remaining_percent: 70, short_remaining_percent: 80, weekly_remaining_percent: 70 }] },
+    { key: 'claude_pool_11223344', label: 'Claude · Pro', remaining_percent: 30, short_remaining_percent: 50, weekly_remaining_percent: 30, accounts: 1, tiers: [{ tier: 'pro', label: 'Pro', remaining_percent: 30, short_remaining_percent: 50, weekly_remaining_percent: 30 }] },
+    { key: 'codex', label: 'GPT · Pro 200', remaining_percent: 80, short_remaining_percent: 90, weekly_remaining_percent: 80, accounts: 2, tiers: [{ tier: 'pro_200', label: 'Pro 200', remaining_percent: 80, short_remaining_percent: 90, weekly_remaining_percent: 80 }] },
+    { key: 'codex_pool_aabbccdd', label: 'GPT · Pro 100/Plus', remaining_percent: 40, short_remaining_percent: 55, weekly_remaining_percent: 40, accounts: 3, tiers: [{ tier: 'pro_100', label: 'Pro 100', remaining_percent: 45, short_remaining_percent: 60, weekly_remaining_percent: 45 }, { tier: 'plus', label: 'Plus', remaining_percent: 20, short_remaining_percent: 30, weekly_remaining_percent: 20 }] },
+    { key: 'antigravity_gemini', label: 'AGY · Gemini', remaining_percent: 90, short_remaining_percent: 95, weekly_remaining_percent: 90, accounts: 2, tiers: [{ tier: 'ultra', label: 'AI Ultra', remaining_percent: 90 }] },
+    { key: 'antigravity_claude', label: 'AGY · Claude/GPT', remaining_percent: 95, short_remaining_percent: 95, weekly_remaining_percent: 95, accounts: 2, tiers: [{ tier: 'ultra', label: 'AI Ultra', remaining_percent: 95 }] },
+    { key: 'antigravity_pool_deadbeef_gemini', label: 'AGY (AI Pro) · Gemini', remaining_percent: 60, short_remaining_percent: 70, weekly_remaining_percent: 60, accounts: 2, tiers: [{ tier: 'pro', label: 'AI Pro', remaining_percent: 60 }] },
+    { key: 'antigravity_pool_deadbeef_claude', label: 'AGY (AI Pro) · Claude/GPT', remaining_percent: 65, short_remaining_percent: 75, weekly_remaining_percent: 65, accounts: 2, tiers: [{ tier: 'pro', label: 'AI Pro', remaining_percent: 65 }] },
+    { key: 'antigravity_lite_gemini', label: 'AGY (Free) · Gemini', remaining_percent: 20, short_remaining_percent: 30, weekly_remaining_percent: 20, accounts: 1, tiers: [{ tier: 'free', label: 'Free', remaining_percent: 20 }] },
+    { key: 'antigravity_lite_claude', label: 'AGY (Free) · Claude/GPT', remaining_percent: 10, short_remaining_percent: 15, weekly_remaining_percent: 10, accounts: 1, tiers: [{ tier: 'free', label: 'Free', remaining_percent: 10 }] }
+  ]));
+
+  assert.deepEqual(split.gauges.map(g => g.id), [
+    'claude', 'claude_pool_11223344',
+    'gpt', 'codex_pool_aabbccdd',
+    'antigravity', 'antigravity_pool_deadbeef', 'antigravity_lite'
+  ]);
+  const views = split.gauges.map(g => gaugeData(g));
+  assert.equal(views[0].details.title, 'Claude · Max 잔량');
+  assert.equal(views[1].details.title, 'Claude · Pro 잔량');
+  assert.equal(views[2].details.title, 'GPT · Pro 200 잔량');
+  assert.equal(views[3].details.title, 'GPT · Pro 100/Plus 잔량');
+  assert.equal(views[4].label, 'Antigravity · AI Ultra');
+  assert.equal(views[5].label, 'Antigravity · AI Pro');
+  assert.equal(views[6].label, 'Antigravity · Free');
+
+  // Ordering remains stable through mergeWithPrevious and cleanly collapses when pools unify again.
+  const mergedOrder = mergeWithPrevious([], split.gauges, {});
+  assert.deepEqual(mergedOrder.map(g => g.id), split.gauges.map(g => g.id));
+});

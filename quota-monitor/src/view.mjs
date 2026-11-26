@@ -67,7 +67,7 @@ export function gaugeData(gauge, error, fetchedAt = null) {
     ? [...rows(gauge.rows, outerColor, 'Gemini'), ...rows(gauge.innerRows, COLORS.claude, 'Claude/GPT')]
     : rows(gauge.rows, COLORS[gauge.brand]);
   if (!detailRows.length) detailRows = [{ label: t('noQuotaInfo'), value: null }];
-  const titleName = !isAntigravity && gauge.singleTier ? `${gauge.label} · ${gauge.singleTier}` : gauge.label;
+  const titleName = !isAntigravity && gauge.singleTier && !gauge.label.includes(' · ') ? `${gauge.label} · ${gauge.singleTier}` : gauge.label;
   const title = t('remainingOf', { name: titleName });
   const node = {
     id: gauge.id, label: gauge.label, rings,
