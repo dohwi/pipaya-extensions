@@ -725,7 +725,6 @@ function mcpArray(current: unknown, next: Record<string, Record<string, unknown>
 }
 
 export default (pi: any) => {
-	let db: Database | undefined;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	/** Extensions the primary has that could not be installed here (not in the marketplace, copying not allowed). */
 	let unlisted: string[] = [];
@@ -1081,19 +1080,25 @@ export default (pi: any) => {
 	const isPaused = () => settings().paused === true;
 
 	/**
-	 * The server's own db, opened lazily at the same path the server process uses. The path is re-read each time and the
-	 * handle reopened when it changes, so two instances in one process (tests, or a server switching data dir) never
-	 * share a connection to the wrong file.
+	 * Opens the server's SQLite DB for the duration of one synchronous callback and closes it immediately in `finally`.
+	 * Keeping a secondary handle open across idle intervals holds a WAL read mark / file descriptor that can prevent
+	 * the main server's `PRAGMA wal_checkpoint(TRUNCATE)` from shrinking `pipaya.db-wal`.
+	 * Read-only calls open with `{ readonly: true, create: false }` so they never create an empty `pipaya.db` file.
 	 */
-	let dbPath = "";
-	const dbo = (): Database => {
-		const path = process.env.PIPAYA_DB ?? join(process.env.PIPAYA_DATA_DIR ?? join(homedir(), ".pipaya"), "pipaya.db");
-		if (db && dbPath === path) return db;
-		try { db?.close(); } catch { /* already closed */ }
-		db = new Database(path);
-		db.exec("PRAGMA busy_timeout = 5000");
-		dbPath = path;
-		return db;
+	const resolveDbPath = (): string =>
+		process.env.PIPAYA_DB ?? join(process.env.PIPAYA_DATA_DIR ?? join(homedir(), ".pipaya"), "pipaya.db");
+	const withDb = <T>(fn: (conn: Database) => T, opts: { readonly?: boolean } = {}): T => {
+		const path = resolveDbPath();
+		const readonly = opts.readonly ?? true;
+		const conn = readonly
+			? new Database(path, { readonly: true, create: false })
+			: new Database(path, { readwrite: true, create: false });
+		try {
+			conn.exec("PRAGMA busy_timeout = 5000");
+			return fn(conn);
+		} finally {
+			try { conn.close(); } catch { /* already closed */ }
+		}
 	};
 
 	// `pi.log` already prefixes the extension name.
@@ -1155,18 +1160,18 @@ export default (pi: any) => {
 			return { ...answer(res.status, parsed), text };
 		},
 		clientSetting(key: string): unknown {
-			const r = dbo().query("SELECT data FROM client_settings WHERE key = ?").get(key) as { data: string } | undefined;
+			const r = withDb((conn) => conn.query("SELECT data FROM client_settings WHERE key = ?").get(key) as { data: string } | undefined);
 			try { return r ? JSON.parse(r.data) : null; } catch { return null; }
 		},
 		providers(): Record<string, Record<string, unknown>> {
 			const out: Record<string, Record<string, unknown>> = {};
-			for (const r of dbo().query("SELECT id, data FROM custom_providers").all() as { id: string; data: string }[]) {
+			for (const r of withDb((conn) => conn.query("SELECT id, data FROM custom_providers").all() as { id: string; data: string }[])) {
 				try { const v: unknown = JSON.parse(r.data); if (plain(v)) out[r.id] = v; } catch { /* a damaged row is not ours to fix */ }
 			}
 			return out;
 		},
 		storedKeys(): Set<string> {
-			return new Set((dbo().query("SELECT provider_id FROM credentials").all() as { provider_id: string }[]).map((r) => r.provider_id));
+			return new Set(withDb((conn) => conn.query("SELECT provider_id FROM credentials").all() as { provider_id: string }[]).map((r) => r.provider_id));
 		},
 	};
 
@@ -1274,7 +1279,7 @@ export default (pi: any) => {
 	const writeDisabledSubagents = async (value: unknown): Promise<"done" | "direct" | { refused: string }> => {
 		const list = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 		let current: string[] = [];
-		try { const raw = rawRow(dbo(), "disabled_subagents"); current = raw === null ? [] : list(JSON.parse(raw)); } catch { /* damaged: start from none */ }
+		try { const raw = withDb((conn) => rawRow(conn, "disabled_subagents")); current = raw === null ? [] : list(JSON.parse(raw)); } catch { /* damaged: start from none */ }
 		const target = list(value);
 		let missing = false;
 		for (const k of [...new Set([...current, ...target])]) {
@@ -1299,7 +1304,7 @@ export default (pi: any) => {
 		const direct: string[] = [];
 		for (const key of keys) {
 			const value = key in values ? values[key] : undefined;
-			if (rawRow(dbo(), key) === (value === undefined ? null : JSON.stringify(value))) continue;
+			if (withDb((conn) => rawRow(conn, key)) === (value === undefined ? null : JSON.stringify(value))) continue;
 			if (!hasApi) { direct.push(key); continue; }
 			if (key === "disabled_subagents") {
 				const r = await writeDisabledSubagents(value);
@@ -1315,7 +1320,7 @@ export default (pi: any) => {
 			else if (res.status === 400 || res.status === 404 || res.status === 409) refused.push({ key, reason: reason(res) });
 			else throw new Error(`could not save ${key} on this server (${res.status}: ${reason(res)})`);
 		}
-		if (direct.length) changed.push(...writeRows(dbo(), direct, values));
+		if (direct.length) changed.push(...withDb((conn) => writeRows(conn, direct, values), { readonly: false }));
 		if (refused.length) log(`this server refused: ${refused.map((r) => `${r.key} (${r.reason})`).join(", ")}`);
 		return { changed, refused };
 	};
@@ -2031,7 +2036,7 @@ export default (pi: any) => {
 		if (isPaused()) throw new Error("sync is paused on the primary");
 		const rules = activeRules();
 		const list = allowedKeys(keys(), rules);
-		const rawSettings = readSettings(dbo(), list);
+		const rawSettings = withDb((conn) => readSettings(conn, list));
 		let ignoredMcp: string[] | undefined;
 		if ("mcp_servers" in rawSettings) {
 			const allMcp = mcpMap(rawSettings.mcp_servers);
@@ -2167,7 +2172,7 @@ export default (pi: any) => {
 	const apiKeyRows = (): Record<string, string> => {
 		if (settings().shareSecrets !== true) return {};
 		const out: Record<string, string> = {};
-		const rows = dbo().query("SELECT provider_id, data FROM credentials").all() as { provider_id: string; data: string }[];
+		const rows = withDb((conn) => conn.query("SELECT provider_id, data FROM credentials").all() as { provider_id: string; data: string }[]);
 		for (const r of rows) {
 			try {
 				const v: unknown = JSON.parse(r.data);
@@ -2188,9 +2193,9 @@ export default (pi: any) => {
 	/** This server's items of one two-way kind, by id (filtered by `rules` when provided). */
 	const localItems = async (kind: Kind, list: readonly string[], rules?: readonly SyncRule[], skipMcp?: ReadonlySet<string>): Promise<Record<string, unknown>> => {
 		const home = agentsHome();
-		if (kind === "rows") return readSettings(dbo(), list);
+		if (kind === "rows") return withDb((conn) => readSettings(conn, list));
 		if (kind === "mcp") {
-			const all = mcpMap(readSettings(dbo(), ["mcp_servers"]).mcp_servers);
+			const all = mcpMap(withDb((conn) => readSettings(conn, ["mcp_servers"])).mcp_servers);
 			if (!rules && !skipMcp) return all;
 			return Object.fromEntries(Object.entries(all).filter(([name]) => (!rules || !isIgnoredPath(rules, `mcp/${name}`)) && !skipMcp?.has(name)));
 		}
@@ -2248,7 +2253,7 @@ export default (pi: any) => {
 			const rows = plain(params.settings) ? params.settings : {};
 			const gone = Array.isArray(params.deleted) ? params.deleted.filter((k): k is string => typeof k === "string") : [];
 			const touched = [...new Set([...Object.keys(rows), ...gone])].filter((k) => list.includes(k) && !(k === "mcp_servers" && hasMcpParam));
-			const curRows = readSettings(dbo(), touched);
+			const curRows = withDb((conn) => readSettings(conn, touched));
 			const next: Record<string, unknown> = { ...curRows };
 			for (const k of touched) {
 				if (k === "mcp_servers") {
@@ -2279,7 +2284,7 @@ export default (pi: any) => {
 			const p = params.mcp as Record<string, unknown>;
 			const upserted = plain(p.upserted) ? p.upserted : {};
 			const deleted = Array.isArray(p.deleted) ? p.deleted.filter((x): x is string => typeof x === "string") : [];
-			const curRaw = readSettings(dbo(), ["mcp_servers"]).mcp_servers;
+			const curRaw = withDb((conn) => readSettings(conn, ["mcp_servers"])).mcp_servers;
 			const nextMap = mcpMap(curRaw);
 			let touchedMcp = false;
 			for (const [name, val] of Object.entries(upserted)) {
@@ -2561,7 +2566,7 @@ export default (pi: any) => {
 
 		if (mcpPlan) {
 			if (mcpPlan.pull.length) {
-				const curRaw = readSettings(dbo(), ["mcp_servers"]).mcp_servers;
+				const curRaw = withDb((conn) => readSettings(conn, ["mcp_servers"])).mcp_servers;
 				const nextMap = mcpMap(curRaw);
 				for (const name of mcpPlan.pull) {
 					if (name in peerMcp) nextMap[name] = peerMcp[name]!;
@@ -2693,10 +2698,10 @@ export default (pi: any) => {
 					};
 				} else {
 					// Pre-0.19 primary only accepts whole `mcp_servers` row: only push if no local MCP servers are hidden.
-					const fullLocal = mcpMap(readSettings(dbo(), ["mcp_servers"]).mcp_servers);
+					const fullLocal = mcpMap(withDb((conn) => readSettings(conn, ["mcp_servers"])).mcp_servers);
 					const hasHiddenLocal = Object.keys(fullLocal).some((n) => isIgnoredPath(rules, `mcp/${n}`) || primaryIgnoredMcp.has(n));
 					if (!hasHiddenLocal) {
-						const arr = mcpArray(readSettings(dbo(), ["mcp_servers"]).mcp_servers, mine as Record<string, Record<string, unknown>>);
+						const arr = mcpArray(withDb((conn) => readSettings(conn, ["mcp_servers"])).mcp_servers, mine as Record<string, Record<string, unknown>>);
 						if (arr.length) main.settings = { ...(plain(main.settings) ? main.settings : {}), mcp_servers: arr };
 						else main.deleted = [...(Array.isArray(main.deleted) ? main.deleted : []), "mcp_servers"];
 						legacyMcpFallback = true;
@@ -2981,7 +2986,7 @@ export default (pi: any) => {
 	}): Promise<BackupSnapshot> => {
 		const home = agentsHome();
 		return {
-			rows: opts.rowKeys?.length ? readSettings(dbo(), opts.rowKeys) : {},
+			rows: opts.rowKeys?.length ? withDb((conn) => readSettings(conn, opts.rowKeys!)) : {},
 			extensions: opts.extensions ? await extensionSettings() : {},
 			clientExtensions: opts.clientExtensions ? await clientExtensionRows() : undefined,
 			skills: opts.skills ? readFolders(join(home, ".agents", "skills")) : {},
@@ -3104,7 +3109,7 @@ export default (pi: any) => {
 							const res = await own("DELETE", `/configuration/providers/${pid}`);
 							if (res.ok || res.status === 404) restored.push(`provider:${pid}`);
 						} else {
-							dbo().query("DELETE FROM custom_providers WHERE id = ?").run(pid);
+							withDb((conn) => { conn.query("DELETE FROM custom_providers WHERE id = ?").run(pid); }, { readonly: false });
 							restored.push(`provider:${pid}`);
 						}
 					}
@@ -3241,7 +3246,7 @@ export default (pi: any) => {
 		// 1. Settings rows (except mcp_servers, which is expanded per server below).
 		const allKeys = keys();
 		let settingsRows: Record<string, unknown> = {};
-		try { settingsRows = readSettings(dbo(), allKeys); } catch { /* db may not exist yet */ }
+		try { settingsRows = withDb((conn) => readSettings(conn, allKeys)); } catch { /* db may not exist yet */ }
 		for (const k of allKeys) {
 			if (k === "mcp_servers") continue;
 			pushItem(`settings/${k}`);
@@ -3808,15 +3813,17 @@ export default (pi: any) => {
 	// "3분 전" and "42초 후" go stale between pulls.
 	const tick = setInterval(() => { showStatus(); void refreshInspection(); }, 30_000);
 	(tick as unknown as { unref?: () => void }).unref?.();
-	setTimeout(() => { showStatus(); void refreshInspection(); }, 1500);
-	pi.on("extension_unload", () => clearInterval(tick));
+	const bootTick = setTimeout(() => { if (!gone) { showStatus(); void refreshInspection(); } }, 1500);
+	(bootTick as unknown as { unref?: () => void }).unref?.();
+	pi.on("extension_unload", () => {
+		clearInterval(tick);
+		clearTimeout(bootTick);
+	});
 	pi.settings.onChange(refresh);
 	pi.on("extension_unload", () => {
 		gone = true;
 		if (timer) clearTimeout(timer);
 		timer = undefined;
-		try { db?.close(); } catch { /* already closed */ }
-		db = undefined;
 	});
 };
 
