@@ -2,9 +2,9 @@
   "manifest": {
     "id": "quota-monitor",
     "name": "Quota Monitor",
-    "version": "0.9.3",
+    "version": "0.9.4",
     "sdkVersion": 1,
-    "description": "Claude · GPT · Antigravity의 5시간·주간 잔량과 계정 수를 2줄 미니 막대 타일과 팝오버로 표시합니다(데스크톱 상단 바, 모바일 사이드바 상단). Antigravity는 좌측 Gemini · 우측 Claude/GPT 잔량입니다.",
+    "description": "CLIProxyAPI 전용 확장으로, CLIProxyAPI 서버에 cliproxyapi-plugin-quota-monitor 플러그인을 함께 설치해야 작동합니다. Claude · GPT · Antigravity의 5시간·주간 잔량과 계정 수를 2줄 미니 막대 타일과 팝오버로 표시합니다(데스크톱 상단 바, 모바일 사이드바 상단). Antigravity는 좌측 Gemini · 우측 Claude/GPT 잔량입니다.",
     "permissions": [
       "ui-components",
       "http-write",

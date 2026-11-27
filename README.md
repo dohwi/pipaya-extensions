@@ -18,7 +18,7 @@
 
 | Folder | Kind | What it does |
 |---|---|---|
-| [quota-monitor](quota-monitor) | client | Claude, GPT and Antigravity quota gauges in the header |
+| [quota-monitor](quota-monitor) | client | Claude, GPT and Antigravity quota gauges in the header (requires CLIProxyAPI + `cliproxyapi-plugin-quota-monitor`) |
 | [server-sync](server-sync) | server | Keeps two pipaya servers in step (settings, extensions, skills, models) |
 
 ## Install

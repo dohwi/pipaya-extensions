@@ -18,7 +18,7 @@
 
 | 폴더 | 종류 | 설명 |
 |---|---|---|
-| [quota-monitor](quota-monitor) | client | Claude, GPT, Antigravity 잔량 게이지를 상단 바에 표시 |
+| [quota-monitor](quota-monitor) | client | Claude, GPT, Antigravity 잔량 게이지를 상단 바에 표시 (CLIProxyAPI + `cliproxyapi-plugin-quota-monitor` 필요) |
 | [server-sync](server-sync) | server | 두 pipaya 서버의 설정·확장·스킬·모델 연결을 동기화 |
 
 ## 설치
